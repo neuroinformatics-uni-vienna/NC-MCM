@@ -1,3 +1,8 @@
+"""
+@authors:
+Akshey Kumar
+"""
+
 import numpy as np
 from sklearn.model_selection import KFold
 import tensorflow as tf
@@ -41,6 +46,7 @@ def prep_data(X, B, win=15):
     X_paired = np.transpose(X_paired, axes=(1,0,2,3))
     
     return X_paired, B_1
+
 
 def timeseries_train_test_split(X_paired, B_1):
     """
@@ -103,4 +109,3 @@ def tf_batch_prep(X_, B_, batch_size = 100):
     batch_dataset = tf.data.Dataset.from_tensor_slices((X_, B_))
     batch_dataset = batch_dataset.batch(batch_size)
     return batch_dataset
-

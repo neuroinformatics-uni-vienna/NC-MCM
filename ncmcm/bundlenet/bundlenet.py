@@ -1,3 +1,8 @@
+"""
+@authors:
+Akshey Kumar
+"""
+
 import sys
 sys.path.append(r'../')
 import mat73
@@ -24,18 +29,23 @@ class BunDLeNet(Model):
     the notion described in the paper.
     
     Args:
-        latent_dim (int): Dimension of the latent space.
+        latent_dim (int): 
+            Dimension of the latent space.
+
+        num_behaviour (int): 
+            For discrete-valued behaviours, this stipulates the number of discrete behavioural states
+            For continuous-valued behaviours, this stipulates the number of behaviour variables
     """
-    def __init__(self, latent_dim, num_behaviour):
+    def __init__(self, latent_dim: int, num_behaviour: int):
         super(BunDLeNet, self).__init__()
         self.latent_dim = latent_dim
         self.num_behaviour = num_behaviour
         self.tau = tf.keras.Sequential([
             layers.Flatten(),
             layers.Dense(200, activation='relu'),
-            # layers.Dense(100, activation='relu'),
-            # layers.Dense(50, activation='relu'),
-            # layers.Dense(10, activation='relu'),
+            layers.Dense(100, activation='relu'),
+            layers.Dense(50, activation='relu'),
+            layers.Dense(10, activation='relu'),
             layers.Dense(latent_dim, activation='linear'),
             layers.Normalization(axis=-1), 
             layers.GaussianNoise(0.05)
