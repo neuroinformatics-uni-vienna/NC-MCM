@@ -17,11 +17,11 @@ setup(
     include_package_data=True,
     package_data={},
     classifiers=[
-        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.10",
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
     ],
-    python_requires='>=3.6',
+    python_requires='==3.10.12',
     install_requires=[
         'numpy',
         'matplotlib',
@@ -29,9 +29,11 @@ setup(
         'networkx',
         'pyvis',
         'statsmodels',
-        'tensorflow',
+        'tensorflow==2.13.0rc2',
         'tqdm',
         'scipy',
-        'mat73'
+        'mat73',
+        'seaborn',
+        'pytest'
     ],
 )

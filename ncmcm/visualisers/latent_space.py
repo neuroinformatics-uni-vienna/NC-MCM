@@ -48,7 +48,7 @@ class LatentSpaceVisualiser:
         plt.plot(self.Y/np.max(np.abs(self.Y))/3)
         plt.xlabel("time $t$")
         plt.axis([0, self.Y.shape[0], -0.5, 0.5])
-        plt.savefig(filename=filename)
+        plt.savefig(filename)
         if show_fig:
             plt.show()
 
@@ -94,7 +94,7 @@ class LatentSpaceVisualiser:
         if axis_view is not None:
             ax.view_init(elev=axis_view[0], azim=axis_view[1])
         self._plot_ps(fig, ax, **kwargs)
-        plt.savefig(filename=filename)
+        plt.savefig(filename)
         if show_fig:
             plt.show()
         return fig, ax

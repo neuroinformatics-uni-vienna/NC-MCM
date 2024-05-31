@@ -42,8 +42,7 @@ loss_array, _ = train_model(
 	b_type='discrete',
 	gamma=0.9,
 	learning_rate=0.001, 
-	n_epochs=3,
-	initialisation='pca_init'
+	n_epochs=1000
 )
 
 

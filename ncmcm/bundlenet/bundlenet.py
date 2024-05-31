@@ -3,38 +3,36 @@
 Akshey Kumar
 """
 
-import sys
-sys.path.append(r'../')
-import mat73
 import numpy as np
 import tensorflow as tf
 from tensorflow.keras import layers, Model
 from tqdm import tqdm
-from sklearn.metrics import accuracy_score
-from sklearn.model_selection import train_test_split
 from .losses import BccDccLoss
 from .initialisations import pca_initialisation, best_of_5_runs
 from .utils import tf_batch_prep
 
-################################################################################
-##### BunDLe Net --- Architecture and functions for training - continuous B ####
-################################################################################
+###############################################################################
+#### BunDLe Net --- Architecture and functions for training - continuous B ####
+###############################################################################
 
 
 class BunDLeNet(Model):
     """Behaviour and Dynamical Learning Network (BunDLeNet) model.
-    
-    This model represents the BunDLe Net's architecture for deep learning and is based on the commutativity
-    diagrams. The resulting model is dynamically consistent (DC) and behaviourally consistent (BC) as per 
-    the notion described in the paper.
+
+    This model represents the BunDLe Net's architecture for deep learning and is
+    based on the commutativity diagrams. The resulting model is dynamically 
+    consistent (DC) and behaviourally consistent (BC) as per the notion described
+    in the paper.
     
     Args:
-        latent_dim (int): 
+        latent_dim (int):
             Dimension of the latent space.
 
-        num_behaviour (int): 
-            For discrete-valued behaviours, this stipulates the number of discrete behavioural states
-            For continuous-valued behaviours, this stipulates the number of behaviour variables
+        num_behaviour (int):
+            For discrete-valued behaviours, this stipulates the number of
+            discrete behavioural states
+            For continuous-valued behaviours, this stipulates the number of
+            behaviour variables
     """
     def __init__(self, latent_dim: int, num_behaviour: int):
         super(BunDLeNet, self).__init__()
@@ -47,23 +45,21 @@ class BunDLeNet(Model):
             layers.Dense(50, activation='relu'),
             layers.Dense(10, activation='relu'),
             layers.Dense(latent_dim, activation='linear'),
-            layers.Normalization(axis=-1), 
+            layers.Normalization(axis=-1),
             layers.GaussianNoise(0.05)
         ])
         self.T_Y = tf.keras.Sequential([
             layers.Dense(latent_dim, activation='linear'),
             layers.Normalization(axis=-1),
-            
         ])
         self.predictor = tf.keras.Sequential([
             layers.Dense(num_behaviour, activation='linear')
-        ]) 
+        ])
 
     def call(self, X):
         # Upper arm of commutativity diagram
         Yt1_upper = self.tau(X[:,1])
-        Bt1_upper = self.predictor(Yt1_upper) 
-        
+        Bt1_upper = self.predictor(Yt1_upper)
 
         # Lower arm of commutativity diagram
         Yt_lower = self.tau(X[:,0])
@@ -76,7 +72,7 @@ class BunDLeTrainer:
     """Trainer for the BunDLe Net model.
     
     This class handles the training process for the BunDLe Net model.
-    
+
     Args:
         model: Instance of the BunDLeNet class.
         optimizer: Optimizer for model training.
@@ -132,7 +128,7 @@ class BunDLeTrainer:
         '''
         Handles testing within a single epoch and logs losses
         '''
-        loss_array = np.zeros((0,3))
+        loss_array = np.zeros((0, 3))
         for batch, (x_test, b_test_1) in enumerate(test_dataset):
             DCC_loss, behaviour_loss, total_loss = self.test_step(x_test, b_test_1)
             loss_array = np.append(loss_array, [[DCC_loss, behaviour_loss, total_loss]], axis=0)
@@ -144,7 +140,7 @@ class BunDLeTrainer:
 
 def train_model(X_train, B_train_1, model, b_type, gamma, learning_rate, n_epochs, initialisation=None, validation_data=None):
     """Training BunDLe Net
-    
+
     Args:
         X_train: Training input data
         B_train_1: Training output data.
@@ -170,13 +166,12 @@ def train_model(X_train, B_train_1, model, b_type, gamma, learning_rate, n_epoch
         pca_initialisation(X_train, model.tau, model.latent_dim)
         model.tau.load_weights('temp/tau_pca_weights.h5')
     elif initialisation == 'best_of_5_init':
-        model = _best_of_5_runs(X_train, B_train_1, model, optimizer, gamma, validation_data)
+        model = best_of_5_runs(X_train, B_train_1, model, optimizer, gamma, validation_data)
     elif initialisation is None:
         pass
     else:
         raise ValueError(f"Unknown initialization method: {initialisation}")
     
-
     trainer = BunDLeTrainer(model, optimizer, b_type, gamma)
     epochs = tqdm(np.arange(n_epochs))
     train_history = []
@@ -196,7 +191,3 @@ def train_model(X_train, B_train_1, model, b_type, gamma, learning_rate, n_epoch
     test_history = np.array(test_history) if test_history is not None else None
 
     return train_history, test_history
-
-
-
-

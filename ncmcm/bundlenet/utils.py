@@ -17,7 +17,7 @@ def prep_data(X, B, win=15):
 
     Parameters:
         X : np.ndarray
-            Raw neuronal traces of shape (n, t), where n is the number of neurons and t is the number of time steps.
+            Raw neuronal traces of shape (t, n), where n is the number of neurons and t is the number of time steps.
         B : np.ndarray
             Raw behavioral traces of shape (t,), representing the behavioral data corresponding to the neuronal
             traces.
@@ -35,6 +35,12 @@ def prep_data(X, B, win=15):
             the behavioral data corresponding to the next time step in the paired neuronal traces.
 
     """
+    if X.shape[0] != B.shape[0]:
+        ValueError("The number of time steps in X must match the length of B.")
+
+    if win > X.shape[0]:
+        ValueError("The window must be smaller than number of time steps.")
+
     win+=1
     X_win = np.zeros((X.shape[0]-win+1, win, X.shape[1]))
     for i, _ in enumerate(X_win):

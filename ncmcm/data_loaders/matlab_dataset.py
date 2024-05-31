@@ -42,8 +42,6 @@ class Database:
         self.behaviour = np.sum([n*States[s] for n, s in enumerate(States)], axis = 0).astype(int) # making a single array in which each number corresponds to a behaviour
         behaviour_names = ['Dorsal turn', 'Forward', 'No state', 'Reverse-1', 'Reverse-2', 'Sustained reversal', 'Slowing', 'Ventral turn']
         self.behaviour_names = {i:name for i, name in enumerate(behaviour_names)}
-        print(np.unique(self.behaviour))
-        print(self.behaviour_names)
         self.neuron_traces = np.array(deltaFOverF_bc).T
         self.neuron_names = np.array(NeuronNames, dtype=object)
         self.fps = fps
