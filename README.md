@@ -1,4 +1,4 @@
-# NC-MCM-Visualizer 
+# NC-MCM 
 <a href=https://github.com/DriftKing1998/NC-MCM-Visualizer>See on GitHub</a>
 ## A toolbox to visualize neuronal imaging data and apply the NC-MCM framework to it
 
