@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import statsmodels.stats.multitest as smt
 
+
 # Functions Markov #
 
 def markovian(sequence, sim_memoryless=1000):
@@ -41,7 +42,7 @@ def markovian(sequence, sim_memoryless=1000):
     # Testing
     TH0 = np.zeros(sim_memoryless)
     for kperm in range(sim_memoryless):
-        zH0, _ = simulate_markovian(M, P1)
+        zH0, _ = simulate_markovian(M=M, P=P1)
         Pz0z1z2H0 = np.zeros((N, N, N))
         for m in range(2, M):
             i = zH0[m]  # col
@@ -93,11 +94,11 @@ def compute_transition_matrix_lag2(sequence, normalize=True):
         # from k to j to i
         P[k, j, i] += 1
     if normalize:
-        P = P / np.sum(P) # same as P / (M - 2)
+        P = P / np.sum(P)  # same as P / (M - 2)
     return P, states, M, N
 
 
-def test_stationarity(sequence, chunks=None, sim_stationary=1000, plot=False):
+def stationarity(sequence, chunks=None, sim_stationary=1000, plot=False, verbose=0):
     """
         Test stationarity in input sequence.
 
@@ -121,9 +122,10 @@ def test_stationarity(sequence, chunks=None, sim_stationary=1000, plot=False):
     if chunks is None:
         min_length = min(len(lst) for lst in transition_dict.values())
         # approximate amount of transitions to each state from the least populated state
-        per_state = min_length/num_states
+        per_state = min_length / num_states
         purposed_parts = max(2, int(per_state ** 0.5) + 1)
-        print(f'We purpose {purposed_parts} parts')
+        if verbose == 1:
+            print(f'We purpose {purposed_parts} parts')
         chunks = purposed_parts
 
     # Split each type of transition for each state into parts
@@ -199,35 +201,44 @@ def test_stationarity(sequence, chunks=None, sim_stationary=1000, plot=False):
 
 # Sequence Generation #
 
-
-def simulate_markovian(M, P=np.array([]), N=1):
+def simulate_markovian(M, P=None, N=1, order=1):
     """
-        Simulate a Markovian process.
+        Simulate a higher-order Markovian process.
 
         Parameters:
         - M: Length of the sequence.
-        - P: Transition matrix (default is an empty array for random generation).
+        - P: Transition matrix (default is None for random generation).
         - N: Number of states (default is 1).
+        - order: Order of the Markov process (default is 1).
 
         Returns:
         - z: Simulated sequence.
         - P: Used transition matrix.
     """
-    if not len(P):
-        P = np.random.rand(N, N)
-        P = P / np.repeat(np.sum(P, axis=1)[np.newaxis, :], N, axis=0).T
+    if P is None:
+        # Initialize the transition matrix for higher-order Markov process
+        dims = [N] * (order + 1)
+        P = np.random.rand(*dims)
+        # Normalize transition matrix probabilities
+        P /= np.sum(P, axis=-1, keepdims=True)
     else:
+        # Assume P has the correct shape for the given order
         N = P.shape[0]
+        order = len(P.shape) - 1
 
-    # cumulative probabilities
-    CP = np.cumsum(P, axis=1, dtype=float)
-    # generate lots of data
+    # Initialize the state sequence
     z = np.zeros(M, dtype=int)
-    z[0] = np.random.randint(N)
+    # Randomly initialize the first 'order' states
+    for i in range(order):
+        z[i] = np.random.randint(N)
 
-    for m in range(1, M):
-        prob = np.random.rand(1)
-        z[m] = np.where(CP[z[m - 1], :] >= prob)[0][0]
+    for m in range(order, M):
+        # Extract the previous 'order' states
+        prev_states = tuple(z[m - order:m])
+        # Get the transition probabilities for the current state
+        probabilities = P[prev_states]
+        # Choose the next state based on the transition probabilities
+        z[m] = np.random.choice(np.arange(N), p=probabilities)
 
     return z, P
 
@@ -276,8 +287,8 @@ def non_stationary_process(M, N, changes=4):
     seq = []
 
     for c in range(changes - 1):
-        seq += generate_markov_process(M=l, N=N, order=1)
-    seq += generate_markov_process(M=last, N=N, order=1)
+        seq += list(simulate_markovian(M=l, N=N, order=1)[0])
+    seq += list(simulate_markovian(M=last, N=N, order=1)[0])
 
     return seq
 
@@ -288,37 +299,3 @@ def simulate_random_sequence(M, N):
     """
     random_sequence = np.random.randint(0, N, size=M)
     return random_sequence
-
-
-def generate_markov_process(M, N, order=1):
-    """
-        Generate a Markov process of a certain order.
-
-        Parameters:
-        - M: Length of the sequence.
-        - N: Number of states.
-        - order: Order of the Markov process (default is 1).
-
-        Returns:
-        - states: Generated sequence of states.
-    """
-    # Randomly initialize transition matrix for the given number of states
-    dims = [N] * (order + 1)
-    transition_matrix = np.random.rand(*dims)
-
-    # Normalize transition matrix probabilities
-    transition_matrix /= np.sum(transition_matrix, axis=order, keepdims=True)
-    initial_state = np.random.choice(N)
-
-    # Generate a sequence of states for the Markov process
-    states = [initial_state] * order
-
-    for _ in range(M - 1):
-        prev_states = states[-order:] if len(states) >= order else [initial_state] * (order - len(states))
-        # Extract probabilities based on previous 'order' states
-        probabilities = transition_matrix[tuple(prev_states)]
-        new_state = np.random.choice(list(range(N)), p=probabilities)
-        states.append(new_state)
-
-    return states
-
