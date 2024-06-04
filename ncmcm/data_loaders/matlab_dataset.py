@@ -6,6 +6,7 @@ Akshey Kumar
 import numpy as np
 import mat73
 
+
 class Database:
     """
     Loading neuronal and behavioural data from matlab files 
@@ -13,7 +14,7 @@ class Database:
     Attributes:
         dataset_no (int): The number of the data set.
         behaviour (numpy.ndarray): Array of discrete behaviour of shape (time_steps,).
-        behaviour_names (list): List of discretebehaviour names.
+        behaviour_names (list): List of discrete behaviour names.
         neuron_traces (numpy.ndarray): Array of neuron traces.
         neuron_names (numpy.ndarray): Array of neuron names.
         fps (float): Frames per second.
@@ -24,6 +25,7 @@ class Database:
                             inter or motor neuron. 
 
     """
+
     def __init__(self, data_path, dataset_no):
         self.dataset_no = dataset_no
         try:
@@ -31,24 +33,25 @@ class Database:
         except Exception as e:
             raise ValueError(f"Error loading MATLAB data from {data_path}: {e}")
 
-        data  = data_dict['NoStim_Data']
+        data = data_dict['NoStim_Data']
 
-        deltaFOverF_bc = data['deltaFOverF_bc'][self.dataset_no]
-        derivatives = data['derivs'][self.dataset_no]
-        NeuronNames = data['NeuronNames'][self.dataset_no]
+        delta_f_over_fbc = data['deltaFOverF_bc'][self.dataset_no]
+        neuron_names = data['NeuronNames'][self.dataset_no]
         fps = data['fps'][self.dataset_no]
-        States = data['States'][self.dataset_no]
+        states = data['States'][self.dataset_no]
 
-        self.behaviour = np.sum([n*States[s] for n, s in enumerate(States)], axis = 0).astype(int) # making a single array in which each number corresponds to a behaviour
-        behaviour_names = ['Dorsal turn', 'Forward', 'No state', 'Reverse-1', 'Reverse-2', 'Sustained reversal', 'Slowing', 'Ventral turn']
-        self.behaviour_names = {i:name for i, name in enumerate(behaviour_names)}
-        self.neuron_traces = np.array(deltaFOverF_bc).T
-        self.neuron_names = np.array(NeuronNames, dtype=object)
+        self.behaviour = np.sum([n * states[s] for n, s in enumerate(states)], axis=0).astype(
+            int)  # making a single array in which each number corresponds to a behaviour
+        behaviour_names = ['Dorsal turn', 'Forward', 'No state', 'Reverse-1', 'Reverse-2', 'Sustained reversal',
+                           'Slowing', 'Ventral turn']
+        self.behaviour_names = {i: name for i, name in enumerate(behaviour_names)}
+        self.neuron_traces = np.array(delta_f_over_fbc).T
+        self.neuron_names = np.array(neuron_names, dtype=object)
         self.fps = fps
 
-        ### To handle bug in dataset 3 where in neuron_names the last entry is a list. we replace the list with the contents of the list
+        # To handle bug in dataset 3 where in neuron_names the last entry is a list. 
+        # we replace the list with the contents of the list
         self.neuron_names = np.array([x if not isinstance(x, list) else x[0] for x in self.neuron_names])
-
 
     def exclude_neurons(self, exclude_neurons):
         """
@@ -64,16 +67,14 @@ class Database:
         neuron_names = self.neuron_names
         mask = np.zeros_like(self.neuron_names, dtype='bool')
         for exclude_neuron in exclude_neurons:
-            mask = np.logical_or(mask, neuron_names==exclude_neuron)
+            mask = np.logical_or(mask, neuron_names == exclude_neuron)
         mask = ~mask
-        self.neuron_traces = self.neuron_traces[mask] 
-        #self.derivative_traces = self.derivative_traces[mask] 
+        self.neuron_traces = self.neuron_traces[mask]
         self.neuron_names = self.neuron_names[mask]
 
     def _only_identified_neurons(self):
         mask = np.logical_not([x.isnumeric() for x in self.neuron_names])
-        self.neuron_traces = self.neuron_traces[mask] 
-        #self.derivative_traces = self.derivative_traces[mask] 
+        self.neuron_traces = self.neuron_traces[mask]
         self.neuron_names = self.neuron_names[mask]
 
     def categorise_neurons(self):
