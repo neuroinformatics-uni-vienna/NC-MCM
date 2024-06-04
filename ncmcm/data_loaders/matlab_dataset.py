@@ -5,8 +5,11 @@ Akshey Kumar
 
 import numpy as np
 import mat73
+from dataclasses import dataclass
+import scipy
 
 
+@dataclass
 class Database:
     """
     Loading neuronal and behavioural data from matlab files 
@@ -97,3 +100,78 @@ class Database:
         self.neuron_traces_m = self.neuron_traces[mask_m]
 
         return mask
+
+
+@dataclass
+class DatabaseStimuli(Database):
+    """
+    Loading neuronal, behavioural and stimuli data from matlab files
+    Inherits from Database class (without stimulus)
+
+    The raw data was curated according to the following correspondence:
+    data[0] is name
+    data[1] is fps
+    data[2] is Bleachcorrected_traces
+    data[3] is deltaFOverF
+    data[4] is deltaFOverF_bc
+    data[5] is deriv_traces
+    data[6] is zscored_traces
+    data[7] is neuron names
+    data[8] is 0,1,2 Response
+    data[9] is 11, 21 Stimulus
+    data[10] is 1,2,3,4 behaviour
+
+    """
+
+    def __init__(self, data_path, dataset_no):
+        self.dataset_no = dataset_no
+        try:
+            data_dict = scipy.io.loadmat(data_path)
+        except Exception as e:
+            raise ValueError(f"Error loading MATLAB data from {data_path}: {e}")
+
+        data = data_dict['All_neuron_data'][0, self.dataset_no]
+
+        self.dataset_name = data[0][0]
+        self.fps = data[1].flatten()[0]
+        self.neuron_traces = data[3].T
+        self.response = data[8].flatten()
+        self.stimulus = data[9].flatten()
+        self.behaviour = data[10].flatten()
+        self.response_names = {0: 'miss', 1: 'hit', 2: 'NaN (excluded trials)'}
+        self.stimulus_names = {11: '11% oxygen', 21: '21% oxygen'}
+        self.behaviour_names = {1: 'forward', 2: 'reverse', 3: 'sustained reversal', 4: 'turn'}
+
+        nn = data[7]
+        neuron_names = []
+        for i in nn.flat:
+            if i[0][0].size > 0:
+                neuron_names.append(i[0][0][0])
+            else:
+                neuron_names.append('0')
+        self.neuron_names = np.array(neuron_names)
+
+
+def merge_discrete_variables(B, R, behaviour_names, response_names):
+    """
+    Create new target variable combining both discrete variables (B and R)
+
+    parameters:
+
+    B : np.array of shape (m,)
+    R : np.array of shape (m,)
+
+    returns:
+
+    BR: np.array of shape (m,)
+    """
+    br = []
+    for i in zip(B, R):
+        br.append(i)
+
+    br_states = np.unique(br, axis=0)
+    br_dict = {tuple(state): i for i, state in enumerate(br_states)}
+    br_names = {n: ' '.join((behaviour_names[state[0]], response_names[state[1]])) for n, state in enumerate(br_states)}
+    br = [br_dict[x] for x in br]
+
+    return np.array(br), br_names
