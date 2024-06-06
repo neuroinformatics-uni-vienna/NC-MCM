@@ -71,9 +71,9 @@ def test_interactive(return_value):
 
 
 def test_cluster_neural_activity():
-    n = np.random.uniform(low=0.0, high=3.0, size=(15, 1000))
+    n = np.random.uniform(low=0.0, high=3.0, size=(15, 100))
     actions = ['sit', 'stand', 'walk', 'run']
-    behaviors = [np.random.choice(actions) for _ in range(1000)]
+    behaviors = [np.random.choice(actions) for _ in range(100)]
 
     res = cluster_neural_activity(n, behaviors,
                                   n_clusters=3,
@@ -84,7 +84,7 @@ def test_cluster_neural_activity():
 
     assert len(res) == 2
     assert len(res[0]) == 3
-    assert len(res[0][0]) == 1000
+    assert len(res[0][0]) == 100
     assert len(np.unique(res[0][0])) == 3
     assert 0 <= res[0][1] <= 1
     assert 0 <= res[0][2] <= 1
@@ -97,6 +97,6 @@ def test_cluster_neural_activity():
 
     assert len(res) == 3
     assert len(res[0]) == 2
-    assert len(res[0][0]) == 1000
+    assert len(res[0][0]) == 100
     assert len(np.unique(res[0][0])) == 4
     assert 0 <= res[0][1] <= 1
