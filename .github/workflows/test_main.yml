@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   build:
-
+    name: test python code with pytest
     runs-on: ubuntu-latest
     strategy:
       # You can use PyPy versions in python-version.
