@@ -38,6 +38,5 @@ setup(
         'markupsafe==2.0.1',
         'typing_extensions>=4.1.0',
         'IPython',
-        'unittest'
     ],
 )
