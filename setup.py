@@ -35,6 +35,8 @@ setup(
         'mat73',
         'seaborn',
         'pytest',
-        'markupsafe==2.0.1'
+        'markupsafe==2.0.1',
+        'typing_extensions>=4.0.0',
+        'IPython'
     ],
 )
