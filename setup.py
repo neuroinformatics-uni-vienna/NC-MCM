@@ -38,7 +38,7 @@ setup(
         'pytest',
         'markupsafe==2.0.1',
         'typing_extensions>=4.1.0',
-        'pip install jinja2==3.0.1',
+        'jinja2==3.0.1',
         'IPython',
     ],
 )
