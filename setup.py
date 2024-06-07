@@ -34,6 +34,7 @@ setup(
         'scipy',
         'mat73',
         'seaborn',
-        'pytest'
+        'pytest',
+        'markupsafe==2.0.1'
     ],
 )

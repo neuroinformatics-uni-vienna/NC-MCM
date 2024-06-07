@@ -127,9 +127,6 @@ def behavioral_state_diagram(C,
             node['title'] = ''.join(f'{k}:{v}\n' for k, v in new.items() if v > 0)
 
         net.show_buttons(['physics', 'nodes', 'edges'])
-        print('PLTO SAVED')
-        print(os.getcwd())
-
         name = str(input('File name for the html-plot? '))
         net.show(f'{name}.html', notebook=False)
         print(f'Plot has been saved under: {os.getcwd()}/{name}.html')
