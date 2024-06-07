@@ -27,7 +27,7 @@ setup(
         'matplotlib',
         'scikit-learn',
         'networkx',
-        'pyvis',
+        'pyvis==0.3.2',
         'statsmodels',
         'tensorflow==2.13.0rc2',
         'tqdm',
