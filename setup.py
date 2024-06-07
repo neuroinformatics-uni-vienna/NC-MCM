@@ -37,7 +37,7 @@ setup(
         'seaborn',
         'pytest',
         'markupsafe==2.0.1',
-        'typing_extensions>=4.1.0',
+        'typing_extensions==4.1.0',
         'jinja2==3.0.1',
         'IPython',
     ],
