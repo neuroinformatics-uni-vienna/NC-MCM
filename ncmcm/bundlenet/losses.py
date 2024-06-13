@@ -34,6 +34,8 @@ class BccDccLoss:
                 'd_loss_func': tf.keras.losses.MeanSquaredError(),
                 'b_loss_func': tf.keras.losses.MeanSquaredError()
             }
+        else:
+            raise ValueError('Unknown loss type')
 
     @tf.function
     def __call__(self, yt1_upper, yt1_lower, bt1_upper, b_train_1):
@@ -61,7 +63,10 @@ def contrastive_loss(y1, y2, b1, b2, margin=1.0):
     y2 = tf.convert_to_tensor(y2)
     d = tf.norm(y1 - y2)
 
-    # tf.math.square(d) if b1=b2
-    # tf.math.square(0.0, tf.math.maximum(margin - d)) if b1 !=b2
+    if b1 == b2:
+        loss = tf.math.square(d)
+    else:
+        loss = tf.math.square(0.0, tf.math.maximum(margin - d))
+    # return loss
 
     raise NotImplementedError("This function is not yet implemented.")
