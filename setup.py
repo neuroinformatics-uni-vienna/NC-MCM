@@ -28,9 +28,9 @@ setup(
         'matplotlib',
         'scikit-learn',
         'networkx',
-        'pyvis==0.3.2',
+        'pyvis',
         'statsmodels',
-        'tensorflow==2.13.0rc2',
+        'tensorflow',
         'tqdm',
         'scipy',
         'mat73',
@@ -40,5 +40,9 @@ setup(
         'jiwer',
         'gradio',
         'typing-extensions==4.12.0',
+        'selenium',
+        'jsonpickle',
+        'jinja2'
+
     ],
 )
