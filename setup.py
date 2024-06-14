@@ -38,8 +38,6 @@ setup(
         'seaborn',
         'pytest',
         'markupsafe==2.0.1',
-        'jiwer',
-        'gradio',
         'selenium',
         'jsonpickle',
         'jinja2',
