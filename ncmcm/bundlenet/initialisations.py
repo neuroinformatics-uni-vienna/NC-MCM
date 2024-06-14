@@ -2,13 +2,14 @@
 @authors:
 Akshey Kumar
 """
-
+import os
 import numpy as np
+import keras
 import tensorflow as tf
 from tensorflow.keras import Model
 from sklearn.decomposition import PCA
-import keras
-import os
+
+
 
 def pca_initialisation(X_, tau, latent_dim):
     """
@@ -57,7 +58,7 @@ def pca_initialisation(X_, tau, latent_dim):
     pcaencoder.encoder.save_weights("temp/tau_pca_weights.h5")
 
 
-def best_of_5_runs(X_train, B_train_1, model, optimizer, gamma, validation_data):
+def best_of_5_runs(X_train, B_train_1, model, b_type, gamma, learning_rate, validation_data):
     """
     Initialises BunDLe net with the best of 5 runs
 
@@ -74,18 +75,19 @@ def best_of_5_runs(X_train, B_train_1, model, optimizer, gamma, validation_data)
 
     model_loss = []
     for i in range(5):
+        from ncmcm.bundlenet.bundlenet import train_model
         model_ = keras.models.clone_model(model)
         model_.build(input_shape=X_train.shape)
         train_history, test_history = train_model(
             X_train,
             B_train_1,
             model_,
-            optimizer,
+            b_type=b_type,
             gamma=gamma,
+            learning_rate=learning_rate,
             n_epochs=100,
-            pca_init=False,
-            best_of_5_init=False,
-            validation_data=validation_data,
+            validation_data = validation_data,
+            initialisation=None,
         )
         model_.save_weights("data/generated/best_of_5_runs_models/model_" + str(i))
         model_loss.append(test_history[-1, -1])

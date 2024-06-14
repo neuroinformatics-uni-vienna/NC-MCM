@@ -169,7 +169,7 @@ def train_model(x_train, b_train_1, model, b_type, gamma, learning_rate, n_epoch
         pca_initialisation(x_train, model.tau, model.latent_dim)
         model.tau.load_weights('temp/tau_pca_weights.h5')
     elif initialisation == 'best_of_5_init':
-        model = best_of_5_runs(x_train, b_train_1, model, optimizer, gamma, validation_data)
+        model = best_of_5_runs(x_train, b_train_1, model, b_type, gamma, learning_rate, validation_data)
     elif initialisation is None:
         pass
     else:
