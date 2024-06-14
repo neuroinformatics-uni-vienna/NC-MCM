@@ -31,7 +31,7 @@ setup(
         'pyvis',
         'statsmodels',
         'typing-extensions==4.6.0',
-        'tensorflow==2.13.0rc2',
+        'tensorflow',
         'tqdm',
         'scipy',
         'mat73',
