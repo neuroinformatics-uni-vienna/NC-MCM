@@ -30,7 +30,7 @@ setup(
         'networkx',
         'pyvis',
         'statsmodels',
-        'tensorflow',
+        'tensorflow=2.16.1',
         'tqdm',
         'scipy',
         'mat73',
