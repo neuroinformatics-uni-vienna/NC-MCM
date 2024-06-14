@@ -1,79 +1,99 @@
+
+
+import sys
+import os
+def test_tester():
+    print("Python executable:", sys.executable)
+    print("sys.path:", sys.path)
+
+    try:
+        from typing_extensions import TypeAliasType
+        print("Import successful:", TypeAliasType)
+    except ImportError as e:
+        print("ImportError:", e)
+
+    print("typing_extensions version:")
+    os.system("pip show typing_extensions")
+
+
+
+
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 import numpy as np
 from ncmcm.cognitive_graphs.calculations import *
 from ncmcm.cognitive_graphs.custom_models import *
 from ncmcm.cognitive_graphs.helpers import *
-#from pyvis.network import Network
-#from ncmcm.cognitive_graphs.cognitive_graphs import behavioral_state_diagram
+from pyvis.network import Network
+from ncmcm.cognitive_graphs.cognitive_graphs import behavioral_state_diagram
 from ncmcm.cognitive_graphs.cognitive_graphs import cluster_neural_activity
 from unittest.mock import patch
 
-#
-# def test_behavioral_state_diagram():
-#     cognitive_states = [np.random.randint(0, 2) for _ in range(100)]
-#     actions = ['sit', 'stand', 'walk', 'run']
-#     behaviors = [np.random.choice(actions) for _ in range(100)]
-#
-#     result = behavioral_state_diagram(cognitive_states, behaviors,
-#                                       interactive=False,
-#                                       test=True,
-#                                       bins=10)
-#     assert result is True
-#     result = behavioral_state_diagram(cognitive_states, behaviors,
-#                                       behaviors=actions,
-#                                       interactive=False,
-#                                       test=True,
-#                                       bins=10)
-#     assert result is True
-#     result = behavioral_state_diagram(cognitive_states, behaviors,
-#                                       interactive=False,
-#                                       weights_hist=True,
-#                                       test=True,
-#                                       bins=10)
-#     assert result is True
-#     result = behavioral_state_diagram(cognitive_states, behaviors,
-#                                       behaviors=actions,
-#                                       interactive=False,
-#                                       weights_hist=True,
-#                                       test=True,
-#                                       bins=10)
-#     assert result is True
-#     result = behavioral_state_diagram(cognitive_states, behaviors,
-#                                       interactive=False,
-#                                       adj_matrix=True,
-#                                       test=True,
-#                                       bins=10)
-#     assert result is True
-#     result = behavioral_state_diagram(cognitive_states, behaviors,
-#                                       behaviors=actions,
-#                                       interactive=False,
-#                                       adj_matrix=True,
-#                                       test=True,
-#                                       bins=10)
-#     assert result is True
-#
-#
-# @patch('builtins.input', return_value='plot_test')
-# def test_interactive(return_value):
-#     cognitive_states = [np.random.randint(0, 2) for _ in range(100)]
-#     actions = ['sit', 'stand', 'walk', 'run']
-#     behaviors = [np.random.choice(actions) for _ in range(100)]
-#
-#     result = behavioral_state_diagram(cognitive_states, behaviors,
-#                                       behaviors=actions,
-#                                       interactive=True,
-#                                       adj_matrix=True,
-#                                       test=True,
-#                                       bins=10)
-#     assert result is True
-#
-#     result = behavioral_state_diagram(cognitive_states, behaviors,
-#                                       interactive=True,
-#                                       adj_matrix=False,
-#                                       test=True,
-#                                       bins=10)
-#     assert result is True
+
+def test_behavioral_state_diagram():
+    cognitive_states = [np.random.randint(0, 2) for _ in range(100)]
+    actions = ['sit', 'stand', 'walk', 'run']
+    behaviors = [np.random.choice(actions) for _ in range(100)]
+
+    result = behavioral_state_diagram(cognitive_states, behaviors,
+                                      interactive=False,
+                                      test=True,
+                                      bins=10)
+    assert result is True
+    result = behavioral_state_diagram(cognitive_states, behaviors,
+                                      behaviors=actions,
+                                      interactive=False,
+                                      test=True,
+                                      bins=10)
+    assert result is True
+    result = behavioral_state_diagram(cognitive_states, behaviors,
+                                      interactive=False,
+                                      weights_hist=True,
+                                      test=True,
+                                      bins=10)
+    assert result is True
+    result = behavioral_state_diagram(cognitive_states, behaviors,
+                                      behaviors=actions,
+                                      interactive=False,
+                                      weights_hist=True,
+                                      test=True,
+                                      bins=10)
+    assert result is True
+    result = behavioral_state_diagram(cognitive_states, behaviors,
+                                      interactive=False,
+                                      adj_matrix=True,
+                                      test=True,
+                                      bins=10)
+    assert result is True
+    result = behavioral_state_diagram(cognitive_states, behaviors,
+                                      behaviors=actions,
+                                      interactive=False,
+                                      adj_matrix=True,
+                                      test=True,
+                                      bins=10)
+    assert result is True
+
+
+@patch('builtins.input', return_value='plot_test')
+def test_interactive(return_value):
+    cognitive_states = [np.random.randint(0, 2) for _ in range(100)]
+    actions = ['sit', 'stand', 'walk', 'run']
+    behaviors = [np.random.choice(actions) for _ in range(100)]
+
+    result = behavioral_state_diagram(cognitive_states, behaviors,
+                                      behaviors=actions,
+                                      interactive=True,
+                                      adj_matrix=True,
+                                      test=True,
+                                      bins=10)
+    assert result is True
+
+    result = behavioral_state_diagram(cognitive_states, behaviors,
+                                      interactive=True,
+                                      adj_matrix=False,
+                                      test=True,
+                                      bins=10)
+    assert result is True
 
 
 def test_cluster_neural_activity():

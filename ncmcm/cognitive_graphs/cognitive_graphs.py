@@ -22,7 +22,9 @@ def behavioral_state_diagram(C,
                              bins=15,
                              test=False):
     """
-    Creates a behavioral state diagram using the defined states as a directed graph.
+    Creates a behavioral state diagram using the defined states (C and B) as a directed graph.
+    Can also show some diagnostic/informative plots with the parameters "adj_matrix" or "weight_hist".
+    The "interactive" parameter will create an HTML-plot using "pyvis".
 
     Parameters:
 
@@ -35,13 +37,12 @@ def behavioral_state_diagram(C,
         threshold (float): A threshold which is used to display edges in the graph (smaller values are not plotted)
 
         offset (float): Distance between clusters
-        bins (int): Amount of bins in histogram if weights_hist=True
-        interactive (bool): If the html plot should be created, otherwise the matplotlib plot is shown
+        bins (int): Amount of bins in histogram if "weights_hist"=True
+        interactive (bool): If the HTML-plot should be created, otherwise the "matplotlib" plot is shown
         adj_matrix (bool): If the adjacency matrix should be plotted
         weights_hist (bool): If a histogram of transition weights should be plotted
 
     Returns:
-
         Boolean success indicator
     """
 
@@ -248,7 +249,32 @@ def clustering_trajectories(yp_map,
                             sim_m=500,
                             sim_s=500,
                             stationary=False):
+    """
+    Clusters neuronal activity into cognitive clusters in probability space and tests them for 1st order
+    Markov properties. Will return the sequence of cognitive clusters and the p-value(s) ("stationary"
+    will indicate to test if the sequence comes from a stationary process).
 
+    Parameters:
+
+      yp_map (np.array): Behavioral probability timeseires
+
+      n_clusters (int): Amount of clusters to be tested.
+
+      kmeans_init: Value for 'n_init' in KMeans (default: 'auto').
+
+      clustering (str): Type of clustering used ('kmeans' or 'spectral')
+
+      chunks (int): Specifies the amount of chunks if stationary property is tested.
+
+      sim_m (int): Amount of generated sequences in the markovian() method.
+
+      sim_s (int): Amount of generated sequences in the stationary() method.
+
+      stationary (bool): Amount of chunks used in the stationary() method.
+
+    Returns:
+      A numpy array of cognitive state sequences and the p-value(s) of markovian() (and stationary()).
+    """
     # Clustering in probability space
     if clustering == 'kmeans':
         clusters = KMeans(n_clusters=n_clusters, n_init=kmeans_init).fit(yp_map)
