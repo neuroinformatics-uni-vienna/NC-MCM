@@ -30,7 +30,7 @@ setup(
         'networkx',
         'pyvis',
         'statsmodels',
-        'tensorflow=2.16.1',
+        'tensorflow==2.16.1',
         'tqdm',
         'scipy',
         'mat73',
@@ -42,7 +42,6 @@ setup(
         'typing-extensions==4.12.0',
         'selenium',
         'jsonpickle',
-        'jinja2'
 
     ],
 )
