@@ -30,6 +30,7 @@ setup(
         'networkx',
         'pyvis',
         'statsmodels',
+        'typing-extensions==4.12.0',
         'tensorflow==2.13.0rc2',
         'tqdm',
         'scipy',
@@ -39,10 +40,9 @@ setup(
         'markupsafe==2.0.1',
         'jiwer',
         'gradio',
-        'typing-extensions==4.12.0',
         'selenium',
         'jsonpickle',
-        'jinja2'
+        'jinja2',
 
     ],
 )
