@@ -24,7 +24,7 @@ setup(
     ],
     python_requires='==3.10.12',
     install_requires=[
-        'numpy',
+        'numpy==1.25.2',
         'matplotlib',
         'scikit-learn',
         'networkx',
