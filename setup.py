@@ -1,3 +1,4 @@
+
 # setup.py
 from setuptools import setup, find_packages
 
@@ -23,17 +24,21 @@ setup(
     ],
     python_requires='==3.10.12',
     install_requires=[
-        'numpy',
+        'numpy==1.25.2',
         'matplotlib',
         'scikit-learn',
         'networkx',
         'pyvis',
         'statsmodels',
-        'tensorflow==2.13.0rc2',
+        'tensorflow==2.14.0',
+        'typing_extensions==4.6.0',
         'tqdm',
         'scipy',
         'mat73',
         'seaborn',
-        'pytest'
+        'pytest',
+        #'markupsafe==2.0.1',
+        'selenium',
+        'jsonpickle',
     ],
 )
