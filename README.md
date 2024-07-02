@@ -1,5 +1,17 @@
 # NC-MCM 
 <a href=https://github.com/DriftKing1998/NC-MCM-Visualizer>See on GitHub</a>
+NC-MCM is a toolbox for learning **N**euro-**C**ognitive **M**ultilevel **C**ausal **M**odels. 
+
+It includes BunDLe-Net, a neuronal manifold learning algorithm and cognitive graphs, an algorithm for learning cognitive-level causal models.
+
+## References
+
+[Neuro-Cognitive Multilevel Causal Modeling: A Framework that Bridges the Explanatory Gap between Neuronal Activity and Cognition](https://www.biorxiv.org/content/early/2023/10/27/2023.10.27.564404)
+
+[BunDLe-Net: Neuronal Manifold Learning Meets Behaviour](https://www.biorxiv.org/content/early/2024/04/15/2023.08.08.551978)
+
+
+<!---
 ## A toolbox to visualize neuronal imaging data and apply the NC-MCM framework to it
 
 This is a toolbox uses neuronal & behavioral data and visualizes it. The main functionalities include: 
@@ -100,3 +112,4 @@ Since this project is a first step, any additions are more than welcome.
    Await feedback from me and address any requested changes. Once approved, your changes will be merged into the main branch.
 
 ###### This project was created as part of the masters project of *Hofer Michael* 
+-->
