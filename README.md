@@ -1,5 +1,20 @@
 # NC-MCM 
-<a href=https://github.com/DriftKing1998/NC-MCM-Visualizer>See on GitHub</a>
+NC-MCM is a toolbox for learning **N**euro-**C**ognitive **M**ultilevel **C**ausal **M**odels. 
+
+It includes BunDLe-Net, a neuronal manifold learning algorithm and cognitive graphs, an algorithm for learning cognitive-level causal models.
+
+BunDLe-Net (**B**ehavio**u**ral a**n**d **D**ynamics **Le**arning **Net**work) is a neuronal manifold learning algorithm that learns meaningful abstractions from time-series neuronal and behavioural data. It maps high-dimensional neuronal data to low-dimensional latent space while preserving both dynamical and behavioural information. In doing so, it enables visualisation of the neuronal data that may reveal useful insights. BunDLe-Net can be used for both discrete and continuous-valued behaviours as well as multiple behaviours.
+
+Cognitive graphs is an algorithm for learning cognitive-level causal models directly from neuronal and behavioural data. The resulting cognitive-level model provides a concise representation of the neuronal manifold and its relation to behavior as a graph.
+
+## References
+
+- Preprint 2023 [Neuro-Cognitive Multilevel Causal Modeling: A Framework that Bridges the Explanatory Gap between Neuronal Activity and Cognition](https://www.biorxiv.org/content/early/2023/10/27/2023.10.27.564404) Moritz Grosse-Wentrup, Akshey Kumar, Anja Meunier, and Manuel Zimmer.
+
+- Preprint 2023 [BunDLe-Net: Neuronal Manifold Learning Meets Behaviour](https://www.biorxiv.org/content/early/2024/04/15/2023.08.08.551978) Akshey Kumar, Aditya Gilra, Mauricio Gonzalez-Soto, Anja Meunier, and Moritz Grosse-Wentrup.
+
+
+<!---
 ## A toolbox to visualize neuronal imaging data and apply the NC-MCM framework to it
 
 This is a toolbox uses neuronal & behavioral data and visualizes it. The main functionalities include: 
@@ -100,3 +115,4 @@ Since this project is a first step, any additions are more than welcome.
    Await feedback from me and address any requested changes. Once approved, your changes will be merged into the main branch.
 
 ###### This project was created as part of the masters project of *Hofer Michael* 
+-->
