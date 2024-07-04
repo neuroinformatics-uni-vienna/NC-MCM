@@ -2,7 +2,7 @@
 @authors:
 Akshey Kumar
 """
-
+import os
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
@@ -48,7 +48,12 @@ class LatentSpaceVisualiser:
         plt.plot(self.Y/np.max(np.abs(self.Y))/3)
         plt.xlabel("time $t$")
         plt.axis([0, self.Y.shape[0], -0.5, 0.5])
+
+        if os.path.dirname(filename):
+            os.makedirs(os.path.dirname(filename), exist_ok=True)
+
         plt.savefig(filename)
+
         if show_fig:
             plt.show()
 
@@ -94,9 +99,15 @@ class LatentSpaceVisualiser:
         if axis_view is not None:
             ax.view_init(elev=axis_view[0], azim=axis_view[1])
         self._plot_ps(fig, ax, **kwargs)
+
+        if os.path.dirname(filename):
+            os.makedirs(os.path.dirname(filename), exist_ok=True)
+
         plt.savefig(filename)
+
         if show_fig:
             plt.show()
+
         return fig, ax
 
 
@@ -160,9 +171,15 @@ class LatentSpaceVisualiser:
 
         self._plot_ps(fig, ax, **kwargs)
         rot_animation = animation.FuncAnimation(fig, rotate, frames=np.arange(0, 362, 5), interval=150)
+
+        if os.path.dirname(filename):
+            os.makedirs(os.path.dirname(filename), exist_ok=True)
+
         rot_animation.save(filename, dpi=150, writer='imagemagick')
+
         if show_fig:
             plt.show()
+
         return fig, ax
 
 
