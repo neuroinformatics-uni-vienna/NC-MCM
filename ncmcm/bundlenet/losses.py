@@ -3,6 +3,7 @@
 Akshey Kumar
 """
 
+import torch
 import tensorflow as tf
 
 
@@ -26,21 +27,23 @@ class BccDccLoss:
 
         if b_type == 'discrete':
             self.loss_functions = {
-                'd_loss_func': tf.keras.losses.MeanSquaredError(),
-                'b_loss_func': tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
+                'd_loss_func': torch.nn.MSELoss(),
+                'b_loss_func': torch.nn.CrossEntropyLoss()
             }
         elif b_type == 'continuous':
             self.loss_functions = {
-                'd_loss_func': tf.keras.losses.MeanSquaredError(),
-                'b_loss_func': tf.keras.losses.MeanSquaredError()
+                'd_loss_func': torch.nn.MSELoss(),
+                'b_loss_func': torch.nn.MSELoss()
             }
         else:
             raise ValueError('Unknown loss type')
 
-    @tf.function
     def __call__(self, yt1_upper, yt1_lower, bt1_upper, b_train_1):
         DCC_loss = self.loss_functions['d_loss_func'](yt1_upper, yt1_lower)
-        behaviour_loss = self.loss_functions['b_loss_func'](b_train_1, bt1_upper)
+        if self.b_type == 'discrete':
+            behaviour_loss = self.loss_functions['b_loss_func'](bt1_upper, b_train_1)
+        else:
+            behaviour_loss = self.loss_functions['b_loss_func'](b_train_1, bt1_upper)
         total_loss = self.gamma * DCC_loss + (1 - self.gamma) * behaviour_loss
         return self.gamma * DCC_loss, (1 - self.gamma) * behaviour_loss, total_loss
 
