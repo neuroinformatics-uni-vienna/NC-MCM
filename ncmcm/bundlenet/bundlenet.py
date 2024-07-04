@@ -42,9 +42,9 @@ class BunDLeNet(Model):
         self.num_behaviour = num_behaviour
         self.tau = tf.keras.Sequential([
             layers.Flatten(),
-            layers.Dense(200, activation='relu'),
-            layers.Dense(100, activation='relu'),
             layers.Dense(50, activation='relu'),
+            layers.Dense(30, activation='relu'),
+            layers.Dense(25, activation='relu'),
             layers.Dense(10, activation='relu'),
             layers.Dense(latent_dim, activation='linear'),
             layers.GaussianNoise(0.05)
@@ -56,13 +56,13 @@ class BunDLeNet(Model):
             layers.Dense(num_behaviour, activation='linear')
         ])
 
-    def call(self, X):
+    def call(self, x):
         # Upper arm of commutativity diagram
-        yt1_upper = self.tau(X[:, 1])
+        yt1_upper = self.tau(x[:, 1])
         bt1_upper = self.predictor(yt1_upper)
 
         # Lower arm of commutativity diagram
-        yt_lower = self.tau(X[:, 0])
+        yt_lower = self.tau(x[:, 0])
         yt1_lower = yt_lower + self.T_Y(yt_lower)
 
         return yt1_upper, yt1_lower, bt1_upper
@@ -81,6 +81,7 @@ class BunDLeNet(Model):
             latent_dim=config['latent_dim'],
             num_behaviour=config['num_behaviour'],
         )
+
 
 class BunDLeTrainer:
     """
