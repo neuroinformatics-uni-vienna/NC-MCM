@@ -12,10 +12,10 @@ from matplotlib.colors import ListedColormap
 
 
 class LatentSpaceVisualiser:
-    def __init__(self, Y, B, B_names, show_points=False, legend=True):
-        self.Y = Y
-        self.B = B
-        self.B_names = B_names
+    def __init__(self, y, b, b_names, show_points=False, legend=True):
+        self.y = y
+        self.b = b
+        self.b_names = b_names
         self.show_points = show_points
         self.legend = legend
 
@@ -41,13 +41,13 @@ class LatentSpaceVisualiser:
         None
         """
         plt.figure(figsize=(19, 5))
-        cmap = plt.get_cmap('Pastel1', np.max(self.B) - np.min(self.B) + 1)
-        im = plt.imshow([self.B], aspect=600, cmap=cmap, vmin=np.min(self.B) - 0.5, vmax=np.max(self.B) + 0.5)
-        cbar = plt.colorbar(im, ticks=np.arange(np.min(self.B), np.max(self.B) + 1))
-        cbar.ax.set_yticklabels(self.B_names)
-        plt.plot(self.Y/np.max(np.abs(self.Y))/3)
+        cmap = plt.get_cmap('Pastel1', np.max(self.b) - np.min(self.b) + 1)
+        im = plt.imshow([self.b], aspect=600, cmap=cmap, vmin=np.min(self.b) - 0.5, vmax=np.max(self.b) + 0.5)
+        cbar = plt.colorbar(im, ticks=np.arange(np.min(self.b), np.max(self.b) + 1))
+        cbar.ax.set_yticklabels(self.b_names)
+        plt.plot(self.y / np.max(np.abs(self.y)) / 3)
         plt.xlabel("time $t$")
-        plt.axis([0, self.Y.shape[0], -0.5, 0.5])
+        plt.axis([0, self.y.shape[0], -0.5, 0.5])
 
         if os.path.dirname(filename):
             os.makedirs(os.path.dirname(filename), exist_ok=True)
@@ -57,8 +57,7 @@ class LatentSpaceVisualiser:
         if show_fig:
             plt.show()
 
-
-    def plot_phase_space(self, show_fig=True, filename='figures/phase_space_dynamics.png', axis_view=None ,**kwargs):
+    def plot_phase_space(self, show_fig=True, filename='figures/phase_space_dynamics.png', axis_view=None, **kwargs):
         """
         Plot the neuronal dynamics in a 3D phase space.
 
@@ -110,34 +109,32 @@ class LatentSpaceVisualiser:
 
         return fig, ax
 
-
     def _plot_ps(self, fig, ax, colors=None, **kwargs):
         """
         Helper to plot neuronal dynamics in a 3D phase space.
         """
 
-        if self.Y.shape[0] != self.B.shape[0]:
-            raise ValueError("Y and B must have the same number of time steps")
+        if self.y.shape[0] != self.b.shape[0]:
+            raise ValueError("Y and b must have the same number of time steps")
 
         if colors is None:
-            colors = sns.color_palette('deep', len(self.B_names))
-            color_dict = {name: color for name, color in zip(np.unique(self.B), colors)}
+            colors = sns.color_palette('deep', len(self.b_names))
+            color_dict = {name: color for name, color in zip(np.unique(self.b), colors)}
 
-        for i in range(len(self.Y) - 1):
-            d = (self.Y[i+1] - self.Y[i])
-            ax.quiver(self.Y[i, 0], self.Y[i, 1], self.Y[i, 2],
+        for i in range(len(self.y) - 1):
+            d = (self.y[i + 1] - self.y[i])
+            ax.quiver(self.y[i, 0], self.y[i, 1], self.y[i, 2],
                       d[0], d[1], d[2],
-                      color=color_dict[self.B[i]], arrow_length_ratio=0.1/np.linalg.norm(d), linewidths=1, **kwargs)
-        ax.set_axis_off()  
+                      color=color_dict[self.b[i]], arrow_length_ratio=0.1 / np.linalg.norm(d), linewidths=1, **kwargs)
+        ax.set_axis_off()
 
         if self.legend:
-            legend_elements = [Line2D([0], [0], color=color_dict[b], lw=4, label=self.B_names[b]) for b in color_dict]
+            legend_elements = [Line2D([0], [0], color=color_dict[b], lw=4, label=self.b_names[b]) for b in color_dict]
             ax.legend(handles=legend_elements)
 
         if self.show_points:
-            ax.scatter(self.Y[:,0], self.Y[:,1], self.Y[:,2], c='k', s=1, cmap=ListedColormap(colors))
+            ax.scatter(self.y[:, 0], self.y[:, 1], self.y[:, 2], c='k', s=1, cmap=ListedColormap(colors))
         return fig, ax
-
 
     def rotating_plot(self, show_fig=True, filename='figures/rotation.gif', **kwargs):
         """
@@ -181,5 +178,3 @@ class LatentSpaceVisualiser:
             plt.show()
 
         return fig, ax
-
-
