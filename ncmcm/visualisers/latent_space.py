@@ -123,11 +123,9 @@ class LatentSpaceVisualiser:
 
         for i in range(len(self.y) - 1):
             d = (self.y[i + 1] - self.y[i])
-            kwargs.setdefault('arrow_length_ratio', 0.1 / np.linalg.norm(d))
-            kwargs.setdefault('linewidths', 1)
             ax.quiver(self.y[i, 0], self.y[i, 1], self.y[i, 2],
                       d[0], d[1], d[2],
-                      color=color_dict[self.b[i]], **kwargs)
+                      color=color_dict[self.b[i]], arrow_length_ratio=0.1/np.linalg.norm(d), linewidths=1, **kwargs)
         ax.set_axis_off()
 
         if self.legend:
