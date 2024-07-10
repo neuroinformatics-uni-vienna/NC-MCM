@@ -197,7 +197,7 @@ def train_model(x_train, b_train_1, model, b_type, gamma, learning_rate, n_epoch
         numpy.ndarray: Array of loss values during training.
     """
     if device is None:
-        device = torch.device('cpu')
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     train_loader = torch_batch_prep(x_train, b_train_1, device=device)
 
