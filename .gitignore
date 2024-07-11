@@ -32,6 +32,9 @@ share/python-wheels/
 *.egg
 MANIFEST
 
+# Temporary files
+temp/
+
 # PyInstaller
 #  Usually these files are written by a python script from a template
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
@@ -119,6 +122,8 @@ celerybeat.pid
 
 # Environments
 .env
+.env_test
+.env_test_new_tf_version
 .venv
 env/
 venv/
