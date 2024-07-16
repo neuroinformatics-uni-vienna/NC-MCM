@@ -13,12 +13,13 @@ def test_bundlenet_architecture():
     latent_dim = 3
     num_behaviour = np.unique(B).shape[0]
     model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour)
-    model.build(input_shape=X_.shape)
+    _ = model(X_) # build model by providing input
 
-    assert model.tau.layers[-1].input_shape[-1] == latent_dim
-    assert model.T_Y.layers[0].input_shape[-1] == latent_dim
-    assert model.T_Y.layers[-1].output_shape[-1] == latent_dim
-    assert model.predictor.layers[-1].output_shape[-1] == num_behaviour
+    print()
+    assert model.tau.output_shape[-1] == latent_dim
+    assert model.T_Y.input_shape[-1] == latent_dim
+    assert model.T_Y.output_shape[-1] == latent_dim
+    assert model.predictor.output_shape[-1] == num_behaviour
 
 
 def test_bundlenet_training():
@@ -29,8 +30,6 @@ def test_bundlenet_training():
     latent_dim = 3
     num_behaviour = np.unique(B).shape[0]
     model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour)
-    model.build(input_shape=X_.shape)
-
     n_epochs = 5
     loss_array, _ = train_model(
         X_,
@@ -52,8 +51,6 @@ def test_bundlenet_training_pca_init():
     latent_dim = 3
     num_behaviour = np.unique(B).shape[0]
     model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour)
-    model.build(input_shape=X_.shape)
-
     n_epochs = 5
     loss_array, _ = train_model(
         X_,
@@ -76,9 +73,7 @@ def test_bundlenet_training_best_of_5_init():
     latent_dim = 3
     num_behaviour = np.unique(B).shape[0]
     model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour)
-    model.build(input_shape=X_.shape)
     n_epochs = 5
-
     loss_array, _ = train_model(
         X_,
         B_,
@@ -102,7 +97,6 @@ def test_bundlenet_training_validation_data():
     latent_dim = 3
     num_behaviour = np.unique(B_train).shape[0]
     model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour)
-    model.build(input_shape=X_train.shape)
     n_epochs = 5
     train_history, test_history = train_model(
         X_train,

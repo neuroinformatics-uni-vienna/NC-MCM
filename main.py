@@ -31,7 +31,6 @@ X_, B_ = prep_data(X, B, win=15)
 
 # Deploy BunDLe Net
 model = BunDLeNet(latent_dim=3, num_behaviour=len(data.behaviour_names))
-model.build(input_shape=X_.shape)
 loss_array, _ = train_model(
     X_,
     B_,
@@ -43,9 +42,9 @@ loss_array, _ = train_model(
 )
 
 for i, label in enumerate([
-    "$\mathcal{L}_{{Markov}}$",
-    "$\mathcal{L}_{{Behavior}}$",
-    "Total loss $\mathcal{L}$"
+    r"$\mathcal{L}_{\mathrm{Markov}}$",
+    r"$\mathcal{L}_{\mathrm{Behavior}}$",
+    r"Total loss $\mathcal{L}$"
 ]):
     plt.plot(loss_array[:, i], label=label)
 plt.legend()
