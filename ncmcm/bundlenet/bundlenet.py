@@ -69,6 +69,7 @@ class BunDLeNet(nn.Module):
             nn.Linear(25, 10),
             nn.ReLU(),
             nn.Linear(10, latent_dim),
+            nn.BatchNorm1d(latent_dim),
             GaussianNoise(0.05),
         )
         self.T_Y = nn.Sequential(
