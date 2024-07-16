@@ -1,19 +1,5 @@
-
-
 import sys
 import os
-def test_tester():
-    print("Python executable:", sys.executable)
-    print("sys.path:", sys.path)
-
-    try:
-        from typing_extensions import TypeAliasType
-        print("Import successful:", TypeAliasType)
-    except ImportError as e:
-        print("ImportError:", e)
-
-    print("typing_extensions version:")
-    os.system("pip show typing_extensions")
 
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
