@@ -41,9 +41,9 @@ class BccDccLoss:
     def __call__(self, yt1_upper, yt1_lower, bt1_upper, b_train_1):
         DCC_loss = self.loss_functions['d_loss_func'](yt1_upper, yt1_lower)
         if self.b_type == 'discrete':
-            behaviour_loss = self.loss_functions['b_loss_func'](bt1_upper, b_train_1)
+            behaviour_loss = self.loss_functions['b_loss_func'](bt1_upper, b_train_1.long())
         else:
-            behaviour_loss = self.loss_functions['b_loss_func'](b_train_1, bt1_upper)
+            behaviour_loss = self.loss_functions['b_loss_func'](b_train_1.float(), bt1_upper)
         total_loss = self.gamma * DCC_loss + (1 - self.gamma) * behaviour_loss
         return self.gamma * DCC_loss, (1 - self.gamma) * behaviour_loss, total_loss
 
