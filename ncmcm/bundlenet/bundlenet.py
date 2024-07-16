@@ -42,32 +42,45 @@ class BunDLeNet(Model):
         self.num_behaviour = num_behaviour
         self.tau = tf.keras.Sequential([
             layers.Flatten(),
-            layers.Dense(200, activation='relu'),
-            layers.Dense(100, activation='relu'),
             layers.Dense(50, activation='relu'),
+            layers.Dense(30, activation='relu'),
+            layers.Dense(25, activation='relu'),
             layers.Dense(10, activation='relu'),
             layers.Dense(latent_dim, activation='linear'),
-            layers.Normalization(axis=-1),
             layers.GaussianNoise(0.05)
         ])
         self.T_Y = tf.keras.Sequential([
             layers.Dense(latent_dim, activation='linear'),
-            layers.Normalization(axis=-1),
         ])
         self.predictor = tf.keras.Sequential([
             layers.Dense(num_behaviour, activation='linear')
         ])
 
-    def call(self, X):
+    def call(self, x):
         # Upper arm of commutativity diagram
-        yt1_upper = self.tau(X[:, 1])
+        yt1_upper = self.tau(x[:, 1])
         bt1_upper = self.predictor(yt1_upper)
 
         # Lower arm of commutativity diagram
-        yt_lower = self.tau(X[:, 0])
+        yt_lower = self.tau(x[:, 0])
         yt1_lower = yt_lower + self.T_Y(yt_lower)
 
         return yt1_upper, yt1_lower, bt1_upper
+
+    def get_config(self):
+        config = {
+            'latent_dim': self.latent_dim,
+            'num_behaviour': self.num_behaviour,
+        }
+        base_config = super(BunDLeNet, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
+
+    @classmethod
+    def from_config(cls, config):
+        return cls(
+            latent_dim=config['latent_dim'],
+            num_behaviour=config['num_behaviour'],
+        )
 
 
 class BunDLeTrainer:
@@ -159,15 +172,15 @@ def train_model(x_train, b_train_1, model, b_type, gamma, learning_rate, n_epoch
         numpy.ndarray: Array of loss values during training.
     """
     train_dataset = tf_batch_prep(x_train, b_train_1)
-    optimizer = tf.keras.optimizers.legacy.Adam(learning_rate=learning_rate)
+    optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
 
     if validation_data is not None:
-        X_test, B_test_1 = validation_data
-        test_dataset = tf_batch_prep(X_test, B_test_1)
+        x_test, b_test_1 = validation_data
+        test_dataset = tf_batch_prep(x_test, b_test_1)
 
     if initialisation == 'pca_init':
         pca_initialisation(x_train, model.tau, model.latent_dim)
-        model.tau.load_weights('temp/tau_pca_weights.h5')
+        model.tau.load_weights('temp/tau_pca.weights.h5')
     elif initialisation == 'best_of_5_init':
         model = best_of_5_runs(x_train, b_train_1, model, b_type, gamma, learning_rate, validation_data)
     elif initialisation is None:
