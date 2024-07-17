@@ -119,7 +119,7 @@ def stationarity(sequence, chunks=None, sim_stationary=1000, plot=False, verbose
         transition = (sequence[i], sequence[i + 1])
         transition_dict[sequence[i]].append(transition)
 
-    if chunks is None:
+    if chunks is None or chunks < 2:
         min_length = min(len(lst) for lst in transition_dict.values())
         # approximate amount of transitions to each state from the least populated state
         per_state = min_length / num_states
