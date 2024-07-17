@@ -47,10 +47,12 @@ class BunDLeNet(Model):
             layers.Dense(25, activation='relu'),
             layers.Dense(10, activation='relu'),
             layers.Dense(latent_dim, activation='linear'),
+            # layers.Normalization(axis=-1),
             layers.GaussianNoise(0.05)
         ])
         self.T_Y = tf.keras.Sequential([
             layers.Dense(latent_dim, activation='linear'),
+            # layers.Normalization(axis=-1),
         ])
         self.predictor = tf.keras.Sequential([
             layers.Dense(num_behaviour, activation='linear')
