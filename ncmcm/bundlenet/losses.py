@@ -1,6 +1,7 @@
 """
 @authors:
 Akshey Kumar
+Vittorio Boarini
 """
 
 import torch
