@@ -1,6 +1,7 @@
 """
 @authors:
 Akshey Kumar
+Michael Hofer
 """
 import os
 import matplotlib.pyplot as plt

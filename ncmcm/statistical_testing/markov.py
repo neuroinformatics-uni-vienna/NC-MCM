@@ -1,3 +1,8 @@
+"""
+@authors:
+Michael Hofer
+Moritz Grosse-Wentrup
+"""
 import colorsys
 import numpy as np
 import matplotlib.pyplot as plt
