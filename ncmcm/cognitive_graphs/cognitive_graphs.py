@@ -17,10 +17,11 @@ def behavioral_state_diagram(C,
                              offset=2.5,
                              threshold=None,
                              adj_matrix=False,
-                             interactive=False,
+                             interactive=None,
                              weights_hist=False,
                              bins=15,
-                             test=False):
+                             test=False,
+                             **kwargs):
     """
     Creates a behavioral state diagram using the defined states (C and B) as a directed graph.
     Can also show some diagnostic/informative plots with the parameters "adj_matrix" or "weight_hist".
@@ -38,7 +39,7 @@ def behavioral_state_diagram(C,
 
         offset (float): Distance between clusters
         bins (int): Amount of bins in histogram if "weights_hist"=True
-        interactive (bool): If the HTML-plot should be created, otherwise the "matplotlib" plot is shown
+        interactive (str): If the HTML-plot should be created, one defines the filename with path here
         adj_matrix (bool): If the adjacency matrix should be plotted
         weights_hist (bool): If a histogram of transition weights should be plotted
 
@@ -47,7 +48,8 @@ def behavioral_state_diagram(C,
     """
 
     if behaviors is not None:
-        if type(B[0]) is int:
+        if type(B[0]) in (int, np.int32, np.int64):
+            print(behaviors)
             trans_B = behaviors
         else:
             B, _ = make_integer_list(B)
@@ -102,10 +104,10 @@ def behavioral_state_diagram(C,
         adjusted_pos = shift_pos_by(current_pos, adjusted_pos, degrees_list[idx], offset)
 
     # Plot graphs
-    if interactive:
+    if interactive is not None:
 
         if adj_matrix:
-            fig, ax = plt.subplots()
+            fig, ax = plt.subplots(**kwargs)
             im = ax.imshow(T, cmap='Reds', interpolation='nearest', vmin=0, vmax=0.03)
             ax.set_title('Adjacency Matrix Heatmap')
             plt.colorbar(im, ax=ax)
@@ -128,14 +130,13 @@ def behavioral_state_diagram(C,
             node['title'] = ''.join(f'{k}:{v}\n' for k, v in new.items() if v > 0)
 
         net.show_buttons(['physics', 'nodes', 'edges'])
-        name = str(input('File name for the html-plot? '))
-        net.show(f'{name}.html', notebook=False)
-        print(f'Plot has been saved under: {os.getcwd()}/{name}.html')
+        net.show(f'{interactive}.html', notebook=False)
+        print(f'Plot has been saved under: {os.getcwd()}/{interactive}.html')
 
     else:
 
         if adj_matrix:
-            fig, ax = plt.subplots(1, 2)
+            fig, ax = plt.subplots(1, 2, **kwargs)
             ax_a = ax[0]
             ax_g = ax[1]
             im_a = ax_a.imshow(T, cmap='Reds', interpolation='nearest', vmin=0, vmax=0.03)
@@ -145,7 +146,7 @@ def behavioral_state_diagram(C,
             ax_a.set_xlabel('Nodes')
             ax_a.set_ylabel('Nodes')
         else:
-            fig, ax_g = plt.subplots()
+            fig, ax_g = plt.subplots(**kwargs)
 
         edges = G.edges()
         weights = [G[u][v]['weight'] for u, v in edges]
@@ -214,7 +215,7 @@ def cluster_neural_activity(N,
            Markov Process and the p-value of the markovian() (and stationary()) -method(s).
        """
 
-    if type(B[0]) is not int:
+    if type(B[0]) not in (int, np.int32, np.int64):
         B, trans_b = make_integer_list(B)
         print(f'Behaviors \'B\' were transformed into integers.\nThis is the translation: {trans_b}')
 
