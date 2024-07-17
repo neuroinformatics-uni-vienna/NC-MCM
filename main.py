@@ -19,13 +19,13 @@ b_neurons = [
     'RIBR',
     'RIBL'
 ]
-data_path = 'datasets/raw/NoStim_Data.mat'
+data_path = 'datasets/raw/c_elegans/NoStim_Data.mat'
 data = Database(data_path=data_path, dataset_no=worm_num)
 data.exclude_neurons(b_neurons)
 X = data.neuron_traces.T
 B = data.behaviour
 
-plotting_neuronal_behavioural(X, B, B_names=data.behaviour_names)
+plotting_neuronal_behavioural(X, B, b_names=data.behaviour_names)
 
 X_, B_ = prep_data(X, B, win=15)
 
