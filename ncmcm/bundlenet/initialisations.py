@@ -91,7 +91,9 @@ def best_of_5_runs(x_train, b_train_1, model, b_type, gamma, learning_rate, vali
             initialisation=None,
         )
         os.makedirs(os.path.dirname('temp/best_of_5_runs_models'), exist_ok=True)
-        model_.save_weights("temp/best_of_5_runs_models/model_" + str(i) + ".weights.h5")
+        # model_.save_weights("temp/best_of_5_runs_models/model_" + str(i) + ".weights.h5")
+        model_.save_weights("temp/best_of_5_runs_models/model_" + str(i))
+
         model_loss.append(test_history[-1, -1])
 
     for n, i in enumerate(model_loss):
@@ -99,7 +101,7 @@ def best_of_5_runs(x_train, b_train_1, model, b_type, gamma, learning_rate, vali
 
     # Load model with least loss
     model.load_weights(
-        "temp/best_of_5_runs_models/model_" + str(np.argmin(model_loss)) + ".weights.h5"
+        "temp/best_of_5_runs_models/model_" + str(np.argmin(model_loss))
     )
 
     return model
