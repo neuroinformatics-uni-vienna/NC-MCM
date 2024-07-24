@@ -2,6 +2,7 @@
 @authors:
 Akshey Kumar
 """
+import os
 
 import numpy as np
 import mat73
@@ -80,10 +81,10 @@ class Database:
         self.neuron_traces = self.neuron_traces[mask]
         self.neuron_names = self.neuron_names[mask]
 
-    def categorise_neurons(self):
+    def categorise_neurons(self, path_to_ids):
         self._only_identified_neurons()
-        neuron_list = mat73.loadmat('data/raw/Order279.mat')['Order279']
-        neuron_category = mat73.loadmat('data/raw/ClassIDs_279.mat')['ClassIDs_279']
+        neuron_list = mat73.loadmat(os.path.join(path_to_ids, 'Order279.mat'))['Order279']
+        neuron_category = mat73.loadmat(os.path.join(path_to_ids, 'ClassIDs_279.mat'))['ClassIDs_279']
         category_dict = {neuron: int(category) for neuron, category in zip(neuron_list, neuron_category)}
 
         mask = np.array([category_dict[neuron] for neuron in self.neuron_names])
