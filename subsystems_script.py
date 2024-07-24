@@ -58,6 +58,7 @@ plt.legend()
 plt.show()
 
 # Projecting into latent space
+
 Y0s_ = model.tau_s(Xs_[:, 0])
 Y0i_ = model.tau_i(Xi_[:, 0])
 Y0m_ = model.tau_m(Xm_[:, 0])
@@ -75,4 +76,3 @@ ax.set_xlabel('sensory neurons axis ')
 ax.set_ylabel('inter neuron axis')
 ax.set_zlabel('motor neuron axis')
 plt.show()
-
