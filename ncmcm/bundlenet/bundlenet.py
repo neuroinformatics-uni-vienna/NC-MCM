@@ -240,3 +240,22 @@ def train_model(x_train, b_train_1, model, b_type, gamma, learning_rate, n_epoch
     test_history = np.array(test_history) if test_history is not None else None
 
     return train_history, test_history
+
+
+def model_inference(x_, model):
+    """
+    Inference using BunDLe Net
+
+    Args:
+        x_ (np.array): Neuronal time-series data for model inference.
+        model: Instance of the BunDLeNet class.
+    Returns:
+        numpy.ndarray: Model predictions.
+    """
+    device = next(model.parameters()).device
+
+    model.eval()
+    with torch.no_grad():
+        y0_ = model.tau(torch.tensor(x_[:, 0], dtype=torch.float, device=device)).cpu().numpy()
+
+    return y0_

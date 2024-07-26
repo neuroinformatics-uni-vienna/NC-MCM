@@ -2,7 +2,7 @@ import torch
 import functools
 import numpy as np
 from ncmcm.bundlenet.utils import prep_data
-from ncmcm.bundlenet.bundlenet import GaussianNoise, BunDLeNet, BunDLeTrainer, train_model
+from ncmcm.bundlenet.bundlenet import GaussianNoise, BunDLeNet, BunDLeTrainer, train_model, model_inference
 
 
 assert_equal = functools.partial(torch.testing.assert_close, rtol=0, atol=0)
@@ -31,6 +31,30 @@ def test_gaussian_noise_eval():
     output = noise(X)
 
     assert_equal(output, X)
+
+
+def test_model_inference_eval():
+    latent_dim = 3
+    num_behaviour = 8
+    X = torch.randn(50, 2, 3, 10)
+
+    model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour, input_shape=X.shape)
+
+    model_inference(X, model)
+
+    assert not model.training
+
+
+def test_model_inference_shape():
+    latent_dim = 5
+    num_behaviour = 8
+    X = torch.randn(50, 2, 3, 10)
+
+    model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour, input_shape=X.shape)
+
+    Y = model_inference(X, model)
+
+    assert_equal(Y.shape, (len(X), latent_dim))
 
 
 def test_bundlenet_architecture():
@@ -110,6 +134,7 @@ def test_bundlenet_training_best_of_5_init():
         initialisation='best_of_5_init'
     )
     assert loss_array.shape == (n_epochs, 3)
+
 
 def test_bundlenet_training_validation_data():
     X = np.random.rand(50, 10)
