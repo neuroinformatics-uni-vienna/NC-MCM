@@ -2,6 +2,7 @@
 @authors:
 Michael Hofer
 """
+import json
 import os
 import matplotlib.pyplot as plt
 import numpy as np
@@ -22,6 +23,7 @@ def behavioral_state_diagram(C,
                              threshold=None,
                              adj_matrix=False,
                              interactive=None,
+                             options=0,
                              weights_hist=False,
                              bins=15,
                              test=False,
@@ -33,19 +35,39 @@ def behavioral_state_diagram(C,
 
     Parameters:
 
-        C (np.array, list): Defines the cognitive states timeseries.
+        C: np.ndarray, required
+            Defines the cognitive states timeseries.
 
-        B (np.array, list): Defines the behavior timeseries.
+        B: np.ndarray, required
+            Defines the behavior timeseries.
 
-        behaviors (np.array, list): Names for elements in B, indexed by their value (e.g. name of B=1 is at behaviors[1])
+        behaviors: np.ndarray, optional
+            Names for elements in B, indexed by their value (e.g. name of B=1 is at behaviors[1])
 
-        threshold (float): A threshold which is used to display edges in the graph (smaller values are not plotted)
+        threshold: float, optional
+            A threshold which is used to display edges in the graph (smaller values are not plotted)
 
-        offset (float): Distance between clusters
-        bins (int): Amount of bins in histogram if "weights_hist"=True
-        interactive (str): If the HTML-plot should be created, one defines the filename with path here
-        adj_matrix (bool): If the adjacency matrix should be plotted
-        weights_hist (bool): If a histogram of transition weights should be plotted
+        offset: float, optional
+            Distance between clusters
+
+        bins: int, optional
+            Amount of bins in histogram if "weights_hist"=True
+
+        interactive: str, optional
+            If the HTML-plot should be created, one defines the filename with path here
+
+        options: int, str, optional
+            This gives either an int from 0 to 2 for a predefined physics script or one can give a path to
+            a JSON-file containing a physics script for a pyvis graph.
+                0 will push nodes apart and pull them together by the edges.
+                1 will remove all forces acting on the nodes so one can place them by hand.
+                2 removes some of the strength of the forces in 0 to make it easier to place nodes.
+
+        adj_matrix: bool, optional
+            If the adjacency matrix should be plotted
+
+        weights_hist: bool, optional
+            If a histogram of transition weights should be plotted
 
     Returns:
         Boolean success indicator
@@ -53,7 +75,6 @@ def behavioral_state_diagram(C,
 
     if behaviors is not None:
         if type(B[0]) in (int, np.int32, np.int64):
-            print(behaviors)
             trans_B = behaviors
         else:
             B, _ = make_integer_list(B)
@@ -120,10 +141,12 @@ def behavioral_state_diagram(C,
             ax.set_ylabel('Nodes')
             plt.show(block=False)
 
-        net = Network(directed=True)
+        net = Network(directed=True, filter_menu=True, select_menu=True, cdn_resources='remote')
         net.from_nx(G)
         for idx, node in enumerate(net.nodes):
             c, b = node['id'].split(':')
+            node['cog_state'] = c
+            node['behavior'] = b
             c_int = int(c[1:]) - 1
             b_int = np.where(np.asarray(trans_B) == b)[0][0]
             n_idx = (len(behaviors) * c_int + b_int)
@@ -133,9 +156,28 @@ def behavioral_state_diagram(C,
             new = {name: int(T[n_idx, i] * (len(B) - 1)) for i, name in enumerate(G.nodes)}
             node['title'] = ''.join(f'{k}:{v}\n' for k, v in new.items() if v > 0)
 
-        net.show_buttons(['physics', 'nodes', 'edges'])
+        if type(options) is int:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+
+            if options not in [0, 1, 2]:
+                print(ValueError(f"Option '{options}' not found in the options file."))
+
+            with open(os.path.join(script_dir, "json_physics", "options.json"), 'r') as file:
+                options_dict = json.load(file)
+            physics = options_dict[str(options)]
+
+        elif type(options) is str:
+            with open(options, 'r') as file:
+                physics = json.load(file)
+
+        else:
+            print('ERROR! No valid physics script selected.')
+            return None
+        physics = json.dumps(physics, indent=2)
+        net.set_options(physics)
+
         net.show(f'{interactive}.html', notebook=False)
-        print(f'Plot has been saved under: {os.getcwd()}/{interactive}.html')
+        print(f'Plot has been saved under: {interactive}.html')
 
     else:
 
@@ -194,29 +236,48 @@ def cluster_neural_activity(N,
 
        Parameters:
 
-           N (np.array, list): Neuronal activity timeseries (shape = (neurons, activity-timeseries))
+           N: np.ndarray, required
+                Neuronal activity timeseries (shape = (neurons, activity-timeseries))
 
-           B (np.array, list): Behavioral timeseries data
+           B: np.ndarray, required
+                Behavioral timeseries data
 
-           n_clusters (int): Amount of clusters to be tested.
+           n_clusters: int, required
+                Amount of clusters to be tested.
 
-           nrep (int): Amount of sequences to be clustered and tested.
+           nrep: int, optional
+                Amount of sequences to be clustered and tested.
 
-           model: A classification model with the ability to predict a probability.
+           model: model, optional
+                A classification model with the ability to predict a probability.
+                As a default a LogisticRegression is used.
 
-           ensemble (bool): If an ensemble should be created for the classifier.
+           ensemble: bool, optional
+                If an ensemble should be created for the classifier.
 
-           sim_m (int): Amount of generated sequences in the markovian() method.
-           sim_s (int): Amount of generated sequences in the stationary() method.
-           chunks (int): Amount of chunks used in the stationary() method.
-           clustering: Type of clustering used ('kmeans' or 'spectral')
-           kmeans_init: Value for 'n_init' in KMeans (default: 'auto').
-           stationary (bool): Amount of chunks used in the stationary() method.
+           sim_m: int, optional
+                Amount of generated sequences in the markovian() method.
+
+           sim_s: int, optional
+                Amount of generated sequences in the stationary() method.
+
+           chunks: int, optional
+                Amount of chunks used in the stationary() method.
+
+           clustering: str, optional
+                Type of clustering used ('kmeans' or 'spectral')
+
+           kmeans_init: str, optional
+                Value for 'n_init' in KMeans (default: 'auto').
+
+           stationary:bool, optional
+                Amount of chunks used in the stationary() method.
 
        Returns:
 
-           A numpy array of cognitive state sequences (amount='n_rep') sorted by likelihood of stemming from a 1st order
-           Markov Process and the p-value of the markovian() (and stationary()) -method(s).
+           res: list
+                A numpy array of cognitive state sequences (amount='n_rep') sorted by likelihood of stemming from a
+                1st order Markov Process and the p-value of the markovian() (and stationary()) -method(s).
        """
 
     if type(B[0]) not in (int, np.int32, np.int64):
@@ -261,24 +322,40 @@ def clustering_trajectories(yp_map,
 
     Parameters:
 
-      yp_map (np.array): Behavioral probability timeseires
+        yp_map: np.ndarray, required
+            Behavioral probability timeseries
 
-      n_clusters (int): Amount of clusters to be tested.
+        n_clusters: int, required
+            Amount of clusters to be tested.
 
-      kmeans_init: Value for 'n_init' in KMeans (default: 'auto').
+        kmeans_init: str, optional
+            Value for 'n_init' in KMeans (default: 'auto').
 
-      clustering (str): Type of clustering used ('kmeans' or 'spectral')
+        clustering: str, optional
+            Type of clustering used ('kmeans' or 'spectral')
 
-      chunks (int): Specifies the amount of chunks if stationary property is tested.
+        chunks: int, optional
+            Specifies the amount of chunks if stationary property is tested.
 
-      sim_m (int): Amount of generated sequences in the markovian() method.
+        sim_m: int, optional
+            Amount of generated sequences in the markovian() method.
 
-      sim_s (int): Amount of generated sequences in the stationary() method.
+        sim_s: int, optional
+            Amount of generated sequences in the stationary() method.
 
-      stationary (bool): Amount of chunks used in the stationary() method.
+        stationary: bool, optional
+            Amount of chunks used in the stationary() method.
 
     Returns:
-      A numpy array of cognitive state sequences and the p-value(s) of markovian() (and stationary()).
+
+        xctmp: np.ndarray
+            A numpy array of cognitive state sequences
+
+        p_m: np.ndarray
+            The p-value given by the "markovian" method
+
+        p_adj_s: np.ndarray
+              The p-value given by the "stationary" method
     """
     # Clustering in probability space
     if clustering == 'kmeans':

@@ -19,38 +19,38 @@ def test_behavioral_state_diagram():
     behaviors = [np.random.choice(actions) for _ in range(100)]
 
     result = behavioral_state_diagram(cognitive_states, behaviors,
-                                      interactive=False,
+                                      interactive=None,
                                       test=True,
                                       bins=10)
     assert result is True
     result = behavioral_state_diagram(cognitive_states, behaviors,
                                       behaviors=actions,
-                                      interactive=False,
+                                      interactive=None,
                                       test=True,
                                       bins=10)
     assert result is True
     result = behavioral_state_diagram(cognitive_states, behaviors,
-                                      interactive=False,
+                                      interactive=None,
                                       weights_hist=True,
                                       test=True,
                                       bins=10)
     assert result is True
     result = behavioral_state_diagram(cognitive_states, behaviors,
                                       behaviors=actions,
-                                      interactive=False,
+                                      interactive=None,
                                       weights_hist=True,
                                       test=True,
                                       bins=10)
     assert result is True
     result = behavioral_state_diagram(cognitive_states, behaviors,
-                                      interactive=False,
+                                      interactive=None,
                                       adj_matrix=True,
                                       test=True,
                                       bins=10)
     assert result is True
     result = behavioral_state_diagram(cognitive_states, behaviors,
                                       behaviors=actions,
-                                      interactive=False,
+                                      interactive=None,
                                       adj_matrix=True,
                                       test=True,
                                       bins=10)
@@ -65,14 +65,14 @@ def test_interactive(return_value):
 
     result = behavioral_state_diagram(cognitive_states, behaviors,
                                       behaviors=actions,
-                                      interactive=True,
+                                      interactive="plot_test",
                                       adj_matrix=True,
                                       test=True,
                                       bins=10)
     assert result is True
 
     result = behavioral_state_diagram(cognitive_states, behaviors,
-                                      interactive=True,
+                                      interactive="plot_test",
                                       adj_matrix=False,
                                       test=True,
                                       bins=10)
