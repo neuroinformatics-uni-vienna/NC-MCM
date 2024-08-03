@@ -12,6 +12,7 @@ from matplotlib.lines import Line2D
 from matplotlib.colors import ListedColormap
 from sklearn.metrics import accuracy_score
 import matplotlib.animation as anim  # FuncAnimation
+from sklearn.model_selection import cross_val_score
 
 
 class LatentSpaceVisualiser:
@@ -191,6 +192,7 @@ class LatentSpaceVisualiser:
                          filename='comparison.png',
                          show_fig=True,
                          fig_size=(10, 8),
+                         cv_folds=5,
                          **kwargs):
         """
         Creates a comparison plot between the True labels and the predicted labels.
@@ -217,6 +219,9 @@ class LatentSpaceVisualiser:
         fig_size : tuple, optional
             Sets the size of the figure.
 
+        cv_folds: int, optional
+            Gives the amount of cross-folds used for cross validation (default is 5)
+
         filename : str, optional
             The path and filename where the plot will be saved.
             Default is 'figures/latent_time_series.png'.
@@ -231,6 +236,8 @@ class LatentSpaceVisualiser:
             return False
 
         if original_data is None:
+
+            cv_scores = cross_val_score(model, self.y, self.b, cv=cv_folds, scoring='accuracy')
             origin = 'Latent Embedding'
             model.fit(self.y, self.b)
             B_pred = model.predict(self.y)
@@ -239,6 +246,8 @@ class LatentSpaceVisualiser:
                 print('The original values attached must be the same size as the labels (\'self.b\')')
                 print(f'\t\'y_original\' is {original_data.shape[0]} long, while \'self.b\' is {self.b.shape[0]}')
                 return False
+
+            cv_scores = cross_val_score(model, original_data, self.b, cv=cv_folds, scoring='accuracy')
             origin = 'Original Values'
             model.fit(original_data, self.b)
             B_pred = model.predict(original_data)
@@ -278,7 +287,8 @@ class LatentSpaceVisualiser:
         if show_titles:
             axis[1].set_title(f'\nModel: {type(model)}\n'
                               f'Trained/Predicting from {origin}\n\n'
-                              f'Accuracy at {round(accuracy_score(self.b, B_pred), 3)}\n')
+                              f'In-sample accuracy at {round(accuracy_score(self.b, B_pred), 5)}\n'
+                              f'Mean cross-validation accuracy at {round(np.mean(cv_scores), 5)}\n')
             fig.suptitle(f'{self.y.shape[0]} Frames',
                          fontsize='x-large',
                          fontweight='bold')

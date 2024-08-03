@@ -13,12 +13,20 @@ def adj_matrix_ncmcm(C, B):
         Calculate the adjacency matrix and list of cognitive-behavioral states.
 
         Parameters:
-        - B: behavioral timeseries data
-        - C: cognitive state timeseries data
+
+            B: np.ndarray, required
+                Behavioral timeseries data
+
+            C: np.ndarray, required
+                Cognitive state timeseries data
 
         Returns:
-        - C_B_states: List of all cognitive-behavioral states (coded as: CCBB).
-        - T: Adjacency matrix for the cognitive-behavioral states.
+
+            C_B_states: np.ndarray
+                One-dimensional array of all cognitive-behavioral states (coded as: CCBB).
+
+            T: np.ndarray
+                Adjacency matrix for the cognitive-behavioral states.
     """
 
     b = np.unique(B)
@@ -51,17 +59,31 @@ def fit_model(neuron_traces,
 
     Parameters:
 
-        neuron_traces (np.ndarray, list): Neuronal activity timeseries (shape = (neurons, activity-timeseries))
+        neuron_traces: np.ndarray, required
+            Neuronal activity timeseries (shape = (neurons, activity-timeseries))
 
-        B (np.ndarray, list): Behavioral timeseries data
+        B: np.ndarray, required
+            Behavioral timeseries data
 
-        base_model: Classifier to project into probability space (needs .predict_proba method)
-        ensemble: A boolean indicating if the CustomEnsembleModel should be created.
-        cv_folds: If cross validation should be applied, this signals the amount of cross-folds.
+        base_model: model, required
+            Classifier to project into probability space (needs .predict_proba method)
+
+        ensemble: bool, optional
+            A boolean indicating if the CustomEnsembleModel should be created.
+
+        cv_folds: int, optional
+            If cross validation should be applied, this signals the amount of cross-folds.
 
     Returns:
 
-        Boolean success indicator
+        yp_map: np.ndarray
+            The projection into probability space as a three-dimensional array.
+
+        pred_model: model
+            The fitted model is returned. If "ensemble" is True it is a CustomEnsembleModel.
+
+        cv_scores: np.ndarray
+            If cv_folds is defined the individual accuracies for all folds are also returned.
     """
     B = np.asarray(B)
     neuron_traces = np.asarray(neuron_traces)
@@ -79,8 +101,14 @@ def fit_model(neuron_traces,
         cv_scores = cross_val_score(pred_model, neuron_traces.T, B, cv=cv_folds,
                                     scoring='accuracy')  # 5-fold cross-validation
         print(f'Mean cross-validation results for {cv_folds} folds:\n'
-              f'\tMean: {np.mean(cv_scores)}\n'
-              f'The full scores can be accessed by \'self.cv_scores\'')
+              f'\tMean: {np.mean(cv_scores)}\n')
+
+        pred_model.fit(neuron_traces.T, B)
+        B_pred = np.asarray(pred_model.predict(neuron_traces.T))
+        print("Accuracy for full training data:", accuracy_score(B, B_pred))
+        yp_map = pred_model.predict_proba(neuron_traces.T)
+
+        return yp_map, pred_model, cv_scores
 
     pred_model.fit(neuron_traces.T, B)
     B_pred = np.asarray(pred_model.predict(neuron_traces.T))
