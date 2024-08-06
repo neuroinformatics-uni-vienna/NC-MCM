@@ -31,38 +31,22 @@ B = data.behaviour
 
 plotting_neuronal_behavioural(X, B, b_names=data.behaviour_names)
 
-# B = np.roll(B, shift=np.random.randint(500,B.shape[0]-500)) # shuffle B by circular permutation
-# B = np.random.permutation(B)
-
 ### Preprocess and prepare data for BundLe Net
-# time, X = preprocess_data(X, data.fps)
 X_, B_ = prep_data(X, B, win=15)
 
 Xs_ = X_[:, :, :, mask == 1]
 Xi_ = X_[:, :, :, mask == 2]
 Xm_ = X_[:, :, :, mask == 3]
 
-
-
-# Xm_ = np.random.permutation(Xi_)
-
 # X_train, X_test, B_train, B_test = timeseries_train_test_split(X_, B_)
 # Xs_, Xs_train, Xs_test = X_[:, :, :, mask == 1], X_train[:, :, :, mask == 1], X_test[:, :, :, mask == 1]
 # Xi_, Xi_train, Xi_test = X_[:, :, :, mask == 2], X_train[:, :, :, mask == 2], X_test[:, :, :, mask == 2]
 # Xm_, Xm_train, Xm_test = X_[:, :, :, mask == 3], X_train[:, :, :, mask == 3], X_test[:, :, :, mask == 3]
 
-
-def set_first_weights_to_zeros(module):
-    for var in module.trainable_variables:
-        var.assign(tf.zeros_like(var))
-        print(var.name)
-        break
-
-
 def _build_tau_network():
     return tf.keras.Sequential([
         layers.Flatten(),
-        layers.Dense(50, activation='relu', kernel_regularizer=tf.keras.regularizers.l1(5e-4)),
+        layers.Dense(50, activation='relu', kernel_regularizer=tf.keras.regularizers.l1(2e-4)),
         layers.Dense(20, activation='relu'),
         layers.Dense(10, activation='relu'),
         layers.Dense(7, activation='relu'),
@@ -74,16 +58,9 @@ def _build_tau_network():
 for i in range(10):
     # Deploy BunDLe Net
     model = BunDLeNet(latent_dim=3, num_behaviour=len(data.behaviour_names))
-    model.post_tau = tf.keras.Sequential([
-        layers.Concatenate(axis=1),
-        layers.GaussianNoise(0.01)
-    ])
+
     model.tau_s, model.tau_i, model.tau_m = _build_tau_network(), _build_tau_network(), _build_tau_network()
     _ = model((Xs_, Xi_, Xm_))
-
-    # # Set the weights of tau_s, tau_i, and tau_m to zeros
-    # for module in [model.tau_s, model.tau_i, model.tau_m]:
-    #     set_first_weights_to_zeros(module)
 
     loss_array, _ = train_model(
         (Xs_, Xi_, Xm_),
@@ -132,3 +109,23 @@ for i in range(10):
     ax.set_ylim3d(-3, 3)
     ax.set_zlim3d(-3, 3)
     plt.show()
+
+direction_vectors = []
+for b in np.unique(B):
+    direction_vectors.append(np.mean( Y0_[B_ == b][1:] - Y0_[B_ == b][:-1], axis=0))
+direction_vectors = np.abs(direction_vectors)
+
+fig, ax = plt.subplots(figsize=(7,7))
+b_names = [data.behaviour_names[i] for i in range(8)]
+ax.bar(b_names, direction_vectors[:, 0], label='Sensory')
+ax.bar(b_names, direction_vectors[:, 1], bottom=direction_vectors[:, 0], label='Interneurons')
+ax.bar(b_names, direction_vectors[:, 2], bottom=direction_vectors[:, 0] + direction_vectors[:, 1], label='Motor')
+
+ax.set_xlabel('Behaviors')
+ax.set_ylabel('Contributions')
+ax.legend()
+
+plt.xticks(rotation=40)
+plt.show()
+
+
