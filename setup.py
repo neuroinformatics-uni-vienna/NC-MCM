@@ -35,6 +35,7 @@ setup(
         'mat73',
         'seaborn',
         'pytest',
-        'pyvis'
+        'pyvis',
+        'torch',
     ],
 )

@@ -1,3 +1,4 @@
+import torch
 import numpy as np
 from ncmcm.bundlenet.utils import prep_data
 from ncmcm.bundlenet.bundlenet import BunDLeNet, train_model
@@ -10,7 +11,7 @@ def test_bundlenet_training():
     # Deploy BunDLe Net
     latent_dim = 3
     num_behaviour = B.shape[-1]
-    model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour)
+    model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour, input_shape=X_.shape)
 
     n_epochs = 5
     loss_array, _ = train_model(
@@ -32,7 +33,7 @@ def test_bundlenet_training_pca_init():
     # Deploy BunDLe Net
     latent_dim = 3
     num_behaviour = B.shape[-1]
-    model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour)
+    model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour, input_shape=X_.shape)
 
     n_epochs = 5
     loss_array, _ = train_model(
@@ -55,7 +56,7 @@ def test_bundlenet_training_best_of_5_init():
     # Deploy BunDLe Net
     latent_dim = 3
     num_behaviour = B.shape[-1]
-    model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour)
+    model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour, input_shape=X_.shape)
 
     n_epochs = 5
 
@@ -82,7 +83,7 @@ def test_bundlenet_training_validation_data():
     # Deploy BunDLe Net
     latent_dim = 3
     num_behaviour = B_train.shape[-1]
-    model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour)
+    model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour, input_shape=X_train.shape)
 
     n_epochs = 5
     train_history, test_history = train_model(

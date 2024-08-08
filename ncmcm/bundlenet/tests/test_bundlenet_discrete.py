@@ -1,24 +1,50 @@
+import torch
+import functools
 import numpy as np
 from ncmcm.bundlenet.utils import prep_data
-from ncmcm.bundlenet.bundlenet import BunDLeNet, train_model
+from ncmcm.bundlenet.bundlenet import GaussianNoise, BunDLeNet, BunDLeTrainer, train_model
+
+
+assert_equal = functools.partial(torch.testing.assert_close, rtol=0, atol=0)
+
+
+def test_gaussian_noise_train():
+    mean = 0.0
+    stddev = 0.1
+    X = torch.randn(50, 10)
+
+    noise = GaussianNoise(mean=mean, stddev=stddev)
+
+    noise.train()
+    output = noise(X)
+
+    torch.testing.assert_close((output - X).mean(), torch.tensor(mean), atol=0.01, rtol=0)
+    torch.testing.assert_close((output - X).std(), torch.tensor(stddev), atol=0.01, rtol=0)
+
+
+def test_gaussian_noise_eval():
+    X = torch.randn(50, 10)
+
+    noise = GaussianNoise(mean=0, stddev=0.1)
+
+    noise.eval()
+    output = noise(X)
+
+    assert_equal(output, X)
 
 
 def test_bundlenet_architecture():
-    X = np.random.rand(50, 10)
-    B = np.random.randint(5, size=(50,))
-
-    X_, B_ = prep_data(X, B, win=3)
-
-    # Deploy BunDLe Net
     latent_dim = 3
-    num_behaviour = np.unique(B).shape[0]
-    model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour)
-    _ = model(X_) # build model by providing input
+    num_behaviour = 8
+    X = torch.randn(50, 2, 3, 10)
 
-    assert model.tau.output_shape[-1] == latent_dim
-    assert model.T_Y.input_shape[-1] == latent_dim
-    assert model.T_Y.output_shape[-1] == latent_dim
-    assert model.predictor.output_shape[-1] == num_behaviour
+    model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour, input_shape=X.shape)
+
+    Yt1_upper, Yt1_lower, Bt1_upper = model(X)
+
+    assert_equal(Yt1_upper.shape, (len(X), latent_dim))
+    assert_equal(Yt1_lower.shape, (len(X), latent_dim))
+    assert_equal(Bt1_upper.shape, (len(X), num_behaviour))
 
 
 def test_bundlenet_training():
@@ -28,7 +54,7 @@ def test_bundlenet_training():
     # Deploy BunDLe Net
     latent_dim = 3
     num_behaviour = np.unique(B).shape[0]
-    model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour)
+    model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour, input_shape=X_.shape)
     n_epochs = 5
     loss_array, _ = train_model(
         X_,
@@ -49,7 +75,7 @@ def test_bundlenet_training_pca_init():
     # Deploy BunDLe Net
     latent_dim = 3
     num_behaviour = np.unique(B).shape[0]
-    model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour)
+    model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour, input_shape=X_.shape)
     n_epochs = 5
     loss_array, _ = train_model(
         X_,
@@ -71,7 +97,7 @@ def test_bundlenet_training_best_of_5_init():
     # Deploy BunDLe Net
     latent_dim = 3
     num_behaviour = np.unique(B).shape[0]
-    model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour)
+    model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour, input_shape=X_.shape)
     n_epochs = 5
     loss_array, _ = train_model(
         X_,
@@ -95,7 +121,7 @@ def test_bundlenet_training_validation_data():
     # Deploy BunDLe Net
     latent_dim = 3
     num_behaviour = np.unique(B_train).shape[0]
-    model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour)
+    model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour, input_shape=X_train.shape)
     n_epochs = 5
     train_history, test_history = train_model(
         X_train,
@@ -108,3 +134,49 @@ def test_bundlenet_training_validation_data():
         validation_data=(X_test, B_test),
         )
     assert train_history.shape == test_history.shape
+
+
+def test_bundletrainer_gradients():
+    X_ = torch.randn(50, 2, 3, 10)
+    B_ = torch.empty(50, dtype=torch.long).random_(5)
+
+    latent_dim = 3
+    gamma = torch.rand(1)
+    num_behaviour = np.unique(B_).shape[0]
+
+    model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour, input_shape=X_.shape)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+
+    trainer = BunDLeTrainer(model, optimizer, 'discrete', gamma)
+
+    trainer.train_step(X_, B_)
+
+    assert all(param.grad is not None for param in trainer.model.parameters())
+    assert not any(torch.isnan(param.grad).any() for param in trainer.model.parameters())
+    assert not any(torch.isinf(param.grad).any() for param in trainer.model.parameters())
+
+
+def test_bundletrainer_loss():
+    X_ = torch.randn(50, 2, 3, 10)
+    B_ = torch.empty(50, dtype=torch.long).random_(5)
+
+    latent_dim = 3
+    gamma = torch.rand(1)
+    num_behaviour = np.unique(B_).shape[0]
+
+    model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour, input_shape=X_.shape)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+
+    trainer = BunDLeTrainer(model, optimizer, 'discrete', gamma)
+
+    dcc_loss, behaviour_loss, total_loss = trainer.train_step(X_, B_)
+
+    assert isinstance(dcc_loss, float)
+    assert isinstance(behaviour_loss, float)
+    assert isinstance(total_loss, float)
+
+    assert dcc_loss >= 0
+    assert behaviour_loss >= 0
+    assert total_loss >= 0
+
+    torch.testing.assert_close(total_loss, dcc_loss + behaviour_loss)
