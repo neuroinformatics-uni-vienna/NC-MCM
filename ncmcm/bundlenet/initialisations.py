@@ -1,27 +1,29 @@
 """
 @authors:
 Akshey Kumar
+Vittorio Boarini
 """
 import os
+import copy
 import numpy as np
-import keras
-import tensorflow as tf
-from tensorflow.keras import Model
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader, TensorDataset
 from sklearn.decomposition import PCA
 
 
-
-def pca_initialisation(X_, tau, latent_dim):
+def pca_initialisation(X_, tau, latent_dim, device):
     """
     Initialises BunDLe Net's tau such that its output is the PCA of the input traces.
     PCA initialisation may make the embeddings more reproduceable across runs.
     This function is called within the train_model() function and saves the learned tau weights
-    in a .h5 file in the same repository.
+    in a .pt file in the same repository.
 
     Parameters:
         X_ (np.ndarray): Input data.
         tau (object): BunDLe Net tau (tf sequential layer).
         latent_dim (int): Dimension of the latent space.
+        device (torch.device): Device where the model should be runned.
 
     """
     # Performing PCA on the time slice
@@ -32,33 +34,42 @@ def pca_initialisation(X_, tau, latent_dim):
     Y0_ = pca.transform(X_pca)
 
     # Training tau to reproduce the PCA
-    class PCA_encoder(Model):
+    class PCA_encoder(nn.Module):
         def __init__(self, latent_dim):
             super(PCA_encoder, self).__init__()
             self.latent_dim = latent_dim
             self.encoder = tau
 
-        def call(self, x):
+        def forward(self, x):
             encoded = self.encoder(x)
             return encoded
 
-    pcaencoder = PCA_encoder(latent_dim=latent_dim)
-    opt = tf.keras.optimizers.Adam(learning_rate=0.01)
-    pcaencoder.compile(optimizer=opt, loss="mse", metrics=["mse"])
-    history = pcaencoder.fit(
-        X0_,
-        Y0_,
-        epochs=10,
-        batch_size=100,
-        verbose=0,
-    )
-    Y0_pred = pcaencoder(X0_).numpy()
+    X0_tensor = torch.tensor(X0_, dtype=torch.float, device=device)
+    Y0_tensor = torch.tensor(Y0_, dtype=torch.float, device=device)
+
+    dataset = TensorDataset(X0_tensor, Y0_tensor)
+    dataloader = DataLoader(dataset, batch_size=100, shuffle=True)
+
+    pcaencoder = PCA_encoder(latent_dim=latent_dim).to(device)
+    opt = torch.optim.Adam(pcaencoder.parameters(), lr=0.01)
+    mse = nn.MSELoss()
+
+    pcaencoder.train()
+    epochs = 10
+    for _ in range(epochs):
+        for batch_X, batch_Y in dataloader:
+            opt.zero_grad()
+            outputs = pcaencoder(batch_X)
+            loss = mse(outputs, batch_Y)
+            loss.backward()
+            opt.step()
+
     ### Saving weights of this model
-    os.makedirs(os.path.dirname('temp/'), exist_ok=True)
-    pcaencoder.encoder.save_weights("temp/tau_pca.weights.h5")
+    os.makedirs(os.path.dirname("temp/"), exist_ok=True)
+    torch.save(pcaencoder.encoder.state_dict(), "temp/tau_pca.weights.pt")
 
 
-def best_of_5_runs(x_train, b_train_1, model, b_type, gamma, learning_rate, validation_data):
+def best_of_5_runs(x_train, b_train_1, model, b_type, gamma, learning_rate, validation_data, device):
     """
     Initialises BunDLe net with the best of 5 runs
 
@@ -77,7 +88,7 @@ def best_of_5_runs(x_train, b_train_1, model, b_type, gamma, learning_rate, vali
 
     for i in range(5):
         from ncmcm.bundlenet.bundlenet import train_model
-        model_ = keras.models.clone_model(model)
+        model_ = copy.deepcopy(model)
 
         train_history, test_history = train_model(
             x_train,
@@ -87,21 +98,21 @@ def best_of_5_runs(x_train, b_train_1, model, b_type, gamma, learning_rate, vali
             gamma=gamma,
             learning_rate=learning_rate,
             n_epochs=100,
-            validation_data = validation_data,
+            validation_data=validation_data,
             initialisation=None,
+            device=device,
         )
-        os.makedirs(os.path.dirname('temp/best_of_5_runs_models'), exist_ok=True)
-        # model_.save_weights("temp/best_of_5_runs_models/model_" + str(i) + ".weights.h5")
-        model_.save_weights("temp/best_of_5_runs_models/model_" + str(i))
-
+        
+        os.makedirs(os.path.dirname("temp/best_of_5_runs_models"), exist_ok=True)
+        torch.save(model_.state_dict(), f"temp/best_of_5_runs_models/model_{str(i)}.weights.pt")
         model_loss.append(test_history[-1, -1])
 
     for n, i in enumerate(model_loss):
         print("model:", n, "val loss:", i)
 
     # Load model with least loss
-    model.load_weights(
-        "temp/best_of_5_runs_models/model_" + str(np.argmin(model_loss))
+    model.load_state_dict(
+        torch.load(f"temp/best_of_5_runs_models/model_{str(np.argmin(model_loss))}.weights.pt")
     )
 
     return model

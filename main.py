@@ -1,3 +1,4 @@
+import torch
 import numpy as np
 import matplotlib.pyplot as plt
 from ncmcm.data_loaders.matlab_dataset import Database
@@ -30,7 +31,7 @@ plotting_neuronal_behavioural(X, B, b_names=data.behaviour_names)
 X_, B_ = prep_data(X, B, win=15)
 
 # Deploy BunDLe Net
-model = BunDLeNet(latent_dim=3, num_behaviour=len(data.behaviour_names))
+model = BunDLeNet(latent_dim=3, num_behaviour=len(data.behaviour_names), input_shape=X_.shape)
 loss_array, _ = train_model(
     X_,
     B_,
@@ -50,8 +51,11 @@ for i, label in enumerate([
 plt.legend()
 plt.show()
 
-# Projecting into latent space
-Y0_ = model.tau(X_[:, 0]).numpy()
+device = next(model.parameters()).device
+model.eval()
+with torch.no_grad():
+    # Projecting into latent space
+    Y0_ = model.tau(torch.tensor(X_[:, 0], dtype=torch.float, device=device)).cpu().numpy()
 
 # Save the weights
 save_model = False
