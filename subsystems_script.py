@@ -33,10 +33,11 @@ X_, B_ = prep_data(X, B, win=15)
 Xs_ = X_[:, :, :, mask == 1]
 Xi_ = X_[:, :, :, mask == 2]
 Xm_ = X_[:, :, :, mask == 3]
-print(Xs_.shape, Xi_.shape, Xm_.shape)
+input_shapes = Xs_.shape, Xi_.shape, Xm_.shape
+print(input_shapes)
 
 # Deploy BunDLe Net
-model = BunDLeNet(latent_dim=3, num_behaviour=len(data.behaviour_names))
+model = BunDLeNet(latent_dim=3, num_behaviour=len(data.behaviour_names), input_shapes=input_shapes)
 loss_array, _ = train_model(
     (Xs_, Xi_, Xm_),
     B_,
