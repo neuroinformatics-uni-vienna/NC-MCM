@@ -11,24 +11,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
 from .losses import BccDccLoss
 from .initialisations import pca_initialisation, best_of_5_runs
-from .utils import torch_batch_prep
-
-
-#########################################################################
-# BunDLe Net --- Architecture and functions for training - continuous B #
-#########################################################################
-
-
-class GaussianNoise(nn.Module):
-    def __init__(self, mean=0, stddev=0.05):
-        super(GaussianNoise, self).__init__()
-        self.mean = mean
-        self.stddev = stddev
-
-    def forward(self, x):
-        if self.training and self.stddev > 0:
-            return x + torch.normal(self.mean, self.stddev, size=x.shape, device=x.device)
-        return x
+from .utils import torch_batch_prep, GaussianNoise
 
 
 class BunDLeNet(nn.Module):
