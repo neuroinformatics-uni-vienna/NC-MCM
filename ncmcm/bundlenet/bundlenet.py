@@ -64,6 +64,7 @@ class BunDLeNet(nn.Module):
         )
 
     def forward(self, x):
+        x, = x
         # Upper arm of commutativity diagram
         yt1_upper = self.tau(x[:, 1])
         bt1_upper = self.predictor(yt1_upper)

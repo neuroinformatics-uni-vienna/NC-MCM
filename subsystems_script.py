@@ -1,5 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import torch
+
 from ncmcm.data_loaders.matlab_dataset import Database
 from ncmcm.bundlenet.bundlenet import train_model
 from ncmcm.bundlenet.subsystem_fit.bundlenet_subsystem import BunDLeNet
@@ -45,7 +47,8 @@ loss_array, _ = train_model(
     b_type='discrete',
     gamma=0.9,
     learning_rate=0.001,
-    n_epochs=1500,
+    n_epochs=500,
+    device=torch.device('cuda'),
     #initialisation='best_of_5_init'
 )
 
@@ -59,13 +62,13 @@ plt.legend()
 plt.show()
 
 # Projecting into latent space
-
-Y0s_ = model.tau_s(Xs_[:, 0])
-Y0i_ = model.tau_i(Xi_[:, 0])
-Y0m_ = model.tau_m(Xm_[:, 0])
-Y0_ = model.post_tau([Y0s_, Y0i_, Y0m_]).numpy()
-
-model.post_tau.get_weights()
+device = next(model.parameters()).device
+model.eval()
+with torch.no_grad():
+    Y0s_ = model.tau_s(torch.tensor(Xs_[:, 0], dtype=torch.float, device=device))
+    Y0i_ = model.tau_i(torch.tensor(Xi_[:, 0], dtype=torch.float, device=device))
+    Y0m_ = model.tau_m(torch.tensor(Xm_[:, 0], dtype=torch.float, device=device))
+    Y0_ = torch.cat((Y0s_, Y0i_, Y0m_), dim=1).cpu().numpy()
 
 # Plotting latent space dynamics
 vis = LatentSpaceVisualiser(Y0_, B_, data.behaviour_names)
