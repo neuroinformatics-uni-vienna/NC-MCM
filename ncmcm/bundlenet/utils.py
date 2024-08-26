@@ -6,13 +6,9 @@ Vittorio Boarini
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader, TensorDataset
+import torch.nn as nn
+from torch.utils.data import DataLoader, Dataset
 from sklearn.model_selection import KFold
-
-
-########################################################
-##########  Preparing the data for bunDLe Net ##########
-########################################################
 
 
 def prep_data(x, b, win=15):
@@ -95,34 +91,112 @@ def timeseries_train_test_split(x_paired, b_1):
             return x_train, x_test, b_train_1, b_test_1
 
 
+# def torch_batch_prep(x_, b_, device, batch_size=100, shuffle=True):
+#     """
+#     Prepare datasets for PyTorch by creating batches.
+#
+#     Parameters:
+#         x_ : np.ndarray
+#             Input data of shape (n_samples, ...).
+#         b_ : np.ndarray
+#             Target data of shape (n_samples, ...).
+#         device : torch.device
+#             Device where the tensors should be created.
+#         batch_size : int, optional
+#             Size of the batches to be created. Default is 100.
+#         shuffle : bool, optional
+#             Defines whether the data should be reshuffled at every epoch
+#
+#     Returns:
+#         dataloader : torch.utils.data.DataLoader
+#             PyTorch DataLoader containing batches of input data and target data.
+#
+#     This function prepares datasets for PyTorch by creating batches. It takes input data 'x_' and target data 'b_'
+#     and creates a PyTorch dataloader from them.
+#
+#     The function returns the prepared batch dataloader, which will be used for training the PyTorch model.
+#     """
+#     tensor_x = torch.tensor(x_, dtype=torch.float, device=device)
+#     tensor_b = torch.tensor(b_, device=device)
+#     dataset = TensorDataset(tensor_x, tensor_b)
+#     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
+#
+#     return dataloader
+
+
+class CustomDataset(Dataset):
+    def __init__(self, x_, b_, device):
+        """
+        Initialize the dataset.
+
+        Parameters:
+        x_ :np.ndarray
+            Input data of shape (n_samples, ...)
+            or
+            (np.ndarray, np.ndarray, np.ndarray)
+            Tuple of np.ndarray of shape (n_samples, ...) for subssystem BunDLe-Net.
+        b_ : np.ndarray
+            Target data of shape (n_samples, ...).
+        device : torch.device
+            Device where the tensors should be created.
+        """
+        self.x_ = (x_,) if not isinstance(x_, tuple) else x_
+        self.b_ = b_
+        self.device = device
+
+    def __len__(self):
+        return len(self.b_)
+
+    def __getitem__(self, idx):
+        """
+        Retrieve a single sample from the dataset.
+
+        Parameters:
+            idx : int
+                Index of the sample to retrieve.
+
+        Returns:
+            tuple: A tuple containing a tuple of input tensors and the corresponding target tensor.
+        """
+        x_tuple = tuple(torch.tensor(x[idx], dtype=torch.float, device=self.device) for x in self.x_)
+        b = torch.tensor(self.b_[idx], device=self.device)
+
+        return x_tuple, b
+
+
 def torch_batch_prep(x_, b_, device, batch_size=100, shuffle=True):
     """
     Prepare datasets for PyTorch by creating batches.
 
     Parameters:
-        x_ : np.ndarray
-            Input data of shape (n_samples, ...).
-        b_ : np.ndarray
-            Target data of shape (n_samples, ...).
+        x_ : list or tuple of lists
+            Input data, where x_ can be a single list or a tuple of lists/arrays.
+        b_ : list
+            Target data.
+        batch_size : int, optional
+            Size of the batches to be created. Default is 100.
         device : torch.device
             Device where the tensors should be created.
         batch_size : int, optional
             Size of the batches to be created. Default is 100.
         shuffle : bool, optional
             Defines whether the data should be reshuffled at every epoch
-
     Returns:
-        dataloader : torch.utils.data.DataLoader
-            PyTorch DataLoader containing batches of input data and target data.
-
-    This function prepares datasets for PyTorch by creating batches. It takes input data 'x_' and target data 'b_'
-    and creates a PyTorch dataloader from them.
-
-    The function returns the prepared batch dataloader, which will be used for training the PyTorch model.
+        DataLoader : PyTorch DataLoader
+            DataLoader containing batches of input data and target data.
     """
-    tensor_x = torch.tensor(x_, dtype=torch.float, device=device)
-    tensor_b = torch.tensor(b_, device=device)
-    dataset = TensorDataset(tensor_x, tensor_b)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
+    dataset = CustomDataset(x_, b_, device=device)
+    batch_loader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
+    return batch_loader
 
-    return dataloader
+
+class GaussianNoise(nn.Module):
+    def __init__(self, mean=0, stddev=0.05):
+        super(GaussianNoise, self).__init__()
+        self.mean = mean
+        self.stddev = stddev
+
+    def forward(self, x):
+        if self.training and self.stddev > 0:
+            return x + torch.normal(self.mean, self.stddev, size=x.shape, device=x.device)
+        return x

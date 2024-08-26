@@ -1,5 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import torch
+
 from ncmcm.data_loaders.matlab_dataset import Database
 from ncmcm.bundlenet.bundlenet import train_model
 from ncmcm.bundlenet.subsystem_fit.bundlenet_subsystem import BunDLeNet
@@ -33,10 +35,11 @@ X_, B_ = prep_data(X, B, win=15)
 Xs_ = X_[:, :, :, mask == 1]
 Xi_ = X_[:, :, :, mask == 2]
 Xm_ = X_[:, :, :, mask == 3]
-print(Xs_.shape, Xi_.shape, Xm_.shape)
+input_shapes = Xs_.shape, Xi_.shape, Xm_.shape
+print(input_shapes)
 
 # Deploy BunDLe Net
-model = BunDLeNet(latent_dim=3, num_behaviour=len(data.behaviour_names))
+model = BunDLeNet(latent_dim=3, num_behaviour=len(data.behaviour_names), input_shapes=input_shapes)
 loss_array, _ = train_model(
     (Xs_, Xi_, Xm_),
     B_,
@@ -44,7 +47,8 @@ loss_array, _ = train_model(
     b_type='discrete',
     gamma=0.9,
     learning_rate=0.001,
-    n_epochs=1500,
+    n_epochs=500,
+    device=torch.device('cuda'),
     #initialisation='best_of_5_init'
 )
 
@@ -58,13 +62,13 @@ plt.legend()
 plt.show()
 
 # Projecting into latent space
-
-Y0s_ = model.tau_s(Xs_[:, 0])
-Y0i_ = model.tau_i(Xi_[:, 0])
-Y0m_ = model.tau_m(Xm_[:, 0])
-Y0_ = model.post_tau([Y0s_, Y0i_, Y0m_]).numpy()
-
-model.post_tau.get_weights()
+device = next(model.parameters()).device
+model.eval()
+with torch.no_grad():
+    Y0s_ = model.tau_s(torch.tensor(Xs_[:, 0], dtype=torch.float, device=device))
+    Y0i_ = model.tau_i(torch.tensor(Xi_[:, 0], dtype=torch.float, device=device))
+    Y0m_ = model.tau_m(torch.tensor(Xm_[:, 0], dtype=torch.float, device=device))
+    Y0_ = torch.cat((Y0s_, Y0i_, Y0m_), dim=1).cpu().numpy()
 
 # Plotting latent space dynamics
 vis = LatentSpaceVisualiser(Y0_, B_, data.behaviour_names)
