@@ -4,98 +4,70 @@ Akshey Kumar
 """
 
 import numpy as np
-import tensorflow as tf
-from tensorflow.keras import layers, Model
+import torch
+import torch.nn as nn
 from tqdm import tqdm
 from ..losses import BccDccLoss
 from ..initialisations import pca_initialisation, best_of_5_runs
-from ..utils import tf_batch_prep
+from ..utils import torch_batch_prep, GaussianNoise
 
 
-#########################################################################
-# BunDLe Net --- Architecture and functions for training - continuous B #
-#########################################################################
+class BunDLeNet(nn.Module):
+    """
+    Subsystem Behaviour and Dynamical Learning Network (BunDLeNet) model.
 
-
-class BunDLeNet(Model):
-    """Behaviour and Dynamical Learning Network (BunDLeNet) model.
-
-    This model represents the BunDLe Net's architecture for deep learning and is
-    based on the commutativity diagrams. The resulting model is dynamically
-    consistent (DC) and behaviourally consistent (BC) as per the notion described
-    in the paper.
-
-    Args:
-        latent_dim (int):
-            Dimension of the latent space.
-
-        num_behaviour (int):
-            For discrete-valued behaviours, this stipulates the number of
-            discrete behavioural states
-            For continuous-valued behaviours, this stipulates the number of
-            behaviour variables
     """
 
-
-    def __init__(self, latent_dim: int, num_behaviour: int):
+    def __init__(self, latent_dim: int, num_behaviour: int, input_shapes: tuple):
         super(BunDLeNet, self).__init__()
         self.latent_dim = latent_dim
         self.num_behaviour = num_behaviour
-        self.tau_s = self._build_tau_network()
-        self.tau_i = self._build_tau_network()
-        self.tau_m = self._build_tau_network()
-        self.post_tau = tf.keras.Sequential([
-            layers.Concatenate(axis=1),
-            layers.GaussianNoise(0.01)
-        ])
-        self.T_Y = tf.keras.Sequential([
-            layers.Dense(latent_dim, activation='linear'),
-        ])
-        self.predictor = tf.keras.Sequential([
-            layers.Dense(num_behaviour, activation='linear')
-        ])
-
-    def _build_tau_network(self):
-        return tf.keras.Sequential([
-            layers.Flatten(),
-            layers.Dense(50, activation='relu'),
-            layers.Dense(20, activation='relu'),
-            layers.Dense(10, activation='relu'),
-            layers.Dense(7, activation='relu'),
-            layers.Dense(3, activation='relu'),
-            layers.Dense(1, activation='linear'),
-        ])
-
-    def call(self, inputs):
-        Xs, Xi, Xm = inputs
-        # Upper arm of commutativity diagram
-        Yt1_upper_s = self.tau_s(Xs[:, 1])
-        Yt1_upper_i = self.tau_i(Xi[:, 1])
-        Yt1_upper_m = self.tau_m(Xm[:, 1])
-        Yt1_upper = self.post_tau([Yt1_upper_s, Yt1_upper_i, Yt1_upper_m])
-        Bt1_upper = self.predictor(Yt1_upper)
-
-        # Lower arm of commutativity diagram
-        Yt1_lower_s = self.tau_s(Xs[:, 0])
-        Yt1_lower_i = self.tau_i(Xi[:, 0])
-        Yt1_lower_m = self.tau_m(Xm[:, 0])
-        Yt_lower = self.post_tau([Yt1_lower_s, Yt1_lower_i, Yt1_lower_m])
-        Yt1_lower = Yt_lower + self.T_Y(Yt_lower)
-
-        return Yt1_upper, Yt1_lower, Bt1_upper
-
-    def get_config(self):
-        config = {
-            'latent_dim': self.latent_dim,
-            'num_behaviour': self.num_behaviour,
-        }
-        base_config = super(BunDLeNet, self).get_config()
-        return dict(list(base_config.items()) + list(config.items()))
-
-    @classmethod
-    def from_config(cls, config):
-        return cls(
-            latent_dim=config['latent_dim'],
-            num_behaviour=config['num_behaviour'],
+        self.tau_s = self._build_tau_network(np.prod(input_shapes[0][-2:]))
+        self.tau_i = self._build_tau_network(np.prod(input_shapes[1][-2:]))
+        self.tau_m = self._build_tau_network(np.prod(input_shapes[2][-2:]))
+        self.post_tau = nn.Sequential(
+            GaussianNoise(0.01)
+        )
+        self.T_Y = nn.Sequential(
+            nn.Linear(latent_dim, latent_dim),
+        )
+        self.predictor = nn.Sequential(
+            nn.Linear(latent_dim, num_behaviour),
         )
 
+    def _build_tau_network(self, in_features):
+        return nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(in_features, 50),
+            nn.ReLU(),
+            nn.Linear(50, 20),
+            nn.ReLU(),
+            nn.Linear(20, 10),
+            nn.ReLU(),
+            nn.Linear(10, 7),
+            nn.ReLU(),
+            nn.Linear(7, 3),
+            nn.ReLU(),
+            nn.Linear(3, 1)
+        )
+
+    def forward(self, inputs):
+        xs, xi, xm = inputs
+
+        # Upper arm of commutativity diagram
+        yt1_upper_s = self.tau_s(xs[:, 1])
+        yt1_upper_i = self.tau_i(xi[:, 1])
+        yt1_upper_m = self.tau_m(xm[:, 1])
+        yt1_upper = torch.cat((yt1_upper_s, yt1_upper_i, yt1_upper_m), dim=1)
+        yt1_upper = self.post_tau(yt1_upper)
+        bt1_upper = self.predictor(yt1_upper)
+
+        # Lower arm of commutativity diagram
+        yt1_lower_s = self.tau_s(xs[:, 0])
+        yt1_lower_i = self.tau_i(xi[:, 0])
+        yt1_lower_m = self.tau_m(xm[:, 0])
+        yt_lower = torch.cat((yt1_lower_s, yt1_lower_i, yt1_lower_m), dim=1)
+        yt_lower = self.post_tau(yt_lower)
+        yt1_lower = yt_lower + self.T_Y(yt_lower)
+
+        return yt1_upper, yt1_lower, bt1_upper

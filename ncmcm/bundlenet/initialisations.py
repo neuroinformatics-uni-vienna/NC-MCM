@@ -102,6 +102,7 @@ def best_of_5_runs(x_train, b_train_1, model, b_type, gamma, learning_rate, vali
             initialisation=None,
             device=device,
         )
+        
         os.makedirs(os.path.dirname("temp/best_of_5_runs_models"), exist_ok=True)
         torch.save(model_.state_dict(), f"temp/best_of_5_runs_models/model_{str(i)}.weights.pt")
         model_loss.append(test_history[-1, -1])
