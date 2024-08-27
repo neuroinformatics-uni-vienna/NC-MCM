@@ -37,10 +37,11 @@ class BunDLeNet(Model):
     """
 
 
-    def __init__(self, latent_dim: int, num_behaviour: int):
+    def __init__(self, latent_dim: int, num_behaviour: int, reg_coef: float = 0):
         super(BunDLeNet, self).__init__()
         self.latent_dim = latent_dim
         self.num_behaviour = num_behaviour
+        self.reg_coef = reg_coef
         self.tau_s = self._build_tau_network()
         self.tau_i = self._build_tau_network()
         self.tau_m = self._build_tau_network()
@@ -58,13 +59,24 @@ class BunDLeNet(Model):
     def _build_tau_network(self):
         return tf.keras.Sequential([
             layers.Flatten(),
-            layers.Dense(50, activation='relu'),
+            layers.Dense(50, activation='relu', kernel_regularizer=tf.keras.regularizers.l1(self.reg_coef)),
             layers.Dense(20, activation='relu'),
             layers.Dense(10, activation='relu'),
             layers.Dense(7, activation='relu'),
             layers.Dense(3, activation='relu'),
             layers.Dense(1, activation='linear'),
         ])
+
+    # def _build_tau_network(self):
+    #     return tf.keras.Sequential([
+    #         layers.Flatten(),
+    #         layers.Dense(50, activation='relu'),
+    #         layers.Dense(20, activation='relu'),
+    #         layers.Dense(10, activation='relu'),
+    #         layers.Dense(7, activation='relu'),
+    #         layers.Dense(3, activation='relu'),
+    #         layers.Dense(1, activation='linear'),
+    #     ])
 
     def call(self, inputs):
         Xs, Xi, Xm = inputs
@@ -88,6 +100,7 @@ class BunDLeNet(Model):
         config = {
             'latent_dim': self.latent_dim,
             'num_behaviour': self.num_behaviour,
+            'reg_coef': self.reg_coef,
         }
         base_config = super(BunDLeNet, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
@@ -97,6 +110,7 @@ class BunDLeNet(Model):
         return cls(
             latent_dim=config['latent_dim'],
             num_behaviour=config['num_behaviour'],
+            reg_coef=config['reg_coef'],
         )
 
 

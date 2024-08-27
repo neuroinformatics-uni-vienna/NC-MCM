@@ -29,9 +29,9 @@ mask = data.categorise_neurons('datasets/raw/c_elegans')
 X = data.neuron_traces.T
 B = data.behaviour
 
-plotting_neuronal_behavioural(X, B, b_names=data.behaviour_names)
+# plotting_neuronal_behavioural(X, B, b_names=data.behaviour_names)
 
-# B = np.roll(B, shift=np.random.randint(500,B.shape[0]-500)) # shuffle B by circular permutation
+B = np.roll(B, shift=np.random.randint(500,B.shape[0]-500)) # shuffle B by circular permutation
 # B = np.random.permutation(B)
 
 ### Preprocess and prepare data for BundLe Net
@@ -41,8 +41,6 @@ X_, B_ = prep_data(X, B, win=15)
 Xs_ = X_[:, :, :, mask == 1]
 Xi_ = X_[:, :, :, mask == 2]
 Xm_ = X_[:, :, :, mask == 3]
-
-
 
 # Xm_ = np.random.permutation(Xi_)
 
@@ -59,27 +57,31 @@ def set_first_weights_to_zeros(module):
         break
 
 
-def _build_tau_network():
-    return tf.keras.Sequential([
-        layers.Flatten(),
-        layers.Dense(50, activation='relu', kernel_regularizer=tf.keras.regularizers.l1(5e-4)),
-        layers.Dense(20, activation='relu'),
-        layers.Dense(10, activation='relu'),
-        layers.Dense(7, activation='relu'),
-        layers.Dense(3, activation='relu'),
-        layers.Dense(1, activation='linear'),
-    ])
+# def _build_tau_network():
+#     return tf.keras.Sequential([
+#         layers.Flatten(),
+#         layers.Dense(50, activation='relu', kernel_regularizer=tf.keras.regularizers.l1(5e-4)),
+#         layers.Dense(20, activation='relu'),
+#         layers.Dense(10, activation='relu'),
+#         layers.Dense(7, activation='relu'),
+#         layers.Dense(3, activation='relu'),
+#         layers.Dense(1, activation='linear'),
+#     ])
 
 
 for i in range(10):
     # Deploy BunDLe Net
-    model = BunDLeNet(latent_dim=3, num_behaviour=len(data.behaviour_names))
-    model.post_tau = tf.keras.Sequential([
-        layers.Concatenate(axis=1),
-        layers.GaussianNoise(0.01)
-    ])
-    model.tau_s, model.tau_i, model.tau_m = _build_tau_network(), _build_tau_network(), _build_tau_network()
-    _ = model((Xs_, Xi_, Xm_))
+    model = BunDLeNet(
+        latent_dim=3,
+        num_behaviour=len(data.behaviour_names),
+        reg_coef=2e-4
+    )
+    # model.post_tau = tf.keras.Sequential([
+    #     layers.Concatenate(axis=1),
+    #     layers.GaussianNoise(0.01)
+    # ])
+    # model.tau_s, model.tau_i, model.tau_m = _build_tau_network(), _build_tau_network(), _build_tau_network()
+    # _ = model((Xs_, Xi_, Xm_))
 
     # # Set the weights of tau_s, tau_i, and tau_m to zeros
     # for module in [model.tau_s, model.tau_i, model.tau_m]:
@@ -122,13 +124,13 @@ for i in range(10):
     vis = LatentSpaceVisualiser(Y0_, B_, data.behaviour_names)
     vis.plot_latent_timeseries()
 
-    fig, ax = vis.plot_phase_space(show_fig=False, arrow_length_ratio=0.01)
-    ax.set_axis_on()
-    ax.set_xlabel('sensory neurons axis ')
-    ax.set_ylabel('inter neuron axis')
-    ax.set_zlabel('motor neuron axis')
-
-    ax.set_xlim3d(-3, 3)
-    ax.set_ylim3d(-3, 3)
-    ax.set_zlim3d(-3, 3)
+    # fig, ax = vis.plot_phase_space(show_fig=False, arrow_length_ratio=0.01)
+    # ax.set_axis_on()
+    # ax.set_xlabel('sensory neurons axis ')
+    # ax.set_ylabel('inter neuron axis')
+    # ax.set_zlabel('motor neuron axis')
+#
+    # ax.set_xlim3d(-3, 3)
+    # ax.set_ylim3d(-3, 3)
+    # ax.set_zlim3d(-3, 3)
     plt.show()
