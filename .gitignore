@@ -33,7 +33,7 @@ share/python-wheels/
 MANIFEST
 
 # Temporary files
-temp/
+temp/best_of_5_runs_models/
 
 # PyInstaller
 #  Usually these files are written by a python script from a template

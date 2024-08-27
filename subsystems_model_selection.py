@@ -9,8 +9,7 @@ from ncmcm.bundlenet.utils import prep_data
 from ncmcm.visualisers.latent_space import LatentSpaceVisualiser
 
 # Load Data (excluding behavioural neurons) and plot
-
-for worm_num in range(5):
+for worm_num in [0]:
     print('worm_num ', worm_num)
     algorithm = 'BunDLeNet'
     b_neurons = [
@@ -59,16 +58,13 @@ for worm_num in range(5):
         os.makedirs(os.path.dirname('temp/subsystems_model_selection'), exist_ok=True)
         model.save_weights(f"temp/subsystems_model_selection/worm_{worm_num}_model_{i}")
         model_loss.append(loss_array[-1,-1])
-
-   #plt.hist(model_loss)
-   #plt.show()
-
+    # plt.hist(model_loss)
+    # plt.show()
     np.save(f"temp/subsystems_model_selection/model_loss_worm_{worm_num}", model_loss)
-'''
-    model_loss = np.load(f"temp/subsystems_model_selection/model_loss_worm_{worm_num}.npy")
 
     # plotting all the models to visualise
-    for i in np.argsort(model_loss)[:1]:
+    model_loss = np.load(f"temp/subsystems_model_selection/model_loss_worm_{worm_num}.npy")
+    for i in np.argsort(model_loss):
         print(i, "loss:", model_loss[i])
 
         # Load model
@@ -83,8 +79,6 @@ for worm_num in range(5):
         Y0m_ = model.tau_m(Xm_[:, 0])
         Y0_ = model.post_tau([Y0s_, Y0i_, Y0m_]).numpy()
 
-        model.post_tau.get_weights()
-
         # Plotting latent space dynamics
         vis = LatentSpaceVisualiser(Y0_, B_, data.behaviour_names)
         # vis.plot_latent_timeseries()
@@ -95,4 +89,3 @@ for worm_num in range(5):
         ax.set_ylabel('inter neuron axis')
         ax.set_zlabel('motor neuron axis')
         plt.show()
-'''

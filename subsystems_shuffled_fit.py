@@ -31,8 +31,8 @@ B = data.behaviour
 
 # plotting_neuronal_behavioural(X, B, b_names=data.behaviour_names)
 
-B = np.roll(B, shift=np.random.randint(500,B.shape[0]-500)) # shuffle B by circular permutation
-# B = np.random.permutation(B)
+# B = np.roll(B, shift=np.random.randint(500,B.shape[0]-500)) # shuffle B by circular permutation
+# # #B = np.random.permutation(B)
 
 ### Preprocess and prepare data for BundLe Net
 # time, X = preprocess_data(X, data.fps)
@@ -42,7 +42,7 @@ Xs_ = X_[:, :, :, mask == 1]
 Xi_ = X_[:, :, :, mask == 2]
 Xm_ = X_[:, :, :, mask == 3]
 
-# Xm_ = np.random.permutation(Xi_)
+Xm_ = np.random.permutation(Xm_)
 
 # X_train, X_test, B_train, B_test = timeseries_train_test_split(X_, B_)
 # Xs_, Xs_train, Xs_test = X_[:, :, :, mask == 1], X_train[:, :, :, mask == 1], X_test[:, :, :, mask == 1]
