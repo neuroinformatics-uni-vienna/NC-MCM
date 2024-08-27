@@ -28,94 +28,18 @@ data.exclude_neurons(b_neurons)
 mask = data.categorise_neurons('datasets/raw/c_elegans')
 X = data.neuron_traces.T
 B = data.behaviour
-
-plotting_neuronal_behavioural(X, B, b_names=data.behaviour_names)
-
-### Preprocess and prepare data for BundLe Net
 X_, B_ = prep_data(X, B, win=15)
+Y0_ = np.load(f"temp/selected_models/Y0_unreg_min_train_loss_worm_0.npy")
 
-Xs_ = X_[:, :, :, mask == 1]
-Xi_ = X_[:, :, :, mask == 2]
-Xm_ = X_[:, :, :, mask == 3]
-
-# X_train, X_test, B_train, B_test = timeseries_train_test_split(X_, B_)
-# Xs_, Xs_train, Xs_test = X_[:, :, :, mask == 1], X_train[:, :, :, mask == 1], X_test[:, :, :, mask == 1]
-# Xi_, Xi_train, Xi_test = X_[:, :, :, mask == 2], X_train[:, :, :, mask == 2], X_test[:, :, :, mask == 2]
-# Xm_, Xm_train, Xm_test = X_[:, :, :, mask == 3], X_train[:, :, :, mask == 3], X_test[:, :, :, mask == 3]
-
-def _build_tau_network():
-    return tf.keras.Sequential([
-        layers.Flatten(),
-        layers.Dense(50, activation='relu', kernel_regularizer=tf.keras.regularizers.l1(2e-4)),
-        layers.Dense(20, activation='relu'),
-        layers.Dense(10, activation='relu'),
-        layers.Dense(7, activation='relu'),
-        layers.Dense(3, activation='relu'),
-        layers.Dense(1, activation='linear'),
-    ])
-
-
-for i in range(10):
-    # Deploy BunDLe Net
-    model = BunDLeNet(latent_dim=3, num_behaviour=len(data.behaviour_names))
-
-    model.tau_s, model.tau_i, model.tau_m = _build_tau_network(), _build_tau_network(), _build_tau_network()
-    _ = model((Xs_, Xi_, Xm_))
-
-    loss_array, _ = train_model(
-        (Xs_, Xi_, Xm_),
-        B_,
-        model,
-        b_type='discrete',
-        gamma=0.9,
-        learning_rate=0.001,
-        n_epochs=500,
-    )
-
-    for i, label in enumerate([
-        r"$\mathcal{L}_{\mathrm{Markov}}$",
-        r"$\mathcal{L}_{\mathrm{Behavior}}$",
-        r"$\mathcal{L}_{\mathrm{Reg}}$",
-        r"Total loss $\mathcal{L}$"
-    ]):
-        plt.semilogy(loss_array[:, i], label=label)
-    plt.legend()
-    plt.show()
-
-    # Projecting into latent space
-    Y0s_ = model.tau_s(Xs_[:, 0])
-    Y0i_ = model.tau_i(Xi_[:, 0])
-    Y0m_ = model.tau_m(Xm_[:, 0])
-    Y0_ = model.post_tau([Y0s_, Y0i_, Y0m_]).numpy()
-
-    from sklearn.metrics import accuracy_score
-    from scipy.stats import mode
-
-    B_pred = model.predictor(Y0_).numpy().argmax(axis=1)
-    print('accuracy learned embedding', accuracy_score(B_, B_pred))
-    print('accuracy of mode predictor', accuracy_score(B_, mode(B_)[0] * np.ones_like(B_)))
-
-    # Plotting latent space dynamics
-    vis = LatentSpaceVisualiser(Y0_, B_, data.behaviour_names)
-    vis.plot_latent_timeseries()
-
-    fig, ax = vis.plot_phase_space(show_fig=False, arrow_length_ratio=0.01)
-    ax.set_axis_on()
-    ax.set_xlabel('sensory neurons axis ')
-    ax.set_ylabel('inter neuron axis')
-    ax.set_zlabel('motor neuron axis')
-
-    ax.set_xlim3d(-3, 3)
-    ax.set_ylim3d(-3, 3)
-    ax.set_zlim3d(-3, 3)
-    plt.show()
 
 direction_vectors = []
 for b in np.unique(B):
-    direction_vectors.append(np.mean( Y0_[B_ == b][1:] - Y0_[B_ == b][:-1], axis=0))
+    direction_vectors.append(np.sum(np.abs( Y0_[B_ == b][1:] - Y0_[B_ == b][:-1]), axis=0))
 direction_vectors = np.abs(direction_vectors)
+direction_vectors = direction_vectors/np.sum(direction_vectors, axis=1)[:, np.newaxis]
+print(direction_vectors)
 
-fig, ax = plt.subplots(figsize=(7,7))
+fig, ax = plt.subplots(figsize=(8,4))
 b_names = [data.behaviour_names[i] for i in range(8)]
 ax.bar(b_names, direction_vectors[:, 0], label='Sensory')
 ax.bar(b_names, direction_vectors[:, 1], bottom=direction_vectors[:, 0], label='Interneurons')
@@ -126,6 +50,21 @@ ax.set_ylabel('Contributions')
 ax.legend()
 
 plt.xticks(rotation=40)
+plt.tight_layout()
+
+
+
+# Plotting latent space dynamics
+vis = LatentSpaceVisualiser(Y0_, B_, data.behaviour_names)
+# vis.plot_latent_timeseries()
+fig, ax = vis.plot_phase_space(show_fig=False, arrow_length_ratio=0.1)
+ax.set_axis_on()
+ax.set_xlabel('sensory neurons axis ')
+ax.set_ylabel('inter neuron axis')
+ax.set_zlabel('motor neuron axis')
+plt.show()
+
+
 plt.show()
 
 

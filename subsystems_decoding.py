@@ -33,17 +33,7 @@ X_, B_ = prep_data(X, B, win=15)
 Xs_ = X_[:, :, :, mask == 1]
 Xi_ = X_[:, :, :, mask == 2]
 Xm_ = X_[:, :, :, mask == 3]
-
-# loading embedding
-model_loss = np.load("temp/subsystems_model_selection/model_loss.npy")
-model = BunDLeNet(latent_dim=3, num_behaviour=len(data.behaviour_names))
-model.load_weights(
-    f"temp/subsystems_model_selection/model_{np.argmin(model_loss)}"
-)
-Y0s_ = model.tau_s(Xs_[:, 0])
-Y0i_ = model.tau_i(Xi_[:, 0])
-Y0m_ = model.tau_m(Xm_[:, 0])
-Y0_ = model.post_tau([Y0s_, Y0i_, Y0m_]).numpy()
+Y0_ = np.load(f"temp/selected_models/Y0_reg_min_test_loss_worm_0.npy")
 
 
 # Preparing neuronal data
@@ -85,7 +75,7 @@ for population_ in [X_win_1[14:], Xs_win_1[14:], Xi_win_1[14:], Xm_win_1[14:], X
 score = np.array(score)
 
 # plotting
-plt.figure(figsize=(8,8))
+plt.figure(figsize=(16,8))
 sns.boxenplot(score.T, cmap='cividis')
 plt.xticks(np.arange(score.shape[0]), ['whole brain','sensory', 'interneuron', 'motor', 'whole brain (win)', 'sensory (win)', 'interneuron (win)', 'motor (win)', 'Y'])
 plt.show()
