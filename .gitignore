@@ -163,3 +163,4 @@ cython_debug/
 #.idea/
 /.env_older_tf
 /.env_torch
+/.env_3_10
