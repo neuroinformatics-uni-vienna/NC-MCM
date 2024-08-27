@@ -30,7 +30,7 @@ for worm_num in [0]:
     B = data.behaviour
 
     ### Preprocess and prepare data for BundLe Net
-    time, X = preprocess_data(X, data.fps)
+    # time, X = preprocess_data(X, float(data.fps))
     X_, B_ = prep_data(X, B, win=15)
     Xs_ = X_[:, :, :, mask == 1]
     Xi_ = X_[:, :, :, mask == 2]
@@ -44,7 +44,7 @@ for worm_num in [0]:
 
     model_test_loss = []
     model_train_loss = []
-    for i in range(10):
+    for i in range(20):
         # Deploy BunDLe Net
         model = BunDLeNet(
             latent_dim=3,
@@ -62,16 +62,16 @@ for worm_num in [0]:
             n_epochs=1500,
             validation_data=((Xs_test, Xi_test, Xm_test), B_test,)
         )
-        for i, label in enumerate([
-            r"$\mathcal{L}_{\mathrm{Markov}}$",
-            r"$\mathcal{L}_{\mathrm{Behavior}}$",
-            r"regularisation loss",
-            r"Total loss $\mathcal{L}$"
-        ]):
-            plt.semilogy(train_loss[:, i], label=label)
-        plt.semilogy(test_loss[:, -1], label='test loss')
-        plt.legend()
-        plt.show()
+        # for i, label in enumerate([
+        #     r"$\mathcal{L}_{\mathrm{Markov}}$",
+        #     r"$\mathcal{L}_{\mathrm{Behavior}}$",
+        #     r"regularisation loss",
+        #     r"Total loss $\mathcal{L}$"
+        # ]):
+        #     plt.semilogy(train_loss[:, i], label=label)
+        # plt.semilogy(test_loss[:, -1], label='test loss')
+        # plt.legend()
+        # plt.show()
 
         os.makedirs(os.path.dirname('temp/subsystems_model_selection_reg_test'), exist_ok=True)
         model.save_weights(f"temp/subsystems_model_selection_reg_test/worm_{worm_num}_model_{i}")

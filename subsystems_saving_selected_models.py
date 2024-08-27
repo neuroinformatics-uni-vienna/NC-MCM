@@ -96,3 +96,30 @@ for worm_num in [0]:
     os.makedirs("temp/selected_models", exist_ok=True)
     model.save_weights(f"temp/selected_models/model_reg_min_test_loss_worm_{worm_num}")
     np.save(f"temp/selected_models/Y0_reg_min_test_loss_worm_{worm_num}", Y0_)
+
+
+
+worm_num = 0
+data_path = 'datasets/raw/c_elegans/NoStim_Data.mat'
+data = Database(data_path=data_path, dataset_no=worm_num)
+X = data.neuron_traces.T
+B = data.behaviour
+X_, B_ = prep_data(X, B, win=15)
+for model_type in [
+    'unreg_min_train_loss',
+    'reg_min_train_loss',
+    'reg_min_test_loss'
+]:
+    print(model_type)
+    Y0_ = np.load(f"temp/selected_models/Y0_{model_type}_worm_{worm_num}.npy")
+
+    # Plotting latent space dynamics
+    vis = LatentSpaceVisualiser(Y0_, B_, data.behaviour_names)
+    # vis.plot_latent_timeseries()
+    fig, ax = vis.plot_phase_space(show_fig=False, arrow_length_ratio=0.1)
+    ax.set_axis_on()
+    ax.set_xlabel('sensory neurons axis ')
+    ax.set_ylabel('inter neuron axis')
+    ax.set_zlabel('motor neuron axis')
+    ax.set_title(model_type)
+    plt.show()
