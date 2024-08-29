@@ -8,6 +8,7 @@ from ncmcm.bundlenet.utils import prep_data, timeseries_train_test_split
 from ncmcm.visualisers.neuronal_behavioural import plotting_neuronal_behavioural
 from ncmcm.visualisers.latent_space import LatentSpaceVisualiser
 import tensorflow as tf
+import seaborn as sns
 
 # Load Data (excluding behavioural neurons) and plot
 worm_num = 0
@@ -41,9 +42,9 @@ print(direction_vectors)
 
 fig, ax = plt.subplots(figsize=(8,4))
 b_names = [data.behaviour_names[i] for i in range(8)]
-ax.bar(b_names, direction_vectors[:, 0], label='Sensory')
-ax.bar(b_names, direction_vectors[:, 1], bottom=direction_vectors[:, 0], label='Interneurons')
-ax.bar(b_names, direction_vectors[:, 2], bottom=direction_vectors[:, 0] + direction_vectors[:, 1], label='Motor')
+ax.bar(b_names, direction_vectors[:, 0], label='Sensory', color=sns.color_palette("Set2")[0])
+ax.bar(b_names, direction_vectors[:, 1], bottom=direction_vectors[:, 0], label='Interneurons', color=sns.color_palette("Set2")[1])
+ax.bar(b_names, direction_vectors[:, 2], bottom=direction_vectors[:, 0] + direction_vectors[:, 1], label='Motor', color=sns.color_palette("Set2")[2])
 
 ax.set_xlabel('Behaviors')
 ax.set_ylabel('Contributions')
@@ -51,8 +52,6 @@ ax.legend()
 
 plt.xticks(rotation=40)
 plt.tight_layout()
-
-
 
 # Plotting latent space dynamics
 vis = LatentSpaceVisualiser(Y0_, B_, data.behaviour_names)
@@ -63,8 +62,3 @@ ax.set_xlabel('sensory neurons axis ')
 ax.set_ylabel('inter neuron axis')
 ax.set_zlabel('motor neuron axis')
 plt.show()
-
-
-plt.show()
-
-

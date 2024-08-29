@@ -28,6 +28,7 @@ data.exclude_neurons(b_neurons)
 mask = data.categorise_neurons('datasets/raw/c_elegans')
 X = data.neuron_traces.T
 B = data.behaviour
+b_names = data.behaviour_names
 
 X_, B_ = prep_data(X, B, win=15)
 Xs_ = X_[:, :, :, mask == 1]
@@ -35,31 +36,30 @@ Xi_ = X_[:, :, :, mask == 2]
 Xm_ = X_[:, :, :, mask == 3]
 Y0_ = np.load(f"temp/selected_models/Y0_reg_min_test_loss_worm_0.npy")
 
-
 # Preparing neuronal data
 X_win_15, B_win_15 = prep_data(X, B, win=15)
 Xs_win_15 = X_win_15[:, :, :, mask == 1]
 Xi_win_15 = X_win_15[:, :, :, mask == 2]
 Xm_win_15 = X_win_15[:, :, :, mask == 3]
 
-X_win_15 = X_win_15.reshape(X_win_15.shape[0],-1)
-Xs_win_15 = Xs_win_15.reshape(X_win_15.shape[0],-1)
-Xi_win_15 = Xi_win_15.reshape(X_win_15.shape[0],-1)
-Xm_win_15 = Xm_win_15.reshape(X_win_15.shape[0],-1)
+X_win_15 = X_win_15.reshape(X_win_15.shape[0], -1)
+Xs_win_15 = Xs_win_15.reshape(X_win_15.shape[0], -1)
+Xi_win_15 = Xi_win_15.reshape(X_win_15.shape[0], -1)
+Xm_win_15 = Xm_win_15.reshape(X_win_15.shape[0], -1)
 
 X_win_1, B_win_1 = prep_data(X, B, win=1)
 Xs_win_1 = X_win_1[:, :, :, mask == 1]
 Xi_win_1 = X_win_1[:, :, :, mask == 2]
 Xm_win_1 = X_win_1[:, :, :, mask == 3]
 
-X_win_1 = X_win_1.reshape(X_win_1.shape[0],-1)
-Xs_win_1 = Xs_win_1.reshape(X_win_1.shape[0],-1)
-Xi_win_1 = Xi_win_1.reshape(X_win_1.shape[0],-1)
-Xm_win_1 = Xm_win_1.reshape(X_win_1.shape[0],-1)
-
+X_win_1 = X_win_1.reshape(X_win_1.shape[0], -1)
+Xs_win_1 = Xs_win_1.reshape(X_win_1.shape[0], -1)
+Xi_win_1 = Xi_win_1.reshape(X_win_1.shape[0], -1)
+Xm_win_1 = Xm_win_1.reshape(X_win_1.shape[0], -1)
 
 score = []
-for population_ in [X_win_1[14:], Xs_win_1[14:], Xi_win_1[14:], Xm_win_1[14:], X_win_15, Xs_win_15, Xi_win_15, Xm_win_15, Y0_]:
+for population_ in [X_win_1[14:], Xs_win_1[14:], Xi_win_1[14:], Xm_win_1[14:], X_win_15, Xs_win_15, Xi_win_15,
+                    Xm_win_15, Y0_]:
     print(population_.shape, B_.shape)
     # Cross validation
     b_acc = []
@@ -67,7 +67,6 @@ for population_ in [X_win_1[14:], Xs_win_1[14:], Xi_win_1[14:], Xm_win_1[14:], X
     for i, (train_index, test_index) in enumerate(kf.split(population_)):
         population_train, population_test = population_[train_index], population_[test_index]
         B_train, B_test = B_[train_index], B_[test_index]
-
         clf = LogisticRegression(max_iter=1000).fit(population_train, B_train)
         B_pred = clf.predict(population_test)
         b_acc.append(clf.score(population_test, B_test))
@@ -75,11 +74,69 @@ for population_ in [X_win_1[14:], Xs_win_1[14:], Xi_win_1[14:], Xm_win_1[14:], X
 score = np.array(score)
 
 # plotting
-plt.figure(figsize=(16,8))
+plt.figure(figsize=(16, 8))
 sns.boxenplot(score.T, cmap='cividis')
-plt.xticks(np.arange(score.shape[0]), ['whole brain','sensory', 'interneuron', 'motor', 'whole brain (win)', 'sensory (win)', 'interneuron (win)', 'motor (win)', 'Y'])
+plt.xticks(np.arange(score.shape[0]),
+           ['whole brain', 'sensory', 'interneuron', 'motor', 'whole brain (win)', 'sensory (win)', 'interneuron (win)',
+            'motor (win)', 'Y'])
+plt.tight_layout()
 plt.show()
 
+X_, B_ = prep_data(X, B, win=1)
+Xs_ = X_[:, :, :, mask == 1]
+Xi_ = X_[:, :, :, mask == 2]
+Xm_ = X_[:, :, :, mask == 3]
+Xsi_ = X_[:, :, :, np.isin(mask, [1, 2])]
+Xim_ = X_[:, :, :, np.isin(mask, [2, 3])]
+Xsm_ = X_[:, :, :, np.isin(mask, [1, 3])]
+
+X_ = X_.reshape(X_.shape[0], -1)
+Xs_ = Xs_.reshape(X_.shape[0], -1)
+Xi_ = Xi_.reshape(X_.shape[0], -1)
+Xm_ = Xm_.reshape(X_.shape[0], -1)
+Xsi_ = Xsi_.reshape(X_.shape[0], -1)
+Xim_ = Xim_.reshape(X_.shape[0], -1)
+Xsm_ = Xsm_.reshape(X_.shape[0], -1)
+
+# another plot
+score = []
+for population_ in [X_, Xs_, Xi_, Xm_, Xsi_, Xim_, Xsm_, Y0_]:
+    print(population_.shape, B_.shape)
+    # Cross validation
+    acc_cross_val = []
+    kf = KFold(n_splits=10)
+    for i, (train_index, test_index) in enumerate(kf.split(population_)):
+        # fit a classifier for each behaviour
+        population_train, population_test = population_[train_index], population_[test_index]
+        B_train, B_test = B_[train_index], B_[test_index]
+        b_acc = []
+        for b in np.unique(B_):
+            # print(b, (B_test == b).sum())
+            label_train, label_test = (B_train == b).astype(int), (B_test == b).astype(int)
+            if np.unique(label_train).shape[0] < 2:
+                b_acc.append(1)
+            else:
+                clf = LogisticRegression(max_iter=1000).fit(population_train, label_train)
+                B_pred = clf.predict(population_test)
+                b_acc.append(clf.score(population_test, label_test))
+        # clf = LogisticRegression(max_iter=1000).fit(population_train, B_train)
+        # B_pred = clf.predict(population_test)
+        # b_acc = clf.score(population_test, B_test)
+        acc_cross_val.append(b_acc)
+    score.append(acc_cross_val)
+score = np.array(score).mean(axis=1)
+print(score.shape)
+
+# plotting
+plt.figure(figsize=(4, 4))
+plt.imshow(score, cmap='cividis', vmax=1)
+plt.yticks(np.arange(score.shape[0]), ["X_", "Xs_", "Xi_", "Xm_", "Xsi_", "Xim_", "Xsm_", "Y0_"])
+b_names = [data.behaviour_names[i] for i in data.behaviour_names]
+plt.xticks(np.arange(score.shape[1]), b_names, rotation=40)
+plt.colorbar()
+plt.show()
+
+# plotting
 
 '''
 score = []

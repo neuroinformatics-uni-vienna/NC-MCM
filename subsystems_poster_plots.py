@@ -8,42 +8,6 @@ from ncmcm.bundlenet.utils import prep_data
 from ncmcm.data_loaders.matlab_dataset import Database
 
 
-def plotting_neuronal_behavioural(x, b=None, b_names={}, s=None, s_names={}, r=None, r_names={}, show_fig=True,
-                                  **kwargs):
-    num_plots = 1 + sum([1 if x is not None else 0 for x in [b, s, r]])
-    fig, axs = plt.subplots(num_plots, 1, figsize=(12, num_plots * 2))
-    im0 = axs[0].imshow(x.T, aspect='auto', interpolation='None', **kwargs)
-    # tell the colorbar to tick at integers
-    cax0 = plt.colorbar(im0)
-    axs[0].set_xlabel("time $t$")
-    axs[0].set_ylabel("Neuronal activation")
-
-    def discrete_plot(ax, b, b_names, y_label, cmap):
-        colors = sns.color_palette(cmap, len(b_names))
-        cmap = plt.get_cmap(cm.colors.ListedColormap(colors), np.max(b) - np.min(b) + 1)
-        im1 = ax.imshow([b], cmap=cmap, vmin=np.min(b) - 0.5, vmax=np.max(b) + 0.5, aspect='auto')
-        cax = plt.colorbar(im1, ticks=np.unique(b))
-        if b_names:
-            cax.ax.set_yticklabels(list(b_names.values()))
-        ax.set_xlabel("time $t$")
-        ax.set_ylabel(y_label)
-        ax.set_yticks([])
-
-    if b is not None:
-        discrete_plot(axs[1], b, b_names, y_label="Behaviour", cmap='Pastel1')
-    if s is not None:
-        discrete_plot(axs[2], s, s_names, y_label="Stimulus", cmap='Set2')
-    if r is not None:
-        discrete_plot(axs[3], r, r_names, y_label="Response", cmap='Set3')
-
-    if show_fig:
-        plt.show()
-
-    return fig, axs
-
-
-
-
 # Load Data (excluding behavioural neurons) and plot
 worm_num = 0
 algorithm = 'BunDLeNet'
@@ -79,13 +43,13 @@ import matplotlib.cm as cm
 # Assuming Xs, Xi, Xm, and B are defined
 # Assuming b_names is defined
 
-fig, axs = plt.subplots(2, 1, figsize=(12, 4), gridspec_kw={'height_ratios': [2, 1]}, sharex=True)
+fig, axs = plt.subplots(2, 1, figsize=(12, 4), gridspec_kw={'height_ratios': [3, 0.5]}, sharex=True)
 
 # Define colors for each group
 colors = {
-    "Sensory": sns.color_palette("dark", 3)[0],  # Dark blue-gray
-    "Inter": sns.color_palette("dark", 3)[1],     # Dark grayish-brown
-    "Motor": sns.color_palette("dark", 3)[2]     # Dark slate blue
+    "Sensory": sns.color_palette("Set2")[0], # sns.color_palette("dark", 3)[0],  # Dark blue-gray
+    "Inter": sns.color_palette("Set2")[1], # sns.color_palette("dark", 3)[1],     # Dark grayish-brown
+    "Motor": sns.color_palette("Set2")[2] # sns.color_palette("dark", 3)[2]     # Dark slate blue
 }
 # Initialize the starting position for the plot
 i = 0
@@ -121,7 +85,22 @@ def discrete_plot(ax, b, b_names, y_label, cmap):
     ax.set_ylabel("Behaviour")
     return ax, im1
 
-ax, im1 = discrete_plot(axs[1], B, b_names, y_label="", cmap='Pastel1')
+
+import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
+
+tab10_colors = plt.cm.tab10.colors
+# Function to lighten a color
+def lighten_color(color, amount=0.5):
+    # Use matplotlib's Lightness and Saturation modification
+    c = mcolors.to_rgba(color)
+    return mcolors.to_rgba((c[0] + (1.0 - c[0]) * amount,
+                            c[1] + (1.0 - c[1]) * amount,
+                            c[2] + (1.0 - c[2]) * amount,
+                            c[3]))
+lighter_tab10 = [lighten_color(c, 0.5) for c in tab10_colors]
+
+ax, im1 = discrete_plot(axs[1], B, b_names, y_label="", cmap=lighter_tab10)
 plt.tight_layout()
 plt.show()
 
