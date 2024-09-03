@@ -46,10 +46,15 @@ import matplotlib.cm as cm
 fig, axs = plt.subplots(2, 1, figsize=(12, 4), gridspec_kw={'height_ratios': [3, 0.5]}, sharex=True)
 
 # Define colors for each group
+# colors = {
+#     "Sensory": sns.color_palette("Set2")[0], # sns.color_palette("dark", 3)[0],  # Dark blue-gray
+#     "Inter": sns.color_palette("Set2")[1], # sns.color_palette("dark", 3)[1],     # Dark grayish-brown
+#     "Motor": sns.color_palette("Set2")[2] # sns.color_palette("dark", 3)[2]     # Dark slate blue
+# }
 colors = {
-    "Sensory": sns.color_palette("Set2")[0], # sns.color_palette("dark", 3)[0],  # Dark blue-gray
-    "Inter": sns.color_palette("Set2")[1], # sns.color_palette("dark", 3)[1],     # Dark grayish-brown
-    "Motor": sns.color_palette("Set2")[2] # sns.color_palette("dark", 3)[2]     # Dark slate blue
+    "Sensory": "#111D4A",  # Dark blue-gray
+    "Inter": "#563F1B",    # Dark grayish-brown
+    "Motor": "#38726C"     # Dark teal
 }
 # Initialize the starting position for the plot
 i = 0
