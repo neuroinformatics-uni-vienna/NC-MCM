@@ -42,9 +42,14 @@ print(direction_vectors)
 
 fig, ax = plt.subplots(figsize=(8,4))
 b_names = [data.behaviour_names[i] for i in range(8)]
-ax.bar(b_names, direction_vectors[:, 0], label='Sensory', color=sns.color_palette("Set2")[0])
-ax.bar(b_names, direction_vectors[:, 1], bottom=direction_vectors[:, 0], label='Interneurons', color=sns.color_palette("Set2")[1])
-ax.bar(b_names, direction_vectors[:, 2], bottom=direction_vectors[:, 0] + direction_vectors[:, 1], label='Motor', color=sns.color_palette("Set2")[2])
+colors = ["#111D4A","#563F1B","#38726C"]
+# ax.bar(b_names, direction_vectors[:, 0], label='Sensory', color=sns.color_palette("Set2")[0])
+# ax.bar(b_names, direction_vectors[:, 1], bottom=direction_vectors[:, 0], label='Interneurons', color=sns.color_palette("Set2")[1])
+# ax.bar(b_names, direction_vectors[:, 2], bottom=direction_vectors[:, 0] + direction_vectors[:, 1], label='Motor', color=sns.color_palette("Set2")[2])
+
+ax.bar(b_names, direction_vectors[:, 0], label='Sensory', color=colors[0])
+ax.bar(b_names, direction_vectors[:, 1], bottom=direction_vectors[:, 0], label='Interneurons', color=colors[1])
+ax.bar(b_names, direction_vectors[:, 2], bottom=direction_vectors[:, 0] + direction_vectors[:, 1], label='Motor', color=colors[2])
 
 ax.set_xlabel('Behaviors')
 ax.set_ylabel('Contributions')
@@ -52,6 +57,8 @@ ax.legend()
 
 plt.xticks(rotation=40)
 plt.tight_layout()
+plt.show()
+
 
 # Plotting latent space dynamics
 vis = LatentSpaceVisualiser(Y0_, B_, data.behaviour_names)
