@@ -90,7 +90,6 @@ def best_of_5_runs(x_train, b_train_1, model, b_type, gamma, learning_rate, vali
             validation_data = validation_data,
             initialisation=None,
         )
-
         os.makedirs("temp/best_of_5_runs_models", exist_ok=True)
         model_.save_weights(f"temp/best_of_5_runs_models/model_{i}")
         model_loss.append(test_history[-1, -1])
