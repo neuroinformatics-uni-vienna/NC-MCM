@@ -82,6 +82,7 @@ plt.hlines(xmin=0, xmax=train_loss.shape[0],
 plt.legend()
 plt.show()
 
+
 # Plotting latent space dynamics
 vis = LatentSpaceVisualiser(Y0_, B_, data.behaviour_names)
 vis.plot_latent_timeseries()
@@ -92,3 +93,5 @@ ax.set_xlabel('sensory neurons axis ')
 ax.set_ylabel('inter neuron axis')
 ax.set_zlabel('motor neuron axis')
 plt.show()
+
+
