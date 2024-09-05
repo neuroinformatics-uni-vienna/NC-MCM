@@ -1,2 +1,2 @@
-model_checkpoint_path: "model_reg_min_test_loss_worm_0"
-all_model_checkpoint_paths: "model_reg_min_test_loss_worm_0"
+model_checkpoint_path: "model_unreg_min_test_loss_worm_0"
+all_model_checkpoint_paths: "model_unreg_min_test_loss_worm_0"
