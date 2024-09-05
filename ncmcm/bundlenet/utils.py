@@ -6,6 +6,7 @@ Akshey Kumar
 import numpy as np
 from sklearn.model_selection import KFold
 import tensorflow as tf
+from scipy import signal
 
 
 ########################################################
@@ -117,3 +118,46 @@ def tf_batch_prep(x_, b_, batch_size=100):
     batch_dataset = tf.data.Dataset.from_tensor_slices((x_, b_))
     batch_dataset = batch_dataset.batch(batch_size)
     return batch_dataset
+
+
+def bandpass(traces, f_l, f_h, sampling_freq):
+    """
+    Apply a bandpass filter to the input traces.
+
+    Parameters:
+        traces (np.ndarray): Input traces to be filtered.
+        f_l (float): Lower cutoff frequency in Hz.
+        f_h (float): Upper cutoff frequency in Hz.
+        sampling_freq (float): Sampling frequency in Hz.
+
+    Returns:
+        filtered (np.ndarray): Filtered traces.
+
+    """
+    cut_off_h = f_h * sampling_freq / 2  ## in units of sampling_freq/2
+    cut_off_l = f_l * sampling_freq / 2  ## in units of sampling_freq/2
+    #### Note: the input f_l and f_h are angular frequencies. Hence the argument sampling_freq in the function is redundant: since the signal.butter function takes angular frequencies if fs is None.
+
+    sos = signal.butter(4, [cut_off_l, cut_off_h], 'bandpass', fs=sampling_freq, output='sos')
+    ### filtering the traces forward and backwards
+    filtered = signal.sosfilt(sos, traces)
+    filtered = np.flip(filtered, axis=1)
+    filtered = signal.sosfilt(sos, filtered)
+    filtered = np.flip(filtered, axis=1)
+    return filtered
+
+
+def preprocess_data(X, fps):
+    """Preprocess the input data by applying bandpass filtering.
+
+    Args:
+        X: Input data.
+        fps (float): Frames per second.
+
+    Returns:
+        numpy.ndarray: Preprocessed data after bandpass filtering.
+    """
+    time = 1 / fps * np.arange(0, X.shape[0])
+    filtered = bandpass(X.T, f_l=1e-10, f_h=0.05, sampling_freq=fps).T
+
+    return time, filtered

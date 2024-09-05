@@ -54,7 +54,7 @@ def pca_initialisation(X_, tau, latent_dim):
     )
     Y0_pred = pcaencoder(X0_).numpy()
     ### Saving weights of this model
-    os.makedirs(os.path.dirname('temp/'), exist_ok=True)
+    os.makedirs("temp/", exist_ok=True)
     pcaencoder.encoder.save_weights("temp/tau_pca.weights.h5")
 
 
@@ -86,14 +86,13 @@ def best_of_5_runs(x_train, b_train_1, model, b_type, gamma, learning_rate, vali
             b_type=b_type,
             gamma=gamma,
             learning_rate=learning_rate,
-            n_epochs=100,
+            n_epochs=200,
             validation_data = validation_data,
             initialisation=None,
         )
-        os.makedirs(os.path.dirname('temp/best_of_5_runs_models'), exist_ok=True)
-        # model_.save_weights("temp/best_of_5_runs_models/model_" + str(i) + ".weights.h5")
-        model_.save_weights("temp/best_of_5_runs_models/model_" + str(i))
 
+        os.makedirs("temp/best_of_5_runs_models", exist_ok=True)
+        model_.save_weights(f"temp/best_of_5_runs_models/model_{i}")
         model_loss.append(test_history[-1, -1])
 
     for n, i in enumerate(model_loss):
@@ -101,7 +100,7 @@ def best_of_5_runs(x_train, b_train_1, model, b_type, gamma, learning_rate, vali
 
     # Load model with least loss
     model.load_weights(
-        "temp/best_of_5_runs_models/model_" + str(np.argmin(model_loss))
+        f"temp/best_of_5_runs_models/model_{np.argmin(model_loss)}"
     )
 
     return model
