@@ -30,7 +30,7 @@ mask = data.categorise_neurons('datasets/raw/c_elegans')
 X = data.neuron_traces.T
 B = data.behaviour
 X_, B_ = prep_data(X, B, win=15)
-Y0_ = np.load(f"temp/selected_models/Y0_unreg_min_train_loss_worm_0.npy")
+Y0_ = np.load(f"temp/selected_models/Y0_reg_min_train_loss_worm_0.npy")
 
 
 direction_vectors = []

@@ -41,19 +41,20 @@ Xs_ = X_[:, :, :, mask == 1]
 Xi_ = X_[:, :, :, mask == 2]
 Xm_ = X_[:, :, :, mask == 3]
 
-Xm_ = np.random.permutation(Xm_)
+# Xs_ = np.random.permutation(Xs_)
+Xi_ = np.random.permutation(Xi_)
+# Xm_ = np.random.permutation(Xm_)
 
-# Deploy BunDLe Net
-model = BunDLeNet(
-    latent_dim=3,
-    num_behaviour=len(data.behaviour_names),
-    reg_coef=2e-4
-)
-for model_type in ['unreg_min_train_loss', 'reg_min_train_loss', 'reg_min_test_loss']:
 
-    model.load_weights(
-        f"temp/selected_models/model_{model_type}_worm_{worm_num}"
+for model_type, reg_coef in [ ('reg_min_test_loss', 2e-4)]: #[('unreg_min_train_loss', 0), ('reg_min_train_loss', 2e-4), ('reg_min_test_loss', 2e-4)]:
+    model = BunDLeNet(
+        latent_dim=3,
+        num_behaviour=len(data.behaviour_names),
+        reg_coef=reg_coef,  # 2e-4
     )
+    # model.load_weights(
+    #     f"temp/selected_models/model_{model_type}_worm_{worm_num}"
+    # )
     loss_array, _ = train_model(
         (Xs_, Xi_, Xm_),
         B_,
@@ -61,7 +62,7 @@ for model_type in ['unreg_min_train_loss', 'reg_min_train_loss', 'reg_min_test_l
         b_type='discrete',
         gamma=0.9,
         learning_rate=0.001,
-        n_epochs=500,
+        n_epochs=1000,
     )
 
     # Projecting into latent space

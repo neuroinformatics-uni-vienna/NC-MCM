@@ -1,9 +1,12 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.stats import mode
+from sklearn.metrics import accuracy_score
+
+from ncmcm.bundlenet.losses import ScaleInvariantMSE
 from ncmcm.data_loaders.matlab_dataset import Database
-from ncmcm.bundlenet.bundlenet import train_model
-from ncmcm.bundlenet.subsystem_fit.bundlenet_subsystem import BunDLeNet
-from ncmcm.bundlenet.utils import prep_data
+from ncmcm.bundlenet.subsystem_fit.bundlenet_subsystem import BunDLeNet, train_model
+from ncmcm.bundlenet.utils import prep_data, timeseries_train_test_split
 # from ncmcm.visualisers.neuronal_behavioural import plotting_neuronal_behavioural
 from ncmcm.visualisers.latent_space import LatentSpaceVisualiser
 
@@ -27,37 +30,36 @@ mask = data.categorise_neurons('datasets/raw/c_elegans')
 X = data.neuron_traces.T
 B = data.behaviour
 
-for i in range(10):
-    ### Preprocess and prepare data for BundLe Net
-    # time, X = preprocess_data(X, data.fps)
-    X_, B_ = prep_data(X, B, win=15)
-    Xs_ = X_[:, :, :, mask == 1]
-    Xi_ = X_[:, :, :, mask == 2]
-    Xm_ = X_[:, :, :, mask == 3]
-    print(Xs_.shape, Xi_.shape, Xm_.shape)
+### Preprocess and prepare data for BundLe Net
+# time, X = preprocess_data(X, float(data.fps))
+X_, B_ = prep_data(X, B, win=15)
+Xs_ = X_[:, :, :, mask == 1]
+Xi_ = X_[:, :, :, mask == 2]
+Xm_ = X_[:, :, :, mask == 3]
+print(Xs_.shape, Xi_.shape, Xm_.shape)
 
-    # Deploy BunDLe Net
-    model = BunDLeNet(latent_dim=3, num_behaviour=len(data.behaviour_names))
-    loss_array, _ = train_model(
-        (Xs_, Xi_, Xm_),
-        B_,
-        model,
-        b_type='discrete',
-        gamma=0.9,
-        learning_rate=0.001,
-        n_epochs=1500,
-        # initialisation='best_of_5_init'
-    )
+X_train, X_test, B_train, B_test = timeseries_train_test_split(X_, B_)
+Xs_, Xs_train, Xs_test = X_[:, :, :, mask == 1], X_train[:, :, :, mask == 1], X_test[:, :, :, mask == 1]
+Xi_, Xi_train, Xi_test = X_[:, :, :, mask == 2], X_train[:, :, :, mask == 2], X_test[:, :, :, mask == 2]
+Xm_, Xm_train, Xm_test = X_[:, :, :, mask == 3], X_train[:, :, :, mask == 3], X_test[:, :, :, mask == 3]
 
-    loss_array[-1,-1]
-for i, label in enumerate([
-    r"$\mathcal{L}_{\mathrm{Markov}}$",
-    r"$\mathcal{L}_{\mathrm{Behavior}}$",
-    r"Total loss $\mathcal{L}$"
-]):
-    plt.semilogy(loss_array[:, i], label=label)
-plt.legend()
-plt.show()
+# Deploy BunDLe Net
+model = BunDLeNet(
+    latent_dim=3,
+    num_behaviour=len(data.behaviour_names),
+    reg_coef=0.0
+)
+# model = BunDLeNet(latent_dim=3, num_behaviour=len(data.behaviour_names))
+train_loss, test_loss = train_model(
+    (Xs_train, Xi_train, Xm_train),
+    B_train,
+    model,
+    b_type='discrete',
+    gamma=0.5,
+    learning_rate=0.001,
+    n_epochs=800,  # 800
+    validation_data=((Xs_test, Xi_test, Xm_test), B_test,)
+)
 
 ### Projecting into latent space
 Y0s_ = model.tau_s(Xs_[:, 0])
@@ -65,7 +67,21 @@ Y0i_ = model.tau_i(Xi_[:, 0])
 Y0m_ = model.tau_m(Xm_[:, 0])
 Y0_ = model.post_tau([Y0s_, Y0i_, Y0m_]).numpy()
 
-model.post_tau.get_weights()
+colors = ['blue', 'orange', 'green', 'red']
+for i, label in enumerate([
+    r"$\mathcal{L}_{\mathrm{Markov}}$",
+    r"$\mathcal{L}_{\mathrm{Behavior}}$",
+    r"regularisation loss",
+    r"Total loss $\mathcal{L}$"
+]):
+    plt.plot(train_loss[:, i], c=colors[i], label=label)
+    plt.plot(test_loss[:, i], c=colors[i], label=label + ' test', linestyle='--')
+plt.hlines(xmin=0, xmax=train_loss.shape[0],
+           y=0.9*ScaleInvariantMSE()(Y0_[1:], Y0_[:-1]),
+           label='baseline dynamics', linestyle='-.', color='cyan')
+plt.legend()
+plt.show()
+
 
 # Plotting latent space dynamics
 vis = LatentSpaceVisualiser(Y0_, B_, data.behaviour_names)
@@ -78,104 +94,4 @@ ax.set_ylabel('inter neuron axis')
 ax.set_zlabel('motor neuron axis')
 plt.show()
 
-'''
-for angle in np.arange(0,180, 20):
-    fig, ax = vis.plot_phase_space(show_fig=False, axis_view=(angle, 15))
-    ax.set_axis_on()
-    ax.set_xlabel('sensory neurons axis ')
-    ax.set_ylabel('inter neuron axis')
-    ax.set_zlabel('motor neuron axis')
-    plt.show()
 
-for angle in np.arange(0,180, 20):
-    fig, ax = vis.plot_phase_space(show_fig=False, axis_view=(0, angle))
-    ax.set_axis_on()
-    ax.set_xlabel('sensory neurons axis ')
-    ax.set_ylabel('inter neuron axis')
-    ax.set_zlabel('motor neuron axis')
-    plt.show()
-'''
-
-
-# vis.rotating_plot(filename='figures/rotation_subsystems_' + algorithm + '_worm_' + str(worm_num) + '.gif')
-
-# plot_phase_space_2d(Y0_[:,[1,2]], B_, state_names = state_names)
-# plot_phase_space_2d(Y0_[:,[2,0]], B_, state_names = state_names)
-# plot_phase_space_2d(Y0_[:,[0,1]], B_, state_names = state_names)
-# rotating_plot(Y0_, B_,filename='figures/rotation_axis_decomp/rotation'+ algorithm + '_worm_'+str(worm_num) +'.gif', state_names=state_names, legend=False)
-
-
-# Further experiments
-# proportion of variance of a behaviour in latent space along a dimension
-var_X_frac, var_Y_frac = [], []
-for b_state in np.unique(B):
-    var_Y_s = np.var(Y0_[B_ == b_state][:, 0])
-    var_Y_i = np.var(Y0_[B_ == b_state][:, 1])
-    var_Y_m = np.var(Y0_[B_ == b_state][:, 2])
-
-    var_Y_s_frac = var_Y_s / (var_Y_s + var_Y_i + var_Y_m)
-    var_Y_i_frac = var_Y_i / (var_Y_s + var_Y_i + var_Y_m)
-    var_Y_m_frac = var_Y_m / (var_Y_s + var_Y_i + var_Y_m)
-
-    var_X_s = np.var(Xs_[B_ == b_state, 0, -1, :])
-    var_X_i = np.var(Xi_[B_ == b_state, 0, -1, :])
-    var_X_m = np.var(Xm_[B_ == b_state, 0, -1, :])
-
-    var_X_s_frac = var_X_s / (var_X_s + var_X_i + var_X_m)
-    var_X_i_frac = var_X_i / (var_X_s + var_X_i + var_X_m)
-    var_X_m_frac = var_X_m / (var_X_s + var_X_i + var_X_m)
-
-    var_X_frac.append([var_X_s_frac, var_X_i_frac, var_X_m_frac])
-    var_Y_frac.append([var_Y_s_frac, var_Y_i_frac, var_Y_m_frac])
-
-plt.figure()
-plt.matshow(var_X_frac)
-plt.show()
-plt.figure()
-plt.matshow(var_Y_frac)
-plt.show()
-
-# visualisation - single dimension
-import seaborn as sns
-
-for dim, group_name in enumerate(['sensory', 'inter', 'motor']):
-    plt.figure()
-    sns.histplot([Y0_[B_ == i][:, dim] for i in range(8)])
-    ax = plt.gca()
-    ax.set_xlabel(group_name)
-    plt.show()
-
-# visualisation - pair of dimensions
-axis_labels = ['sensory', 'inter', 'motor']
-for pair in [[0, 1], [1, 2], [0, 2]]:
-    plt.figure()
-    [plt.scatter(Y0_[B_ == i][:, pair[0]], Y0_[B_ == i][:, pair[1]], alpha=0.3) for i in range(8)]
-
-    plt.xlabel(axis_labels[pair[0]])
-    plt.ylabel(axis_labels[pair[1]])
-    plt.show()
-
-
-# Embedding subsystems separately
-model = BunDLeNet(latent_dim=3, num_behaviour=len(data.behaviour_names))
-loss_array, _ = train_model(
-    Xs_,
-    B_,
-    model,
-    b_type='discrete',
-    gamma=0.9,
-    learning_rate=0.001,
-    n_epochs=1000
-)
-
-for i, label in enumerate([
-    r"$\mathcal{L}_{\mathrm{Markov}}$",
-    r"$\mathcal{L}_{\mathrm{Behavior}}$",
-    r"Total loss $\mathcal{L}$"
-]):
-    plt.plot(loss_array[:, i], label=label)
-plt.legend()
-plt.show()
-
-# Projecting into latent space
-Y0_ = model.tau(X_[:, 0]).numpy()
