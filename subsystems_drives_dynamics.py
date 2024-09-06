@@ -38,15 +38,12 @@ for b in np.unique(B):
     direction_vectors.append(np.sum(np.abs( Y0_[B_ == b][1:] - Y0_[B_ == b][:-1]), axis=0))
 direction_vectors = np.abs(direction_vectors)
 direction_vectors = direction_vectors/np.sum(direction_vectors, axis=1)[:, np.newaxis]
-print(direction_vectors)
-
+print(direction_vectors.shape)
+direction_vectors =  direction_vectors[[0,1,3,4,5,6,7],:] # excluding no state because only one trajectory
 fig, ax = plt.subplots(figsize=(8,4))
-b_names = [data.behaviour_names[i] for i in range(8)]
-colors = ["#111D4A","#563F1B","#38726C"]
-# ax.bar(b_names, direction_vectors[:, 0], label='Sensory', color=sns.color_palette("Set2")[0])
-# ax.bar(b_names, direction_vectors[:, 1], bottom=direction_vectors[:, 0], label='Interneurons', color=sns.color_palette("Set2")[1])
-# ax.bar(b_names, direction_vectors[:, 2], bottom=direction_vectors[:, 0] + direction_vectors[:, 1], label='Motor', color=sns.color_palette("Set2")[2])
-
+b_names = [data.behaviour_names[i] for i in [0,1,3,4,5,6,7]] # excluding no state because only one trajectory
+# colors = ["#111D4A","#563F1B","#38726C"]
+colors = [sns.color_palette("Set2")[i] for i in range(3)]
 ax.bar(b_names, direction_vectors[:, 0], label='Sensory', color=colors[0])
 ax.bar(b_names, direction_vectors[:, 1], bottom=direction_vectors[:, 0], label='Interneurons', color=colors[1])
 ax.bar(b_names, direction_vectors[:, 2], bottom=direction_vectors[:, 0] + direction_vectors[:, 1], label='Motor', color=colors[2])

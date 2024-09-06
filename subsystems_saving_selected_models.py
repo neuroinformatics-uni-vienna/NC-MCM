@@ -7,6 +7,7 @@ from ncmcm.bundlenet.subsystem_fit.bundlenet_subsystem import BunDLeNet, train_m
 from ncmcm.bundlenet.utils import prep_data
 # from ncmcm.visualisers.neuronal_behavioural import plotting_neuronal_behavioural
 from ncmcm.visualisers.latent_space import LatentSpaceVisualiser
+import seaborn as sns
 
 # Load Data (excluding behavioural neurons) and plot
 for worm_num in [0]:
@@ -114,12 +115,21 @@ for model_type in [
     Y0_ = np.load(f"temp/selected_models/Y0_{model_type}_worm_{worm_num}.npy")
 
     # Plotting latent space dynamics
+    colors = {
+        "Sensory": sns.color_palette("Set2")[0],  # sns.color_palette("dark", 3)[0],  # Dark blue-gray
+        "Inter": sns.color_palette("Set2")[1],  # sns.color_palette("dark", 3)[1],     # Dark grayish-brown
+        "Motor": sns.color_palette("Set2")[2]  # sns.color_palette("dark", 3)[2]     # Dark slate blue
+    }
     vis = LatentSpaceVisualiser(Y0_, B_, data.behaviour_names)
     # vis.plot_latent_timeseries()
-    fig, ax = vis.plot_phase_space(show_fig=False, arrow_length_ratio=0.1)
+    fig, ax = vis.plot_phase_space(show_fig=False, arrow_length_ratio=0.3)
     ax.set_axis_on()
-    ax.set_xlabel('sensory neurons axis ')
-    ax.set_ylabel('inter neuron axis')
-    ax.set_zlabel('motor neuron axis')
-    ax.set_title(model_type)
+    ax.set_xlabel('sensory neurons axis', fontsize=14, color=colors["Sensory"])
+    ax.set_ylabel('inter neuron axis', fontsize=14, color=colors["Inter"])
+    ax.set_zlabel('motor neuron axis', fontsize=14, color=colors["Motor"])
+    # ax.set_title(model_type)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_zticks([])
+
     plt.show()

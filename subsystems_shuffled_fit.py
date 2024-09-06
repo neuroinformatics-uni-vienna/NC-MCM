@@ -8,6 +8,7 @@ from ncmcm.bundlenet.utils import prep_data, timeseries_train_test_split
 from ncmcm.visualisers.neuronal_behavioural import plotting_neuronal_behavioural
 from ncmcm.visualisers.latent_space import LatentSpaceVisualiser
 import tensorflow as tf
+import seaborn as sns
 
 # Load Data (excluding behavioural neurons) and plot
 worm_num = 0
@@ -41,15 +42,17 @@ Xs_ = X_[:, :, :, mask == 1]
 Xi_ = X_[:, :, :, mask == 2]
 Xm_ = X_[:, :, :, mask == 3]
 
-Xm_ = np.random.permutation(Xm_)
+Xs_ = np.random.permutation(Xs_)
+# Xi_ = np.random.permutation(Xi_)
+# Xm_ = np.random.permutation(Xm_)
 
 # Deploy BunDLe Net
 model = BunDLeNet(
     latent_dim=3,
     num_behaviour=len(data.behaviour_names),
-    reg_coef=2e-4
+    reg_coef=0
 )
-for model_type in ['unreg_min_train_loss', 'reg_min_train_loss', 'reg_min_test_loss']:
+for model_type in ['unreg_min_train_loss']:#['unreg_min_train_loss', 'reg_min_train_loss', 'reg_min_test_loss']:
 
     model.load_weights(
         f"temp/selected_models/model_{model_type}_worm_{worm_num}"
@@ -81,13 +84,23 @@ for model_type in ['unreg_min_train_loss', 'reg_min_train_loss', 'reg_min_test_l
     vis = LatentSpaceVisualiser(Y0_, B_, data.behaviour_names)
     vis.plot_latent_timeseries()
 
+    colors = {
+        "Sensory": sns.color_palette("Set2")[0],  # sns.color_palette("dark", 3)[0],  # Dark blue-gray
+        "Inter": sns.color_palette("Set2")[1],  # sns.color_palette("dark", 3)[1],     # Dark grayish-brown
+        "Motor": sns.color_palette("Set2")[2]  # sns.color_palette("dark", 3)[2]     # Dark slate blue
+    }
     fig, ax = vis.plot_phase_space(show_fig=False, arrow_length_ratio=0.1)
     ax.set_axis_on()
-    ax.set_xlabel('sensory neurons axis ')
-    ax.set_ylabel('inter neuron axis')
-    ax.set_zlabel('motor neuron axis')
+    ax.set_xlabel('sensory neurons axis', fontsize=14, color=colors["Sensory"])
+    ax.set_ylabel('inter neuron axis', fontsize=14, color=colors["Inter"])
+    ax.set_zlabel('motor neuron axis', fontsize=14, color=colors["Motor"])
+    # ax.set_title(model_type)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_zticks([])
 
     ax.set_xlim3d(-3, 3)
     ax.set_ylim3d(-3, 3)
     ax.set_zlim3d(-3, 3)
+    ax.legend().remove()
     plt.show()
