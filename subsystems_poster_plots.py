@@ -121,3 +121,30 @@ plt.subplots_adjust(left=0.2, right=0.4, top=0.9, bottom=0.1)
 
 plt.show()
 
+
+
+'''
+
+
+# visualisation - single dimension
+import seaborn as sns
+
+for dim, group_name in enumerate(['sensory', 'inter', 'motor']):
+    plt.figure()
+    sns.histplot([Y0_[B_ == i][:, dim] for i in range(8)])
+    ax = plt.gca()
+    ax.set_xlabel(group_name)
+    plt.show()
+
+# visualisation - pair of dimensions
+axis_labels = ['sensory', 'inter', 'motor']
+for pair in [[0, 1], [1, 2], [0, 2]]:
+    plt.figure()
+    [plt.scatter(Y0_[B_ == i][:, pair[0]], Y0_[B_ == i][:, pair[1]], alpha=0.3) for i in range(8)]
+
+    plt.xlabel(axis_labels[pair[0]])
+    plt.ylabel(axis_labels[pair[1]])
+    plt.show()
+
+
+'''

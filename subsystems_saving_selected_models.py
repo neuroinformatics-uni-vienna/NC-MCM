@@ -99,6 +99,26 @@ for worm_num in [0]:
     np.save(f"temp/selected_models/Y0_reg_min_test_loss_worm_{worm_num}", Y0_)
 
 
+    # model category 4: unregularised model - test loss criterion
+    model_test_loss = np.load(f"temp/subsystems_model_selection_unreg_test/model_test_loss_worm_{worm_num}.npy")
+    idx = np.argmin(model_test_loss)
+    print(idx, "loss:", model_test_loss[idx])
+
+    model = BunDLeNet(latent_dim=3, num_behaviour=len(data.behaviour_names))
+    model.load_weights(
+        f"temp/subsystems_model_selection_unreg_test/worm_{worm_num}_model_{idx}"
+    )
+    # Projecting into latent space
+    Y0s_ = model.tau_s(Xs_[:, 0])
+    Y0i_ = model.tau_i(Xi_[:, 0])
+    Y0m_ = model.tau_m(Xm_[:, 0])
+    Y0_ = model.post_tau([Y0s_, Y0i_, Y0m_]).numpy()
+
+    os.makedirs("temp/selected_models", exist_ok=True)
+    model.save_weights(f"temp/selected_models/model_unreg_min_test_loss_worm_{worm_num}")
+    np.save(f"temp/selected_models/Y0_unreg_min_test_loss_worm_{worm_num}", Y0_)
+
+
 
 worm_num = 0
 data_path = 'datasets/raw/c_elegans/NoStim_Data.mat'
@@ -108,6 +128,7 @@ B = data.behaviour
 X_, B_ = prep_data(X, B, win=15)
 for model_type in [
     'unreg_min_train_loss',
+    'unreg_min_test_loss',
     'reg_min_train_loss',
     'reg_min_test_loss'
 ]:

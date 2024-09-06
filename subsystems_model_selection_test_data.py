@@ -2,7 +2,6 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 from ncmcm.data_loaders.matlab_dataset import Database
-from ncmcm.bundlenet.bundlenet import train_model
 from ncmcm.bundlenet.subsystem_fit.bundlenet_subsystem import BunDLeNet, train_model
 from ncmcm.bundlenet.utils import prep_data, timeseries_train_test_split, preprocess_data
 # from ncmcm.visualisers.neuronal_behavioural import plotting_neuronal_behavioural
@@ -49,7 +48,7 @@ for worm_num in [0]:
         model = BunDLeNet(
             latent_dim=3,
             num_behaviour=len(data.behaviour_names),
-            reg_coef=2e-4
+            reg_coef=0.0
         )
         # model = BunDLeNet(latent_dim=3, num_behaviour=len(data.behaviour_names))
         train_loss, test_loss = train_model(
@@ -59,33 +58,33 @@ for worm_num in [0]:
             b_type='discrete',
             gamma=0.9,
             learning_rate=0.001,
-            n_epochs=1500,
+            n_epochs=200, #800
             validation_data=((Xs_test, Xi_test, Xm_test), B_test,)
         )
-        # for i, label in enumerate([
-        #     r"$\mathcal{L}_{\mathrm{Markov}}$",
-        #     r"$\mathcal{L}_{\mathrm{Behavior}}$",
-        #     r"regularisation loss",
-        #     r"Total loss $\mathcal{L}$"
-        # ]):
-        #     plt.semilogy(train_loss[:, i], label=label)
-        # plt.semilogy(test_loss[:, -1], label='test loss')
-        # plt.legend()
-        # plt.show()
+        for i, label in enumerate([
+            r"$\mathcal{L}_{\mathrm{Markov}}$",
+            r"$\mathcal{L}_{\mathrm{Behavior}}$",
+            r"regularisation loss",
+            r"Total loss $\mathcal{L}$"
+        ]):
+            plt.plot(train_loss[:, i], label=label)
+            plt.plot(test_loss[:, i], label=label + 'test loss', linestyle='--')
+        plt.legend()
+        plt.show()
 
-        os.makedirs(os.path.dirname('temp/subsystems_model_selection_reg_test'), exist_ok=True)
-        model.save_weights(f"temp/subsystems_model_selection_reg_test/worm_{worm_num}_model_{i}")
+        os.makedirs(os.path.dirname('temp/subsystems_model_selection_unreg_test'), exist_ok=True)
+        model.save_weights(f"temp/subsystems_model_selection_unreg_test/worm_{worm_num}_model_{i}")
         print(worm_num, i)
         model_test_loss.append(test_loss[-1,-1])
         model_train_loss.append(train_loss[-1, -1])
     # plt.hist(model_test_loss)
     # plt.show()
-    np.save(f"temp/subsystems_model_selection_reg_test/model_test_loss_worm_{worm_num}", model_test_loss)
-    np.save(f"temp/subsystems_model_selection_reg_test/model_train_loss_worm_{worm_num}", model_train_loss)
+    np.save(f"temp/subsystems_model_selection_unreg_test/model_test_loss_worm_{worm_num}", model_test_loss)
+    np.save(f"temp/subsystems_model_selection_unreg_test/model_train_loss_worm_{worm_num}", model_train_loss)
 
     # plotting all the models to visualise
-    model_test_loss = np.load(f"temp/subsystems_model_selection_reg_test/model_test_loss_worm_{worm_num}.npy")
-    model_train_loss = np.load(f"temp/subsystems_model_selection_reg_test/model_train_loss_worm_{worm_num}.npy")
+    model_test_loss = np.load(f"temp/subsystems_model_selection_unreg_test/model_test_loss_worm_{worm_num}.npy")
+    model_train_loss = np.load(f"temp/subsystems_model_selection_unreg_test/model_train_loss_worm_{worm_num}.npy")
     for i in np.argsort(model_test_loss):
         print(i, "train loss:", model_train_loss[i])
         print(i, "test loss:", model_test_loss[i])
@@ -93,7 +92,7 @@ for worm_num in [0]:
         # Load model
         model = BunDLeNet(latent_dim=3, num_behaviour=len(data.behaviour_names))
         model.load_weights(
-            f"temp/subsystems_model_selection_reg_test/worm_{worm_num}_model_{i}"
+            f"temp/subsystems_model_selection_unreg_test/worm_{worm_num}_model_{i}"
         )
 
         # Projecting into latent space

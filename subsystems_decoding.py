@@ -34,7 +34,7 @@ X_, B_ = prep_data(X, B, win=15)
 Xs_ = X_[:, :, :, mask == 1]
 Xi_ = X_[:, :, :, mask == 2]
 Xm_ = X_[:, :, :, mask == 3]
-Y0_ = np.load(f"temp/selected_models/Y0_reg_min_test_loss_worm_0.npy")
+Y0_ = np.load(f"temp/selected_models/Y0_unreg_min_test_loss_worm_0.npy")
 
 # Preparing neuronal data
 X_win_15, B_win_15 = prep_data(X, B, win=15)
@@ -74,11 +74,22 @@ for population_ in [X_win_1[14:], Xs_win_1[14:], Xi_win_1[14:], Xm_win_1[14:], X
 score = np.array(score)
 
 # plotting
-plt.figure(figsize=(16, 8))
-sns.boxenplot(score.T, cmap='cividis')
+plt.figure(figsize=(8, 4))
+palette = {
+    0: 'gray',
+    1: sns.color_palette("Set2")[0],
+    2: sns.color_palette("Set2")[1],
+    3: sns.color_palette("Set2")[2],
+    4: 'gray',
+    5: sns.color_palette("Set2")[0],
+    6: sns.color_palette("Set2")[1],
+    7: sns.color_palette("Set2")[2],
+    8: 'red'
+}
+sns.boxenplot(score.T, palette=palette)
 plt.xticks(np.arange(score.shape[0]),
            ['whole brain', 'sensory', 'interneuron', 'motor', 'whole brain (win)', 'sensory (win)', 'interneuron (win)',
-            'motor (win)', 'Y'])
+            'motor (win)', 'Y'], rotation=40)
 plt.tight_layout()
 plt.show()
 
