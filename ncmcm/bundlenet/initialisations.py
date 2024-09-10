@@ -104,3 +104,52 @@ def best_of_5_runs(x_train, b_train_1, model, b_type, gamma, learning_rate, vali
     )
 
     return model
+
+
+
+def best_of_n_runs(n, n_epochs, x_train, b_train_1, model, b_type, gamma, learning_rate, validation_data):
+    """
+    Initialises BunDLe net with the best of n runs
+
+    Performs n_epochs epochs of training for n random model initialisations
+    and picks the model with the lowest loss
+    """
+    if validation_data is None:
+        import warnings
+
+        warnings.warn(
+            "No validation data given. Will proceed to use train dataset loss as deciding factor for the best model"
+        )
+        validation_data = (x_train, b_train_1)
+
+    model_loss = []
+
+    for i in range(n):
+        from ncmcm.bundlenet.bundlenet import train_model
+        model_ = keras.models.clone_model(model)
+
+        train_history, test_history = train_model(
+            x_train,
+            b_train_1,
+            model_,
+            b_type=b_type,
+            gamma=gamma,
+            learning_rate=learning_rate,
+            n_epochs=n_epochs,
+            validation_data = validation_data,
+            initialisation=None,
+        )
+
+        os.makedirs("temp/best_of_n_runs_models", exist_ok=True)
+        model_.save_weights(f"temp/best_of_n_runs_models/model_{i}")
+        model_loss.append(test_history[-1, -1])
+
+    for n, i in enumerate(model_loss):
+        print("model:", n, "val loss:", i)
+
+    # Load model with least loss
+    model.load_weights(
+        f"temp/best_of_n_runs_models/model_{np.argmin(model_loss)}"
+    )
+
+    return model

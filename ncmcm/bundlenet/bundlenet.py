@@ -8,7 +8,7 @@ import tensorflow as tf
 from tensorflow.keras import layers, Model
 from tqdm import tqdm
 from .losses import BccDccLoss
-from .initialisations import pca_initialisation, best_of_5_runs
+from .initialisations import pca_initialisation, best_of_5_runs, best_of_n_runs
 from .utils import tf_batch_prep
 
 
@@ -168,7 +168,8 @@ def train_model(x_train, b_train_1, model, b_type, gamma, learning_rate, n_epoch
         gamma (float): Weight for the DCC loss component.
         learning_rate (float): Learning rate for the Adam optimiser.
         n_epochs (int): Number of training epochs.
-        initialisation (str): 'pca_init' or 'best_of_5_init'
+        initialisation (str): 'pca_init' or 'best_of_5_init' or tuple (n, n_epochs) for
+                                'best_of_n_init'
         validation_data: (x_test, b_test_1)
     Returns:
         numpy.ndarray: Array of loss values during training.
@@ -185,6 +186,8 @@ def train_model(x_train, b_train_1, model, b_type, gamma, learning_rate, n_epoch
         model.tau.load_weights('temp/tau_pca.weights.h5')
     elif initialisation == 'best_of_5_init':
         model = best_of_5_runs(x_train, b_train_1, model, b_type, gamma, learning_rate, validation_data)
+    elif isinstance(initialisation, tuple):
+        model = best_of_n_runs(initialisation[0], initialisation[1], x_train, b_train_1, model, b_type, gamma, learning_rate, validation_data)
     elif initialisation is None:
         pass
     else:
