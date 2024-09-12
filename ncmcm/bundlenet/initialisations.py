@@ -89,6 +89,7 @@ def best_of_5_runs(x_train, b_train_1, model, b_type, gamma, learning_rate, vali
             n_epochs=200,
             validation_data = validation_data,
             initialisation=None,
+            report_ray_tune=False,
         )
 
         os.makedirs("temp/best_of_5_runs_models", exist_ok=True)
