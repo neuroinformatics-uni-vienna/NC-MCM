@@ -4,6 +4,7 @@ Akshey Kumar
 """
 
 import numpy as np
+import ray
 import tensorflow as tf
 from tensorflow.keras import layers, Model
 from tqdm import tqdm
@@ -156,7 +157,7 @@ class BunDLeTrainer:
 
 
 def train_model(x_train, b_train_1, model, b_type, gamma, learning_rate, n_epochs, initialisation=None,
-                validation_data=None):
+                validation_data=None, report_ray_tune=False):
     """
     Training BunDLe Net
 
@@ -171,6 +172,8 @@ def train_model(x_train, b_train_1, model, b_type, gamma, learning_rate, n_epoch
         initialisation (str): 'pca_init' or 'best_of_5_init' or tuple (n, n_epochs) for
                                 'best_of_n_init'
         validation_data: (x_test, b_test_1)
+        report_ray_tune (bool): reports validation loss per epoch to ray tune for
+                                hyperparameter optimisiaton
     Returns:
         numpy.ndarray: Array of loss values during training.
     """
@@ -205,6 +208,9 @@ def train_model(x_train, b_train_1, model, b_type, gamma, learning_rate, n_epoch
         if validation_data is not None:
             test_loss = trainer.test_loop(test_dataset)
             test_history.append(test_loss)
+            if report_ray_tune is True:
+                ray.train.report({"epoch": epoch, "val_loss": test_loss[-1]})
+
 
         epochs.set_description("Loss [Markov, Behaviour, Total]: " + str(np.round(train_loss, 4)))
 
