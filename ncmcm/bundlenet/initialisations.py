@@ -3,12 +3,12 @@
 Akshey Kumar
 """
 import os
+import uuid
 import numpy as np
 import keras
 import tensorflow as tf
 from tensorflow.keras import Model
 from sklearn.decomposition import PCA
-
 
 
 def pca_initialisation(X_, tau, latent_dim):
@@ -52,10 +52,14 @@ def pca_initialisation(X_, tau, latent_dim):
         batch_size=100,
         verbose=0,
     )
-    Y0_pred = pcaencoder(X0_).numpy()
-    ### Saving weights of this model
-    os.makedirs("temp/", exist_ok=True)
-    pcaencoder.encoder.save_weights("temp/tau_pca.weights.h5")
+    # Y0_pred = pcaencoder(X0_).numpy()
+
+    # Saving weights of this model
+    unique_id = str(uuid.uuid4())
+    os.makedirs(f"temp/{unique_id}/", exist_ok=True)
+    pcaencoder.encoder.save_weights(f"temp/{unique_id}/tau_pca.weights.h5")
+
+    return f"temp/{unique_id}/tau_pca.weights.h5"
 
 
 def best_of_5_runs(x_train, b_train_1, model, b_type, gamma, learning_rate, validation_data):
@@ -67,13 +71,13 @@ def best_of_5_runs(x_train, b_train_1, model, b_type, gamma, learning_rate, vali
     """
     if validation_data is None:
         import warnings
-
         warnings.warn(
             "No validation data given. Will proceed to use train dataset loss as deciding factor for the best model"
         )
         validation_data = (x_train, b_train_1)
 
     model_loss = []
+    unique_id = str(uuid.uuid4())
 
     for i in range(5):
         from ncmcm.bundlenet.bundlenet import train_model
@@ -87,13 +91,12 @@ def best_of_5_runs(x_train, b_train_1, model, b_type, gamma, learning_rate, vali
             gamma=gamma,
             learning_rate=learning_rate,
             n_epochs=200,
-            validation_data = validation_data,
+            validation_data=validation_data,
             initialisation=None,
             report_ray_tune=False,
         )
-
-        os.makedirs("temp/best_of_5_runs_models", exist_ok=True)
-        model_.save_weights(f"temp/best_of_5_runs_models/model_{i}")
+        os.makedirs(f"temp/{unique_id}/best_of_5_runs_models", exist_ok=True)
+        model_.save_weights(f"temp/{unique_id}/best_of_5_runs_models/model_{i}")
         model_loss.append(test_history[-1, -1])
 
     for n, i in enumerate(model_loss):
@@ -101,11 +104,9 @@ def best_of_5_runs(x_train, b_train_1, model, b_type, gamma, learning_rate, vali
 
     # Load model with least loss
     model.load_weights(
-        f"temp/best_of_5_runs_models/model_{np.argmin(model_loss)}"
+        f"temp/{unique_id}/best_of_5_runs_models/model_{np.argmin(model_loss)}"
     )
-
     return model
-
 
 
 def best_of_n_runs(n, n_epochs, x_train, b_train_1, model, b_type, gamma, learning_rate, validation_data):
@@ -124,6 +125,7 @@ def best_of_n_runs(n, n_epochs, x_train, b_train_1, model, b_type, gamma, learni
         validation_data = (x_train, b_train_1)
 
     model_loss = []
+    unique_id = str(uuid.uuid4())
 
     for i in range(n):
         from ncmcm.bundlenet.bundlenet import train_model
@@ -137,12 +139,12 @@ def best_of_n_runs(n, n_epochs, x_train, b_train_1, model, b_type, gamma, learni
             gamma=gamma,
             learning_rate=learning_rate,
             n_epochs=n_epochs,
-            validation_data = validation_data,
+            validation_data=validation_data,
             initialisation=None,
         )
 
-        os.makedirs("temp/best_of_n_runs_models", exist_ok=True)
-        model_.save_weights(f"temp/best_of_n_runs_models/model_{i}")
+        os.makedirs(f"temp/{unique_id}/best_of_n_runs_models", exist_ok=True)
+        model_.save_weights(f"temp/{unique_id}/best_of_n_runs_models/model_{i}")
         model_loss.append(test_history[-1, -1])
 
     for n, i in enumerate(model_loss):
@@ -150,7 +152,6 @@ def best_of_n_runs(n, n_epochs, x_train, b_train_1, model, b_type, gamma, learni
 
     # Load model with least loss
     model.load_weights(
-        f"temp/best_of_n_runs_models/model_{np.argmin(model_loss)}"
+        f"temp/{unique_id}/best_of_n_runs_models/model_{np.argmin(model_loss)}"
     )
-
     return model
