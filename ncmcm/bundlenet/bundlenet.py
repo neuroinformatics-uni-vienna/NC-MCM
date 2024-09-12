@@ -185,8 +185,8 @@ def train_model(x_train, b_train_1, model, b_type, gamma, learning_rate, n_epoch
         test_dataset = tf_batch_prep(x_test, b_test_1)
 
     if initialisation == 'pca_init':
-        pca_initialisation(x_train, model.tau, model.latent_dim)
-        model.tau.load_weights('temp/tau_pca.weights.h5')
+        pca_model_path = pca_initialisation(x_train, model.tau, model.latent_dim)
+        model.tau.load_weights(pca_model_path)
     elif initialisation == 'best_of_5_init':
         model = best_of_5_runs(x_train, b_train_1, model, b_type, gamma, learning_rate, validation_data)
     elif isinstance(initialisation, tuple):
