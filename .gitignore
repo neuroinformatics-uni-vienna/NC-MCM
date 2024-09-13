@@ -164,3 +164,4 @@ cython_debug/
 /.env_older_tf
 /.env_torch
 /.env_3_10
+/temp

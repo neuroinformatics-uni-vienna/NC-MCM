@@ -3,12 +3,12 @@
 Akshey Kumar
 """
 import os
+import uuid
 import numpy as np
 import keras
 import tensorflow as tf
 from tensorflow.keras import Model
 from sklearn.decomposition import PCA
-
 
 
 def pca_initialisation(X_, tau, latent_dim):
@@ -52,10 +52,13 @@ def pca_initialisation(X_, tau, latent_dim):
         batch_size=100,
         verbose=0,
     )
-    Y0_pred = pcaencoder(X0_).numpy()
-    ### Saving weights of this model
-    os.makedirs("temp/", exist_ok=True)
-    pcaencoder.encoder.save_weights("temp/tau_pca.weights.h5")
+
+    # Saving weights of this model
+    unique_id = str(uuid.uuid4())
+    os.makedirs(f"temp/{unique_id}/", exist_ok=True)
+    pcaencoder.encoder.save_weights(f"temp/{unique_id}/tau_pca.weights.h5")
+
+    return f"temp/{unique_id}/tau_pca.weights.h5"
 
 
 def best_of_5_runs(x_train, b_train_1, model, b_type, gamma, learning_rate, validation_data):
@@ -67,13 +70,13 @@ def best_of_5_runs(x_train, b_train_1, model, b_type, gamma, learning_rate, vali
     """
     if validation_data is None:
         import warnings
-
         warnings.warn(
             "No validation data given. Will proceed to use train dataset loss as deciding factor for the best model"
         )
         validation_data = (x_train, b_train_1)
 
-    model_loss = []
+    best_loss = float('inf')
+    best_weights = None
 
     for i in range(5):
         from ncmcm.bundlenet.bundlenet import train_model
@@ -87,20 +90,66 @@ def best_of_5_runs(x_train, b_train_1, model, b_type, gamma, learning_rate, vali
             gamma=gamma,
             learning_rate=learning_rate,
             n_epochs=200,
-            validation_data = validation_data,
+            validation_data=validation_data,
+            initialisation=None,
+            report_ray_tune=False,
+        )
+
+        # Store the best weights in memory
+        current_loss = test_history[-1, -1]
+        print("model:", i, "val loss:", current_loss)
+        if current_loss < best_loss:
+            best_loss = current_loss
+            best_weights = model_.get_weights()
+
+    # Set the best weights back to the original model
+    _ = model(x_train)  # build model
+    model.set_weights(best_weights)
+    return model
+
+
+def best_of_n_runs(n, n_epochs, x_train, b_train_1, model, b_type, gamma, learning_rate, validation_data):
+    """
+    Initialises BunDLe net with the best of n runs
+
+    Performs n_epochs epochs of training for n random model initialisations
+    and picks the model with the lowest loss
+    """
+    if validation_data is None:
+        import warnings
+
+        warnings.warn(
+            "No validation data given. Will proceed to use train dataset loss as deciding factor for the best model"
+        )
+        validation_data = (x_train, b_train_1)
+
+    best_loss = float('inf')
+    best_weights = None
+
+    for i in range(n):
+        from ncmcm.bundlenet.bundlenet import train_model
+        model_ = keras.models.clone_model(model)
+
+        train_history, test_history = train_model(
+            x_train,
+            b_train_1,
+            model_,
+            b_type=b_type,
+            gamma=gamma,
+            learning_rate=learning_rate,
+            n_epochs=n_epochs,
+            validation_data=validation_data,
             initialisation=None,
         )
 
-        os.makedirs("temp/best_of_5_runs_models", exist_ok=True)
-        model_.save_weights(f"temp/best_of_5_runs_models/model_{i}")
-        model_loss.append(test_history[-1, -1])
+        # Store the best weights in memory
+        current_loss = test_history[-1, -1]
+        print("model:", i, "val loss:", current_loss)
+        if current_loss < best_loss:
+            best_loss = current_loss
+            best_weights = model_.get_weights()
 
-    for n, i in enumerate(model_loss):
-        print("model:", n, "val loss:", i)
-
-    # Load model with least loss
-    model.load_weights(
-        f"temp/best_of_5_runs_models/model_{np.argmin(model_loss)}"
-    )
-
+    # Set the best weights back to the original model
+    _ = model(x_train) # build model
+    model.set_weights(best_weights)
     return model
