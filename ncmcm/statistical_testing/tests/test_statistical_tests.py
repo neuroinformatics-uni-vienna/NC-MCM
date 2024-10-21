@@ -38,7 +38,7 @@ def test_stationarity():
         sequence = np.random.randint(0,
                                      s,
                                      size=300)
-        p1, p2 = stationarity(sequence=sequence)
+        p1, _, p2, _ = stationarity(sequence=sequence)
 
         assert 0 <= p1 <= 1
         assert 0 <= p2 <= 1
