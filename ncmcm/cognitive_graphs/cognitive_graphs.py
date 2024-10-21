@@ -6,6 +6,7 @@ import json
 import os
 import matplotlib.pyplot as plt
 import numpy as np
+import seaborn as sns
 import networkx as nx
 from pyvis.network import Network
 from sklearn.cluster import SpectralClustering, KMeans
@@ -229,7 +230,8 @@ def cluster_neural_activity(N,
                             chunks=None,
                             clustering='kmeans',
                             kmeans_init='auto',
-                            stationary=False):
+                            stationary=False,
+                            plot=True):
     """
        Clusters neuronal activity into cognitive clusters in probability space. The cluster sequences are tested for
        Markov properties and are returned in order of likelihood of originating from a 1st order Markov Process.
@@ -277,7 +279,7 @@ def cluster_neural_activity(N,
 
            res: list
                 A numpy array of cognitive state sequences (amount='n_rep') sorted by likelihood of stemming from a
-                1st order Markov Process and the p-value of the markovian() (and stationary()) -method(s).
+                1st order Markov Process and the p-value of the markovian (and stationary) -method(s).
        """
 
     if type(B[0]) not in (int, np.int32, np.int64):
@@ -294,13 +296,45 @@ def cluster_neural_activity(N,
                           base_model=model)
 
     res = []
+    p_vals = []
 
     for reps in range(nrep):
         print(f'Testing markovianity for {n_clusters} clusters - repetition {reps + 1}')
         _ = clustering_trajectories(yp_map, n_clusters, kmeans_init, clustering, chunks, sim_m, sim_s, stationary)
         res.append(_)
+        if plot:
+            p_vals.append(_[1:])
+
+    if plot:
+        p_vals = np.array(p_vals)
+
+        # Check if the shape is (nrep, 2) or (nrep, 4)
+        if p_vals.shape[1] == 2:
+            data_to_plot = p_vals[:, 0]  # Only the second column
+            fig, ax = plt.subplots()
+            ax.boxplot(data_to_plot)
+            #sns.boxplot(data=data_to_plot, ax=ax)
+            ax.set_xticklabels(['Markov property'])
+
+        else:
+            # For (nrep, 4), ignore the first column and plot the rest
+            data_to_plot = p_vals[:, :]  # Second, third, and fourth columns
+            fig, ax = plt.subplots()
+            ax.boxplot(data_to_plot)
+            #sns.boxplot(data=data_to_plot, palette=["lightblue", "lightgreen", "lightgreen"], ax=ax)
+            ax.set_xticklabels(['Markov property', 'Stationary property KS-test', 'Stationary property T-test'],
+                               rotation=45)
+        ax.axhline(0.05, linestyle='--', color='red')
+        ax.fill_between(ax.get_xlim(), y1=0.05, y2=1, color='green', alpha=0.3)
+        ax.fill_between(ax.get_xlim(), y1=0, y2=0.05, color='red', alpha=0.3)
+
+        # Adding placeholders for title and axis labels
+        ax.set_title(f'P-values for {nrep} clustered cognitive sequences ')
+        ax.set_ylabel('P-value results')
+        plt.show()
 
     if stationary:
+        res = sorted(res, key=lambda x: x[3])
         res = sorted(res, key=lambda x: x[2])
     res_sorted = sorted(res, key=lambda x: x[1], reverse=True)
 
@@ -354,8 +388,11 @@ def clustering_trajectories(yp_map,
         p_m: np.ndarray
             The p-value given by the "markovian" method
 
-        p_adj_s: np.ndarray
-              The p-value given by the "stationary" method
+        p_ks: np.ndarray
+              The p-value given by the "stationary" method for the ks-test
+
+        p_tt: np.ndarray
+              The p-value given by the "stationary" method for the t-test
     """
     # Clustering in probability space
     if clustering == 'kmeans':
@@ -371,7 +408,7 @@ def clustering_trajectories(yp_map,
     # Statistical testing
     p_m, _ = markovian(xctmp, sim_memoryless=sim_m)
     if stationary:
-        _, p_adj_s = stationarity(xctmp, chunks=chunks, plot=False, sim_stationary=sim_s)
-        return xctmp, p_m, p_adj_s
+        p_ks, _, p_t, _ = stationarity(xctmp, chunks=chunks, plot=False, sim_stationary=sim_s)
+        return xctmp, p_m, p_ks, p_t
 
     return xctmp, p_m
