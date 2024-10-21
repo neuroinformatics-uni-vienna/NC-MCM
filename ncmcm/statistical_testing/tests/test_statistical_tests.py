@@ -24,7 +24,7 @@ def test_compute_transition_matrix_lag2():
         sequence = np.random.randint(0,
                                      s,
                                      size=300)
-        P, S, M, N = compute_transition_matrix_lag2(sequence)
+        P, S, M, N = compute_joint_probability_matrix_lag2(sequence)
 
         assert len(S) == s
         assert M == 300
