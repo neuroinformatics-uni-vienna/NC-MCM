@@ -38,11 +38,19 @@ def test_stationarity():
         sequence = np.random.randint(0,
                                      s,
                                      size=300)
-        p1, _, p2, _ = stationarity(sequence=sequence)
+        p1, _, p2, _ = stationarity(sequence=sequence, sim_stationary=10, chunks=3)
 
         assert 0 <= p1 <= 1
-        assert 0 <= p2 <= 1
+        assert 0 <= p2 <= 1 or np.isnan(p2)  # Since the T-Test does not work with chunks = 2 or only one state
 
+    states = [2, 3, 4]
+    for s in states:
+        sequence = np.random.randint(0,
+                                     s,
+                                     size=500)
+        p1, _, p2, _ = stationarity(sequence=sequence, sim_stationary=10, chunks=None)
+        assert 0 <= p1 <= 1
+        assert 0 <= p2 <= 1
 
 def test_simulate_markovian():
     length = 100
