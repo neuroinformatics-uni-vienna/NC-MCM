@@ -92,11 +92,12 @@ def test_cluster_neural_activity():
                                                                random_state=42))
 
     assert len(res) == 2
-    assert len(res[0]) == 3
+    assert len(res[0]) == 4
     assert len(res[0][0]) == 100
     assert len(np.unique(res[0][0])) == 3
     assert 0 <= res[0][1] <= 1
     assert 0 <= res[0][2] <= 1
+    assert 0 <= res[0][3] <= 1
 
     res = cluster_neural_activity(n, behaviors,
                                   n_clusters=4,

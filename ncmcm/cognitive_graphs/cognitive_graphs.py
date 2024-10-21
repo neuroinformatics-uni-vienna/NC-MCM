@@ -231,7 +231,7 @@ def cluster_neural_activity(N,
                             clustering='kmeans',
                             kmeans_init='auto',
                             stationary=False,
-                            plot=True):
+                            plot=False):
     """
        Clusters neuronal activity into cognitive clusters in probability space. The cluster sequences are tested for
        Markov properties and are returned in order of likelihood of originating from a 1st order Markov Process.
@@ -272,8 +272,12 @@ def cluster_neural_activity(N,
            kmeans_init: str, optional
                 Value for 'n_init' in KMeans (default: 'auto').
 
-           stationary:bool, optional
+           stationary: bool, optional
                 Amount of chunks used in the stationary() method.
+
+           plot: bool, optional
+                If this is set on True a plot will be created to display the results from the p-values of the test(s) for
+                all the cognitive sequences (size = nrep)
 
        Returns:
 

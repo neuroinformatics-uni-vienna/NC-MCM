@@ -444,3 +444,4 @@ def simulate_random_sequence(M, N):
     """
     random_sequence = np.random.randint(0, N, size=M)
     return random_sequence
+
