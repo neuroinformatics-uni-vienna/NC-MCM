@@ -80,6 +80,8 @@ def stationarity(sequence, chunks=None, sim_stationary=1000, plot=False, verbose
         - In testing I found out that with very long sequences (>5000) or with high values of sim_stationary (>1000) the
         test is influenced by the unequal/skewed sample sizes, and becomes very sensitive. As a rule of thumb, try to
         keep the sim_simulations below 1+1000*np.exp(-0.0007*N) where N is the length of the sequence.
+        - The t-test only works with chunks > 2 and with more than 1 state.
+
 
     Args:
         - sequence: Input sequence.
@@ -102,6 +104,7 @@ def stationarity(sequence, chunks=None, sim_stationary=1000, plot=False, verbose
     transition_dict = get_trans_dict(sequence)
     if chunks is None:
         chunks = calculate_chunks(transition_dict, num_states, verbose=verbose)
+        print(chunks)
 
     # Split each type of transition for each state into parts
     parts = get_parts(transition_dict, chunks)
@@ -152,9 +155,12 @@ def stationarity(sequence, chunks=None, sim_stationary=1000, plot=False, verbose
                                         alternative='greater')
 
     t_statistic, p_value_tt = ttest_ind(sorted_sample,
-                                   sorted_ref,
-                                   alternative='greater',
-                                   equal_var=False)
+                                        sorted_ref,
+                                        alternative='greater',
+                                        equal_var=False,
+                                        axis=0)
+    print(f'{chunks=}')
+
 
     return p_value_ks, ks_statistic, p_value_tt, t_statistic
 
@@ -444,4 +450,3 @@ def simulate_random_sequence(M, N):
     """
     random_sequence = np.random.randint(0, N, size=M)
     return random_sequence
-
