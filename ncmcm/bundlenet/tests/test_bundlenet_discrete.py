@@ -15,7 +15,6 @@ def test_bundlenet_architecture():
     model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour)
     _ = model(X_) # build model by providing input
 
-    print()
     assert model.tau.output_shape[-1] == latent_dim
     assert model.T_Y.input_shape[-1] == latent_dim
     assert model.T_Y.output_shape[-1] == latent_dim
