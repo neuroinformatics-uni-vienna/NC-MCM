@@ -9,7 +9,7 @@ from ncmcm.bundlenet.utils import prep_data
 from ncmcm.visualisers.latent_space import LatentSpaceVisualiser
 
 # Load Data (excluding behavioural neurons) and plot
-for worm_num in [0]:
+for worm_num in range(5):
     print('worm_num ', worm_num)
     algorithm = 'BunDLeNet'
     b_neurons = [

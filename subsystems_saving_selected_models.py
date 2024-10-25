@@ -10,7 +10,7 @@ from ncmcm.visualisers.latent_space import LatentSpaceVisualiser
 import seaborn as sns
 
 # Load Data (excluding behavioural neurons) and plot
-for worm_num in [0]:
+for worm_num in range(5):
     print('worm_num ', worm_num)
     algorithm = 'BunDLeNet'
     b_neurons = [
@@ -58,7 +58,7 @@ for worm_num in [0]:
     model.save_weights(f"temp/selected_models/model_unreg_min_train_loss_worm_{worm_num}")
     np.save(f"temp/selected_models/Y0_unreg_min_train_loss_worm_{worm_num}", Y0_)
 
-
+    """
     # model category 2: regularised model - train loss criterion
     model_train_loss = np.load(f"temp/subsystems_model_selection_reg_test/model_train_loss_worm_{worm_num}.npy")
     idx = np.argmin(model_train_loss)
@@ -154,3 +154,4 @@ for model_type in [
     ax.set_zticks([])
 
     plt.show()
+"""

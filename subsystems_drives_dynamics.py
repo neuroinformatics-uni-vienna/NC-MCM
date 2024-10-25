@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 import matplotlib.pyplot as plt
 from tensorflow.keras import layers
@@ -9,6 +11,7 @@ from ncmcm.visualisers.neuronal_behavioural import plotting_neuronal_behavioural
 from ncmcm.visualisers.latent_space import LatentSpaceVisualiser
 import tensorflow as tf
 import seaborn as sns
+from matplotlib import animation
 
 # Load Data (excluding behavioural neurons) and plot
 worm_num = 0
@@ -30,7 +33,8 @@ mask = data.categorise_neurons('datasets/raw/c_elegans')
 X = data.neuron_traces.T
 B = data.behaviour
 X_, B_ = prep_data(X, B, win=15)
-Y0_ = np.load(f"temp/selected_models/Y0_reg_min_train_loss_worm_0.npy")
+Y0_ = np.load(f"temp/selected_models/Y0_unreg_min_train_loss_worm_{worm_num}.npy")
+
 
 
 direction_vectors = []
@@ -40,7 +44,8 @@ direction_vectors = np.abs(direction_vectors)
 direction_vectors = direction_vectors/np.sum(direction_vectors, axis=1)[:, np.newaxis]
 print(direction_vectors.shape)
 direction_vectors =  direction_vectors[[0,1,3,4,5,6,7],:] # excluding no state because only one trajectory
-fig, ax = plt.subplots(figsize=(8,4))
+
+fig, ax = plt.subplots(figsize=(6,3))
 b_names = [data.behaviour_names[i] for i in [0,1,3,4,5,6,7]] # excluding no state because only one trajectory
 # colors = ["#111D4A","#563F1B","#38726C"]
 colors = [sns.color_palette("Set2")[i] for i in range(3)]
@@ -48,14 +53,12 @@ ax.bar(b_names, direction_vectors[:, 0], label='Sensory', color=colors[0])
 ax.bar(b_names, direction_vectors[:, 1], bottom=direction_vectors[:, 0], label='Interneurons', color=colors[1])
 ax.bar(b_names, direction_vectors[:, 2], bottom=direction_vectors[:, 0] + direction_vectors[:, 1], label='Motor', color=colors[2])
 
-ax.set_xlabel('Behaviors')
 ax.set_ylabel('Contributions')
-ax.legend()
-
+legend = ax.legend(framealpha=0.5)
 plt.xticks(rotation=40)
 plt.tight_layout()
 plt.show()
-
+fig.savefig('temp/drives_dynamics.pdf', format='pdf')
 
 # Plotting latent space dynamics
 vis = LatentSpaceVisualiser(Y0_, B_, data.behaviour_names)
@@ -65,4 +68,4 @@ ax.set_axis_on()
 ax.set_xlabel('sensory neurons axis ')
 ax.set_ylabel('inter neuron axis')
 ax.set_zlabel('motor neuron axis')
-plt.show()
+

@@ -1,15 +1,18 @@
+import os
 
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
 import matplotlib as cm
+from matplotlib import animation
 
 from ncmcm.bundlenet.utils import prep_data
 from ncmcm.data_loaders.matlab_dataset import Database
-
+from ncmcm.visualisers.latent_space import LatentSpaceVisualiser
 
 # Load Data (excluding behavioural neurons) and plot
 worm_num = 0
+
 algorithm = 'BunDLeNet'
 b_neurons = [
     'AVAR',
@@ -27,6 +30,7 @@ data.exclude_neurons(b_neurons)
 mask = data.categorise_neurons('datasets/raw/c_elegans')
 X = data.neuron_traces.T
 B = data.behaviour
+X_, B_ = prep_data(X, B, win=15)
 b_names = data.behaviour_names
 
 Xs = X[:, mask == 1]
@@ -122,6 +126,33 @@ plt.subplots_adjust(left=0.2, right=0.4, top=0.9, bottom=0.1)
 plt.show()
 
 
+
+Y0_ = np.load(f"temp/selected_models/Y0_unreg_min_train_loss_worm_{worm_num}.npy")
+# Plotting latent space dynamics
+colors = {
+    "Sensory": sns.color_palette("Set2")[0],  # sns.color_palette("dark", 3)[0],  # Dark blue-gray
+    "Inter": sns.color_palette("Set2")[1],  # sns.color_palette("dark", 3)[1],     # Dark grayish-brown
+    "Motor": sns.color_palette("Set2")[2]  # sns.color_palette("dark", 3)[2]     # Dark slate blue
+}
+vis = LatentSpaceVisualiser(Y0_, B_, data.behaviour_names)
+# vis.plot_latent_timeseries()
+fig, ax = vis.plot_phase_space(show_fig=False, arrow_length_ratio=0.3)
+ax.set_axis_on()
+ax.set_xlabel('sensory neurons axis', fontsize=14, color=colors["Sensory"])
+ax.set_ylabel('inter neuron axis', fontsize=14, color=colors["Inter"])
+ax.set_zlabel('motor neuron axis', fontsize=14, color=colors["Motor"])
+# ax.set_title(model_type)
+ax.set_xticks([])
+ax.set_yticks([])
+ax.set_zticks([])
+def rotate(angle):
+    ax.view_init(azim=angle)
+rot_animation = animation.FuncAnimation(fig, rotate, frames=np.arange(0, 362, 5), interval=150)
+os.makedirs(os.path.dirname(f'temp/rotating_plot_{worm_num}.gif'), exist_ok=True)
+rot_animation.save(f'temp/rotating_plot_{worm_num}.gif', dpi=150, writer='imagemagick')
+plt.show()
+
+plt.show()
 
 '''
 
