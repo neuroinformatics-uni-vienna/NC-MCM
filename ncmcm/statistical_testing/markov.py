@@ -154,19 +154,31 @@ def stationary_property_test(sequence, chunks_num=None, plot=False, verbose=0, n
 
     # plot all the results
     if plot:
-        fig, ax = plt.subplots()
-        ax.hist(test_stats, bins=15, color='black', density=True, alpha=0.6,
-                label='Underlying distribution')
-        ax.hist(frobenius_norms, bins=25, color='green', density=True, alpha=0.6,
-                label='Frobenius distribution')
-        ax.axvline(0, color='orange', label='True Norm')
-        ax.axvline(np.mean(test_stats), color='black', label='Mean underlying frobenius', linestyle='--')
-        ax.axvline(np.mean(frobenius_norms), color='green', label='Mean sample frobenius', linestyle='--')
-        ax.set_xlabel('Values')
-        ax.set_ylabel('Frequency')
-        ax.set_title('Histogram of Float Values')
-        ax.legend()
-        ax.grid(True)
+
+        combined_min = min(frobenius_norms + test_stats)
+        combined_max = max(frobenius_norms + test_stats)
+        bins = np.linspace(combined_min, combined_max, 30)
+
+        fig, ax1 = plt.subplots()
+        ax1.hist(frobenius_norms, bins=bins, color='green', density=True, alpha=0.6,
+                 label='Frobenius distribution')
+        ax1.axvline(np.mean(frobenius_norms), color='green', linestyle='--',
+                    label='Mean sample Frobenius norm')
+        ax1.set_xlabel('Values')
+        ax1.set_ylabel('Frequency (Frobenius)', color='green')
+        ax1.tick_params(axis='y', labelcolor='green')
+        ax1.grid(True)
+        ax2 = ax1.twinx()
+        ax2.hist(test_stats, bins=bins, color='black', density=True, alpha=0.6,
+                 label='Underlying distribution')
+        ax2.axvline(np.mean(test_stats), color='black', linestyle='--',
+                    label='Mean underlying Frobenius norm')
+        ax2.set_ylabel('Frequency (Test Stats)', color='black')
+        ax2.tick_params(axis='y', labelcolor='black')
+        ax1.axvline(0, color='orange', label='True Norm')
+        fig.legend(loc="upper right", bbox_to_anchor=(1, 1), bbox_transform=ax1.transAxes)
+
+        ax1.set_title('Histograms of Frobenius norms of original sequence and simulated samples')
         plt.show()
 
     sorted_ref = np.sort(test_stats)
