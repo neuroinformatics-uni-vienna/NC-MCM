@@ -6,14 +6,14 @@ import statsmodels.stats.multitest as smt
 from ncmcm.statistical_testing.markov import *
 
 
-def test_markovian():
+def test_markov_property_test():
     states = [1, 5, 10]
     for s in states:
         sequence = np.random.randint(0,
                                      s,
                                      size=300)
-        p, P1 = markovian(sequence,
-                          sim_memoryless=300)
+        p, P1 = markov_property_test(sequence,
+                                     simulations=300)
         assert 0 <= p <= 1
         assert len(P1) == s
 
@@ -24,7 +24,7 @@ def test_compute_transition_matrix_lag2():
         sequence = np.random.randint(0,
                                      s,
                                      size=300)
-        P, S, M, N = compute_joint_probability_matrix_lag2(sequence)
+        P, S, M, N = estimate_joint_probability_matrix_lag2(sequence)
 
         assert len(S) == s
         assert M == 300
@@ -32,27 +32,37 @@ def test_compute_transition_matrix_lag2():
         assert P.shape == (s, s, s)
 
 
-def test_stationarity():
+def test_stationary_property_test():
     states = [1, 5, 10]
     for s in states:
         sequence = np.random.randint(0,
                                      s,
                                      size=300)
-        p1, _, p2, _ = stationarity(sequence=sequence, sim_stationary=10, chunks=3)
-
+        p1, _ = stationary_property_test(sequence=sequence, simulations=10,
+                                         chunks_num=3, test_mode='ks')
         assert 0 <= p1 <= 1
-        assert 0 <= p2 <= 1 or np.isnan(p2)  # Since the T-Test does not work with chunks = 2 or only one state
+        p1, _ = stationary_property_test(sequence=sequence, simulations='optimal',
+                                         chunks_num=3, test_mode='ks')
+        assert 0 <= p1 <= 1
+        p1, _ = stationary_property_test(sequence=sequence, simulations='optimal',
+                                         chunks_num=None, test_mode='ks', verbose=1)
+        assert 0 <= p1 <= 1
 
     states = [2, 3, 4]
     for s in states:
         sequence = np.random.randint(0,
                                      s,
                                      size=500)
-        p1, _, p2, _ = stationarity(sequence=sequence, sim_stationary=10, chunks=None)
+        p1, _, p2, _ = stationary_property_test(sequence=sequence, simulations=10, chunks_num=None, test_mode='both')
         assert 0 <= p1 <= 1
         assert 0 <= p2 <= 1
+        p1, _ = stationary_property_test(sequence=sequence, simulations=10, chunks_num=None, test_mode='ttest')
+        assert 0 <= p1 <= 1
+        p1, _ = stationary_property_test(sequence=sequence, simulations=10, chunks_num=None, test_mode='something else')
+        assert 0 <= p1 <= 1
 
-def test_simulate_markovian():
+
+def test_simulate_markov_sequence():
     length = 100
     states = 3
     rand_P = np.random.rand(states, states)
@@ -60,19 +70,19 @@ def test_simulate_markovian():
                      axis=1,
                      keepdims=True)
 
-    z, P = simulate_markovian(length,
-                              order=10,
-                              N=10,
-                              P=rand_P)
+    z, P = simulate_markov_sequence(length,
+                                    order=10,
+                                    N=10,
+                                    P=rand_P)
 
     assert length == len(z)
     assert rand_P.shape == P.shape
 
     order = 3
 
-    z, P = simulate_markovian(length,
-                              order=order,
-                              N=states)
+    z, P = simulate_markov_sequence(length,
+                                    order=order,
+                                    N=states)
 
     assert length == len(z)
     assert len(P) == order
@@ -99,6 +109,16 @@ def test_non_stationary_process():
     for s in states:
         sequence = non_stationary_process(100,
                                           N=s)
+        assert len(sequence) == 100
+        assert len(np.unique(sequence)) <= s
+
+
+def test_non_stationary_process2():
+    states = [1, 5, 10]
+    for s in states:
+        sequence = non_stationary_process2(100,
+                                           N=s,
+                                           epsilon=0.01*s)
         assert len(sequence) == 100
         assert len(np.unique(sequence)) <= s
 
