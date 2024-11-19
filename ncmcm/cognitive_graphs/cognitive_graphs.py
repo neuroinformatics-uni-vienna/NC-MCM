@@ -14,7 +14,7 @@ from sklearn.linear_model import LogisticRegression
 from ncmcm.cognitive_graphs.calculations import adj_matrix_ncmcm, fit_model
 from ncmcm.cognitive_graphs.helpers import shift_pos_by, generate_equidistant_colors, map_names, make_integer_list
 from ncmcm.cognitive_graphs.custom_models import CustomEnsembleModel
-from ncmcm.statistical_testing.markov import markovian, stationarity
+from ncmcm.statistical_testing.markov import markov_property_test, stationary_property_test
 
 
 def behavioral_state_diagram(C,
@@ -27,7 +27,7 @@ def behavioral_state_diagram(C,
                              options=0,
                              weights_hist=False,
                              bins=15,
-                             test=False,
+                             test_run=False,
                              **kwargs):
     """
     Creates a behavioral state diagram using the defined states (C and B) as a directed graph.
@@ -60,15 +60,18 @@ def behavioral_state_diagram(C,
         options: int, str, optional
             This gives either an int from 0 to 2 for a predefined physics script or one can give a path to
             a JSON-file containing a physics script for a pyvis graph.
-                0 will push nodes apart and pull them together by the edges.
-                1 will remove all forces acting on the nodes so one can place them by hand.
-                2 removes some of the strength of the forces in 0 to make it easier to place nodes.
+                0 - will push nodes apart and pull them together by the edges.
+                1 - will remove all forces acting on the nodes so one can place them by hand.
+                2 - removes some of the strength of the forces in 0 to make it easier to place nodes.
 
         adj_matrix: bool, optional
             If the adjacency matrix should be plotted
 
         weights_hist: bool, optional
             If a histogram of transition weights should be plotted
+
+        test_run: bool, optional
+            A parameter that closes all plots instead of showing them. Used for efficient testing.
 
     Returns:
         Boolean success indicator
@@ -211,7 +214,7 @@ def behavioral_state_diagram(C,
         plt.title("Behavioral State Diagram")
         plt.show(block=False)
 
-    if test:
+    if test_run:
         plt.close('all')
         return True
     else:
@@ -230,13 +233,17 @@ def cluster_neural_activity(N,
                             chunks=None,
                             clustering='kmeans',
                             kmeans_init='auto',
-                            stationary=False,
+                            test_stationary_property=False,
+                            test_mode='both',
                             plot=False):
     """
-       Clusters neuronal activity into cognitive clusters in probability space. The cluster sequences are tested for
-       Markov properties and are returned in order of likelihood of originating from a 1st order Markov Process.
+        Clusters neuronal activity data into cognitive clusters within a probability space. The resulting cluster
+        sequences are evaluated for adherence to Markov properties and are sorted by the degree of compliance.
+        The first element in the returned array represents the cognitive state sequence with the highest p-value
+        from the 'markov_property_test' (and 'stationary_property_test'), indicating the least violations
+        of the Markov property.
 
-       Parameters:
+        Parameters:
 
            N: np.ndarray, required
                 Neuronal activity timeseries (shape = (neurons, activity-timeseries))
@@ -272,18 +279,26 @@ def cluster_neural_activity(N,
            kmeans_init: str, optional
                 Value for 'n_init' in KMeans (default: 'auto').
 
-           stationary: bool, optional
+           test_stationary_property: bool, optional
                 Amount of chunks used in the stationary() method.
 
+           test_mode: str, optional
+                If 'test_stationary_property' is True then here a 'test_mode' for the 'stationary_property_test' can be set.
+                Options include: 'ks', 'ttest' and 'both'.
+
            plot: bool, optional
-                If this is set on True a plot will be created to display the results from the p-values of the test(s) for
-                all the cognitive sequences (size = nrep)
+                If this is set on True a plot will be created to display the results from the p-values of the test(s)
+                for all the cognitive sequences (size = nrep). This can help users to get a look at the distribution of
+                all simulated sequences for each p-value.
 
-       Returns:
+        Returns:
 
-           res: list
-                A numpy array of cognitive state sequences (amount='n_rep') sorted by likelihood of stemming from a
-                1st order Markov Process and the p-value of the markovian (and stationary) -method(s).
+           res_sorted: list
+                A numpy array containing 'n_rep' tuples, each representing a cognitive state sequence. In each tuple,
+                the first index holds the sequence itself, while subsequent indices contain p-values for statistical
+                tests. The tuples are ordered based on their compliance with a 1st-order Markov Process, sorted by the
+                results of the 'markov_property_test' (and 'stationary_property_test') p-values. Tuples with the fewest
+                violations of Markov properties (high p-values) appear first in the array.
        """
 
     if type(B[0]) not in (int, np.int32, np.int64):
@@ -300,47 +315,46 @@ def cluster_neural_activity(N,
                           base_model=model)
 
     res = []
-    p_vals = []
 
     for reps in range(nrep):
         print(f'Testing markovianity for {n_clusters} clusters - repetition {reps + 1}')
-        _ = clustering_trajectories(yp_map, n_clusters, kmeans_init, clustering, chunks, sim_m, sim_s, stationary)
+        _ = clustering_trajectories(yp_map, n_clusters, kmeans_init,
+                                    clustering, chunks, sim_m, sim_s,
+                                    test_stationary_property, test_mode=test_mode)
         res.append(_)
-        if plot:
-            p_vals.append(_[1:])
+
+    if test_stationary_property:
+        res = sorted(res, key=lambda x: x[3])
+        res = sorted(res, key=lambda x: x[2])
+    res_sorted = sorted(res, key=lambda x: x[1], reverse=True)
 
     if plot:
-        p_vals = np.array(p_vals)
+        res_transformed = [entry[1:] for entry in res]
+        p_vals = np.array(res_transformed)
+        print(p_vals.shape)
 
-        # Check if the shape is (nrep, 2) or (nrep, 4)
-        if p_vals.shape[1] == 2:
-            data_to_plot = p_vals[:, 0]  # Only the second column
+        if p_vals.shape[1] == 1:
+            data_to_plot = p_vals[:, 0]
             fig, ax = plt.subplots()
             ax.boxplot(data_to_plot)
-            #sns.boxplot(data=data_to_plot, ax=ax)
             ax.set_xticklabels(['Markov property'])
-
-        else:
-            # For (nrep, 4), ignore the first column and plot the rest
-            data_to_plot = p_vals[:, :]  # Second, third, and fourth columns
+        elif p_vals.shape[1] == 3:
+            data_to_plot = p_vals[:, :]
             fig, ax = plt.subplots()
             ax.boxplot(data_to_plot)
-            #sns.boxplot(data=data_to_plot, palette=["lightblue", "lightgreen", "lightgreen"], ax=ax)
             ax.set_xticklabels(['Markov property', 'Stationary property KS-test', 'Stationary property T-test'],
                                rotation=45)
+        else:
+            print('Something went wrong when plotting')
+            return res_sorted
+
         ax.axhline(0.05, linestyle='--', color='red')
         ax.fill_between(ax.get_xlim(), y1=0.05, y2=1, color='green', alpha=0.3)
         ax.fill_between(ax.get_xlim(), y1=0, y2=0.05, color='red', alpha=0.3)
 
-        # Adding placeholders for title and axis labels
         ax.set_title(f'P-values for {nrep} clustered cognitive sequences ')
         ax.set_ylabel('P-value results')
         plt.show()
-
-    if stationary:
-        res = sorted(res, key=lambda x: x[3])
-        res = sorted(res, key=lambda x: x[2])
-    res_sorted = sorted(res, key=lambda x: x[1], reverse=True)
 
     return res_sorted
 
@@ -352,11 +366,12 @@ def clustering_trajectories(yp_map,
                             chunks=None,
                             sim_m=500,
                             sim_s=500,
-                            stationary=False):
+                            test_stationary_property=False,
+                            test_mode='both'):
     """
-    Clusters neuronal activity into cognitive clusters in probability space and tests them for 1st order
-    Markov properties. Will return the sequence of cognitive clusters and the p-value(s) ("stationary"
-    will indicate to test if the sequence comes from a stationary process).
+    Clusters neuronal activity into cognitive clusters in probability space and tests them for 1st order Markov
+    properties. Will return the sequence of cognitive clusters and the p-value(s) ('test_stationary_property' will
+    indicate to also apply the 'stationary_property-test').
 
     Parameters:
 
@@ -381,8 +396,12 @@ def clustering_trajectories(yp_map,
         sim_s: int, optional
             Amount of generated sequences in the stationary() method.
 
-        stationary: bool, optional
+        test_stationary_property: bool, optional
             Amount of chunks used in the stationary() method.
+
+        test_mode: str, optional
+            If 'test_stationary_property' is True then here a 'test_mode' for the 'stationary_property_test' can be set.
+            Options include: 'ks', 'ttest' and 'both'.
 
     Returns:
 
@@ -390,13 +409,16 @@ def clustering_trajectories(yp_map,
             A numpy array of cognitive state sequences
 
         p_m: np.ndarray
-            The p-value given by the "markovian" method
+            The p-value given by the "markov_property_test" method
 
         p_ks: np.ndarray
-              The p-value given by the "stationary" method for the ks-test
+              The p-value given by the "stationary_property_test" method for the ks-test
 
         p_tt: np.ndarray
-              The p-value given by the "stationary" method for the t-test
+              The p-value given by the "stationary_property_test" method for the t-test
+
+        p: np.ndarray
+              The p-value given by the "stationary_property_test" method for the t- or ks- test.
     """
     # Clustering in probability space
     if clustering == 'kmeans':
@@ -410,9 +432,17 @@ def clustering_trajectories(yp_map,
                          "It should be either 'kmeans' or 'spectral'. ")
 
     # Statistical testing
-    p_m, _ = markovian(xctmp, sim_memoryless=sim_m)
-    if stationary:
-        p_ks, _, p_t, _ = stationarity(xctmp, chunks=chunks, plot=False, sim_stationary=sim_s)
-        return xctmp, p_m, p_ks, p_t
+    p_m, _ = markov_property_test(xctmp, simulations=sim_m)
+    if test_stationary_property:
+        if test_mode == 'both':
+            p_ks, _, p_t, _ = stationary_property_test(xctmp, chunks_num=chunks,
+                                                       plot=False, simulations=sim_s,
+                                                       test_mode=test_mode)
+            return xctmp, p_m, p_ks, p_t
+        else:
+            p, _ = stationary_property_test(xctmp, chunks_num=chunks,
+                                            plot=False, simulations=sim_s,
+                                            test_mode=test_mode)
+            return xctmp, p_m, p
 
     return xctmp, p_m
