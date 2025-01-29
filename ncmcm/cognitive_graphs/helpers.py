@@ -1,3 +1,7 @@
+"""
+@authors:
+Michael Hofer
+"""
 import colorsys
 import numpy as np
 

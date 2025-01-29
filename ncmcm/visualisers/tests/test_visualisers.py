@@ -8,23 +8,9 @@ from ncmcm.visualisers.latent_space import *
 
 def test_comparison():
     logreg = LogisticRegression()
-    y = np.random.rand(500, 3)
-    b = np.zeros(500, dtype=int)
+    y = np.random.rand(100, 3)
+    b = np.random.randint(low=0, high=4, size=100, dtype=int)
     b_names = ['sit', 'stand', 'walk', 'run']
-
-    for i in range(1, 500):
-        y[i] += np.random.normal(scale=0.05, size=3)
-        y[i] = np.asarray(np.clip(y[i], 0, 1))
-    for i in range(500):
-        x, f, z = y[i]
-        if x + f + z < 1.5:
-            b[i] = 0
-        elif x + f + z < 2:
-            b[i] = 1
-        elif x + f + z < 2.5:
-            b[i] = 2
-        else:
-            b[i] = 3
 
     lsv = LatentSpaceVisualiser(y, b, b_names=b_names, legend=True)
     res1 = lsv.comparison_model(model=logreg, show_fig=False)
@@ -38,31 +24,34 @@ def test_comparison():
 def test_y_original():
     logreg = RandomForestClassifier()
     y = np.random.rand(500, 3)
-    b = np.zeros(500, dtype=int)
+    y_add = np.random.rand(500, 20)
+    b = np.random.randint(low=0, high=4, size=500, dtype=int)
     b_names = ['sit', 'stand', 'walk', 'run']
-
-    for i in range(1, 500):
-        y[i] += np.random.normal(scale=0.05, size=3)
-        y[i] = np.asarray(np.clip(y[i], 0, 1))
-    for i in range(500):
-        x, f, z = y[i]
-        if x + f + z < 1.5:
-            b[i] = 0
-        elif x + f + z < 2:
-            b[i] = 1
-        elif x + f + z < 2.5:
-            b[i] = 2
-        else:
-            b[i] = 3
-    y_true = np.concatenate((np.random.rand(500, 20), y), axis=1)
+    y_true = np.concatenate((y_add, y), axis=1)
 
     lsv = LatentSpaceVisualiser(y, b, b_names=b_names, legend=False)
-    res1 = lsv.comparison_model(model=logreg, y_original=y_true, show_fig=False)
+    res1 = lsv.comparison_model(model=logreg, original_data=y_true, show_fig=False)
     lsv = LatentSpaceVisualiser(y, b, b_names=b_names, legend=True)
-    res2 = lsv.comparison_model(model=logreg, y_original=y_true, show_fig=False)
+    res2 = lsv.comparison_model(model=logreg, original_data=y_true, show_fig=False)
     lsv = LatentSpaceVisualiser(y, b, b_names=b_names, legend=False)
-    res3 = lsv.comparison_model(model=logreg, y_original=y_true[:-1, :], show_fig=False)
+    res3 = lsv.comparison_model(model=logreg, original_data=y_true[:-1, :], show_fig=False)
 
     assert res1 == True
     assert res2 == True
     assert res3 == False
+
+def test_movie_maker():
+    y = np.random.rand(50, 3)
+    b = np.random.randint(low=0, high=4, size=50, dtype=int)
+    b_names = ['sit', 'stand', 'walk', 'run']
+
+    lsv = LatentSpaceVisualiser(y, b, b_names=b_names, legend=True)
+    res1 = lsv.make_movie(show_fig=False)
+    res2 = lsv.make_movie(show_fig=False, fps=1000, initial_alpha=0.01)
+    res3 = lsv.make_movie(show_fig=False, fade=10, alpha=0.45)
+    res4 = lsv.make_movie(show_fig=False, fade=200, alpha=1, initial_alpha=0.01)
+
+    assert res1 == True
+    assert res2 == True
+    assert res3 == True
+    assert res4 == True
