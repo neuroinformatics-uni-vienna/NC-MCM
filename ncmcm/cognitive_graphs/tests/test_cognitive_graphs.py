@@ -19,40 +19,41 @@ def test_behavioral_state_diagram():
     behaviors = [np.random.choice(actions) for _ in range(100)]
 
     result = behavioral_state_diagram(cognitive_states, behaviors,
-                                      interactive=False,
-                                      test=True,
+                                      interactive=None,
+                                      test_run=True,
                                       bins=10)
+    print(result)
     assert result is True
     result = behavioral_state_diagram(cognitive_states, behaviors,
                                       behaviors=actions,
-                                      interactive=False,
-                                      test=True,
+                                      interactive=None,
+                                      test_run=True,
                                       bins=10)
     assert result is True
     result = behavioral_state_diagram(cognitive_states, behaviors,
-                                      interactive=False,
+                                      interactive=None,
                                       weights_hist=True,
-                                      test=True,
+                                      test_run=True,
                                       bins=10)
     assert result is True
     result = behavioral_state_diagram(cognitive_states, behaviors,
                                       behaviors=actions,
-                                      interactive=False,
+                                      interactive=None,
                                       weights_hist=True,
-                                      test=True,
+                                      test_run=True,
                                       bins=10)
     assert result is True
     result = behavioral_state_diagram(cognitive_states, behaviors,
-                                      interactive=False,
+                                      interactive=None,
                                       adj_matrix=True,
-                                      test=True,
+                                      test_run=True,
                                       bins=10)
     assert result is True
     result = behavioral_state_diagram(cognitive_states, behaviors,
                                       behaviors=actions,
-                                      interactive=False,
+                                      interactive=None,
                                       adj_matrix=True,
-                                      test=True,
+                                      test_run=True,
                                       bins=10)
     assert result is True
 
@@ -65,16 +66,16 @@ def test_interactive(return_value):
 
     result = behavioral_state_diagram(cognitive_states, behaviors,
                                       behaviors=actions,
-                                      interactive=True,
+                                      interactive="plot_test",
                                       adj_matrix=True,
-                                      test=True,
+                                      test_run=True,
                                       bins=10)
     assert result is True
 
     result = behavioral_state_diagram(cognitive_states, behaviors,
-                                      interactive=True,
+                                      interactive="plot_test",
                                       adj_matrix=False,
-                                      test=True,
+                                      test_run=True,
                                       bins=10)
     assert result is True
 
@@ -87,21 +88,22 @@ def test_cluster_neural_activity():
     res = cluster_neural_activity(n, behaviors,
                                   n_clusters=3,
                                   nrep=2,
-                                  stationary=True,
+                                  test_stationary_property=True,
                                   model=RandomForestClassifier(n_estimators=3,
                                                                random_state=42))
 
     assert len(res) == 2
-    assert len(res[0]) == 3
+    assert len(res[0]) == 4
     assert len(res[0][0]) == 100
     assert len(np.unique(res[0][0])) == 3
     assert 0 <= res[0][1] <= 1
     assert 0 <= res[0][2] <= 1
+    assert 0 <= res[0][3] <= 1
 
     res = cluster_neural_activity(n, behaviors,
                                   n_clusters=4,
                                   nrep=3,
-                                  stationary=False,
+                                  test_stationary_property=False,
                                   model=LogisticRegression())
 
     assert len(res) == 3
