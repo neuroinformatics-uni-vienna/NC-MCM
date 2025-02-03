@@ -495,7 +495,7 @@ class LatentSpaceVisualiser:
         color_dict = {name: color for name, color in zip(np.unique(self.b), colors)}
 
         fig = plt.figure()
-        movie_ax = fig.add_subplot(111, projection='3d')
+        ax = fig.add_subplot(111, projection='3d')
         self.scatter = None
         kwargs.setdefault('alpha', 0.4)
         kwargs_initial = kwargs.copy()
@@ -504,17 +504,16 @@ class LatentSpaceVisualiser:
         else:
             kwargs_initial['alpha'] = initial_alpha
 
-        movie_ax = self._plot_ps_comp(movie_ax, self.b, color_dict, **kwargs_initial)
+        ax = self._plot_ps_comp(ax, self.b, color_dict, **kwargs_initial)
         self.quiver_artists = []
 
         if self.legend:
-            legend_elements = self._generate_legend(color_dict, labels=self.b)
-        else:
-            legend_elements = []
+            legend_elements = [Line2D([0], [0], color=color_dict[b], lw=4, label=self.b_names[b]) for b in color_dict]
+            ax.legend(handles=legend_elements)
 
 
         animation = anim.FuncAnimation(fig, self._update,
-                                       fargs=(movie_ax, legend_elements, color_dict, fade, kwargs),
+                                       fargs=(ax, legend_elements, color_dict, fade, kwargs),
                                        frames=self.y.shape[0],
                                        interval=interval)
 
@@ -522,7 +521,7 @@ class LatentSpaceVisualiser:
 
     def _update(self,
                 frame,
-                movie_ax,
+                ax,
                 legend_elements,
                 color_dict,
                 fade,
@@ -532,7 +531,7 @@ class LatentSpaceVisualiser:
         Update function to create a frame in the movie.
         """
         if frame == 0:
-            return movie_ax
+            return ax
 
         if fade and len(self.quiver_artists) > fade:
             to_remove = self.quiver_artists.pop(0)
@@ -541,22 +540,22 @@ class LatentSpaceVisualiser:
         d = (self.y[frame] - self.y[frame - 1])
         kwargs.setdefault('arrow_length_ratio', 0.1 / np.linalg.norm(d))
         kwargs.setdefault('linewidths', 1)
-        quiver = movie_ax.quiver(self.y[frame - 1, 0], self.y[frame - 1, 1], self.y[frame - 1, 2],
+        quiver = ax.quiver(self.y[frame - 1, 0], self.y[frame - 1, 1], self.y[frame - 1, 2],
                                  d[0], d[1], d[2],
                                  color=color_dict[self.b[frame - 1]], **kwargs)
         self.quiver_artists.append(quiver)
-        movie_ax.set_axis_off()
+        ax.set_axis_off()
 
         # Red Point at current frame
         if self.scatter is not None:
             self.scatter.remove()
         x, y, z = self.y[frame, :]
-        self.scatter = movie_ax.scatter(x, y, z, s=20, alpha=0.8, color='red')
+        self.scatter = ax.scatter(x, y, z, s=20, alpha=0.8, color='red')
 
         # Title adn Legend of the frame
-        movie_ax.set_title(f'Frame: {frame}\nBehavior: {self.b_names[self.b[frame - 1]]}')
+        ax.set_title(f'Frame: {frame}\nBehavior: {self.b_names[self.b[frame - 1]]}')
         if legend_elements:
-            movie_ax.legend(handles=legend_elements, loc='lower center', bbox_to_anchor=[1, 0])
+            ax.legend(handles=legend_elements, loc='lower center', bbox_to_anchor=[1, 0])
 
-        return movie_ax
+        return ax
 
