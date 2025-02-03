@@ -323,7 +323,7 @@ class LatentSpaceVisualiser:
             pred_label = b_pred[idx]
             true_label = self.b[idx]
             if wrong_predict > -1:
-                self.diff_label_counts[true_label][self.b_names[pred_label]] += 1
+                self.diff_label_counts[true_label][pred_label] += 1
 
     def _generate_legend(self,
                          color_dict,
@@ -352,16 +352,16 @@ class LatentSpaceVisualiser:
         # if the legend for the difference plot is requested
         if diff:
             y_labels_diff = {
-                label: {wrong: count for wrong, count in self.diff_label_counts[c_idx].items() if count}
-                for c_idx, label in enumerate(self.b_names)
+                self.b_names[c_idx]: {wrong: count for wrong, count in self.diff_label_counts[c_idx].items() if count}
+                for c_idx in self.b_names
             }
 
             legend_elements = [plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=color_dict[idx],
                                           markersize=10,
-                                          label=r'$\mathbf{' + keyval[0] + '}$' + ' to ' +
+                                          label=rf'$\mathbf{{{ keyval[0] }}}$ to ' +
                                                 "; ".join(
-                                                    [r"$\mathbf{" + w_behav + "}$" + f"({amount})"
-                                                     for w_behav, amount in keyval[1].items()]
+                                                    [rf"$\mathbf{{{self.b_names[w_behav]}}}$ ({keyval[1][w_behav]})"
+                                                     for w_behav in keyval[1]]
                                                 )
                                           if keyval[1] else r'$\mathbf{' + keyval[
                                               0] + '}$' + " predictions were always correct")
@@ -372,8 +372,8 @@ class LatentSpaceVisualiser:
         # Create custom legend handles
         legend_elements = [plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=color_dict[idx],
                                       markersize=10,
-                                      label=r'$\mathbf{' + lab + '}$' + f' ({list(labels).count(idx)})')
-                           for idx, lab in enumerate(self.b_names)]
+                                      label=r'$\mathbf{' + self.b_names[idx] + '}$' + f' ({list(labels).count(idx)})')
+                           for idx in self.b_names]
         return legend_elements
 
     def _plot_ps_comp(self, ax, b, color_dict, **kwargs):
