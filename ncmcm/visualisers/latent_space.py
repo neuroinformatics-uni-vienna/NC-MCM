@@ -240,7 +240,7 @@ class LatentSpaceVisualiser:
             cv_scores = cross_val_score(model, self.y, self.b, cv=cv_folds, scoring='accuracy')
             origin = 'Latent Embedding'
             model.fit(self.y, self.b)
-            B_pred = model.predict(self.y)
+            b_pred = model.predict(self.y)
         else:
             if self.b.shape[0] != original_data.shape[0]:
                 print('The original values attached must be the same size as the labels (\'self.b\')')
@@ -250,19 +250,19 @@ class LatentSpaceVisualiser:
             cv_scores = cross_val_score(model, original_data, self.b, cv=cv_folds, scoring='accuracy')
             origin = 'Original Values'
             model.fit(original_data, self.b)
-            B_pred = model.predict(original_data)
+            b_pred = model.predict(original_data)
 
         fig, axis = plt.subplots(figsize=fig_size, ncols=3, subplot_kw={'projection': '3d'}, )
-        diff_mask = self.b != B_pred
+        diff_mask = self.b != b_pred
         diff_predicts = np.where(diff_mask, self.b, -1)
-        self._generate_diff_label_counts(diff_predicts, B_pred)
+        self._generate_diff_label_counts(diff_predicts, b_pred)
         colors = sns.color_palette('deep', len(self.b_names))
         color_dict = {name: color for name, color in zip(np.unique(self.b), colors)}
         color_dict[-1] = 'grey'
 
         self._plot_ps_comp(axis[0], self.b, color_dict, **kwargs)
         self._plot_ps_comp(axis[1], diff_predicts, color_dict, **kwargs)
-        self._plot_ps_comp(axis[2], B_pred, color_dict, **kwargs)
+        self._plot_ps_comp(axis[2], b_pred, color_dict, **kwargs)
 
         if self.legend:
             legend_1 = self._generate_legend(color_dict, labels=self.b)
@@ -277,7 +277,7 @@ class LatentSpaceVisualiser:
                            loc='upper center',
                            bbox_to_anchor=(0.5, 0.),
                            fontsize='small')
-            legend_3 = self._generate_legend(color_dict, labels=B_pred)
+            legend_3 = self._generate_legend(color_dict, labels=b_pred)
             axis[2].legend(title='Predictions',
                            handles=legend_3,
                            loc='upper center',
@@ -287,7 +287,7 @@ class LatentSpaceVisualiser:
         if show_titles:
             axis[1].set_title(f'\nModel: {type(model)}\n'
                               f'Trained/Predicting from {origin}\n\n'
-                              f'In-sample accuracy at {round(accuracy_score(self.b, B_pred), 5)}\n'
+                              f'In-sample accuracy at {round(accuracy_score(self.b, b_pred), 5)}\n'
                               f'Mean cross-validation accuracy at {round(np.mean(cv_scores), 5)}\n')
             fig.suptitle(f'{self.y.shape[0]} Frames',
                          fontsize='x-large',
@@ -300,7 +300,7 @@ class LatentSpaceVisualiser:
 
     def _generate_diff_label_counts(self,
                                     diff_predict,
-                                    B_pred):
+                                    b_pred):
         """
         Generates the counts of wrong predictions by the model from a numpy array
         were correct predictions are marked as "-1" while wrong ones are correctly labeled.
@@ -310,7 +310,7 @@ class LatentSpaceVisualiser:
             diff_predict: numpy.ndarray, required
                 Array with correct predictions (as "-1") and incorrect predictions (as "0", "1", ...)
 
-            B_pred: numpy.ndarray, required
+            b_pred: numpy.ndarray, required
                 Array with predictions from the model
 
         Returns:
@@ -320,7 +320,7 @@ class LatentSpaceVisualiser:
         # Create dictionary to count different predictions for each label
         self.diff_label_counts = {l: {state: 0 for state in self.b_names} for l in np.unique(self.b)}
         for idx, wrong_predict in enumerate(diff_predict):
-            pred_label = B_pred[idx]
+            pred_label = b_pred[idx]
             true_label = self.b[idx]
             if wrong_predict > -1:
                 self.diff_label_counts[true_label][self.b_names[pred_label]] += 1
