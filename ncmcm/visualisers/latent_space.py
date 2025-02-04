@@ -370,10 +370,11 @@ class LatentSpaceVisualiser:
             return legend_elements
 
         # Create custom legend handles
-        legend_elements = [plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=color_dict[idx],
-                                      markersize=10,
-                                      label=r'$\mathbf{' + self.b_names[idx] + '}$' + f' ({list(labels).count(idx)})')
-                           for idx in self.b_names]
+        #legend_elements = [plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=color_dict[idx],
+        #                              markersize=10,
+        #                              label=r'$\mathbf{' + self.b_names[idx] + '}$' + f' ({list(labels).count(idx)})')
+        #                   for idx in self.b_names]
+        legend_elements = [Line2D([0], [0], color=color_dict[b], lw=4, label=self.b_names[b]) for b in color_dict] 
         return legend_elements
 
     def _plot_ps_comp(self, ax, b, color_dict, **kwargs):
