@@ -10,7 +10,7 @@ def test_comparison():
     logreg = LogisticRegression()
     y = np.random.rand(100, 3)
     b = np.random.randint(low=0, high=4, size=100, dtype=int)
-    b_names = ['sit', 'stand', 'walk', 'run']
+    b_names = {1:'sit', 2:'stand', 3:'walk', 4:'run'}
 
     lsv = LatentSpaceVisualiser(y, b, b_names=b_names, legend=True)
     res1 = lsv.comparison_model(model=logreg, show_fig=False)
@@ -26,7 +26,7 @@ def test_y_original():
     y = np.random.rand(500, 3)
     y_add = np.random.rand(500, 20)
     b = np.random.randint(low=0, high=4, size=500, dtype=int)
-    b_names = ['sit', 'stand', 'walk', 'run']
+    b_names = {1:'sit', 2:'stand', 3:'walk', 4:'run'}
     y_true = np.concatenate((y_add, y), axis=1)
 
     lsv = LatentSpaceVisualiser(y, b, b_names=b_names, legend=False)
