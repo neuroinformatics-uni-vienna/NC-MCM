@@ -5,12 +5,12 @@ Vittorio Boarini
 """
 
 import numpy as np
+import ray
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
 from .losses import BccDccLoss
-from .initialisations import pca_initialisation, best_of_5_runs
+from .initialisations import pca_initialisation, best_of_5_runs, best_of_n_runs
 from .utils import torch_batch_prep, GaussianNoise
 
 
@@ -164,7 +164,7 @@ class BunDLeTrainer:
 
 
 def train_model(x_train, b_train_1, model, b_type, gamma, learning_rate, n_epochs, initialisation=None,
-                validation_data=None, device=None):
+                validation_data=None, device=None, report_ray_tune=False):
     """
     Training BunDLe Net
 
@@ -176,9 +176,12 @@ def train_model(x_train, b_train_1, model, b_type, gamma, learning_rate, n_epoch
         gamma (float): Weight for the DCC loss component.
         learning_rate (float): Learning rate for the Adam optimiser.
         n_epochs (int): Number of training epochs.
-        initialisation (str): 'pca_init' or 'best_of_5_init'
+        initialisation (str): 'pca_init' or 'best_of_5_init' or tuple (n, n_epochs) for
+                                'best_of_n_init'
         validation_data: (x_test, b_test_1)
         device (torch.device): Device where the model should be trained.
+        report_ray_tune (bool): reports validation loss per epoch to ray tune for
+                                hyperparameter optimisiaton
     Returns:
         numpy.ndarray: Array of loss values during training.
     """
@@ -198,6 +201,8 @@ def train_model(x_train, b_train_1, model, b_type, gamma, learning_rate, n_epoch
         model.tau.load_state_dict(torch.load('temp/tau_pca.weights.pt'))
     elif initialisation == 'best_of_5_init':
         model = best_of_5_runs(x_train, b_train_1, model, b_type, gamma, learning_rate, validation_data, device)
+    elif isinstance(initialisation, tuple):
+        model = best_of_n_runs(initialisation[0], initialisation[1], x_train, b_train_1, model, b_type, gamma, learning_rate, validation_data, device)
     elif initialisation is None:
         pass
     else:
@@ -210,13 +215,16 @@ def train_model(x_train, b_train_1, model, b_type, gamma, learning_rate, n_epoch
     train_history = []
     test_history = [] if validation_data is not None else None
 
-    for _ in epochs:
+    for epoch in epochs:
         train_loss = trainer.train_loop(train_loader)
         train_history.append(train_loss)
 
         if validation_data is not None:
             test_loss = trainer.test_loop(test_loader)
             test_history.append(test_loss)
+            if report_ray_tune is True:
+                ray.train.report({"epoch": epoch, "val_loss": test_loss[-1]})
+
 
         epochs.set_description("Loss [Markov, Behaviour, Total]: " + str(np.round(train_loss, 4)))
 
