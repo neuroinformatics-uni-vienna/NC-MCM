@@ -1,6 +1,7 @@
 """
 @authors:
 Akshey Kumar
+Michael Hofer
 """
 import os
 import matplotlib.pyplot as plt
@@ -10,6 +11,8 @@ from matplotlib import animation
 from matplotlib.lines import Line2D
 from matplotlib.colors import ListedColormap
 from sklearn.metrics import accuracy_score
+import matplotlib.animation as anim  # FuncAnimation
+from sklearn.model_selection import cross_val_score
 
 
 class LatentSpaceVisualiser:
@@ -184,10 +187,12 @@ class LatentSpaceVisualiser:
 
     def comparison_model(self,
                          model,
-                         y_original=None,
+                         original_data=None,
                          show_titles=True,
                          filename='comparison.png',
                          show_fig=True,
+                         fig_size=(10, 8),
+                         cv_folds=5,
                          **kwargs):
         """
         Creates a comparison plot between the True labels and the predicted labels.
@@ -211,6 +216,12 @@ class LatentSpaceVisualiser:
         show_fig : bool, optional
             If True, the plot will be displayed interactively. Default is True.
 
+        fig_size : tuple, optional
+            Sets the size of the figure.
+
+        cv_folds: int, optional
+            Gives the amount of cross-folds used for cross validation (default is 5)
+
         filename : str, optional
             The path and filename where the plot will be saved.
             Default is 'figures/latent_time_series.png'.
@@ -224,20 +235,24 @@ class LatentSpaceVisualiser:
             print('The mapping does not map into a 3D space.')
             return False
 
-        if y_original is None:
+        if original_data is None:
+
+            cv_scores = cross_val_score(model, self.y, self.b, cv=cv_folds, scoring='accuracy')
             origin = 'Latent Embedding'
             model.fit(self.y, self.b)
             B_pred = model.predict(self.y)
         else:
-            if self.b.shape[0] != y_original.shape[0]:
+            if self.b.shape[0] != original_data.shape[0]:
                 print('The original values attached must be the same size as the labels (\'self.b\')')
-                print(f'\t\'y_original\' is {y_original.shape[0]} long, while \'self.b\' is {self.b.shape[0]}')
+                print(f'\t\'y_original\' is {original_data.shape[0]} long, while \'self.b\' is {self.b.shape[0]}')
                 return False
-            origin = 'Original Values'
-            model.fit(y_original, self.b)
-            B_pred = model.predict(y_original)
 
-        fig, axis = plt.subplots(figsize=(10, 8), ncols=3, subplot_kw={'projection': '3d'})
+            cv_scores = cross_val_score(model, original_data, self.b, cv=cv_folds, scoring='accuracy')
+            origin = 'Original Values'
+            model.fit(original_data, self.b)
+            B_pred = model.predict(original_data)
+
+        fig, axis = plt.subplots(figsize=fig_size, ncols=3, subplot_kw={'projection': '3d'}, )
         diff_mask = self.b != B_pred
         diff_predicts = np.where(diff_mask, self.b, -1)
         self._generate_diff_label_counts(diff_predicts, B_pred)
@@ -272,7 +287,8 @@ class LatentSpaceVisualiser:
         if show_titles:
             axis[1].set_title(f'\nModel: {type(model)}\n'
                               f'Trained/Predicting from {origin}\n\n'
-                              f'Accuracy at {round(accuracy_score(self.b, B_pred), 3)}\n')
+                              f'In-sample accuracy at {round(accuracy_score(self.b, B_pred), 5)}\n'
+                              f'Mean cross-validation accuracy at {round(np.mean(cv_scores), 5)}\n')
             fig.suptitle(f'{self.y.shape[0]} Frames',
                          fontsize='x-large',
                          fontweight='bold')
@@ -358,7 +374,6 @@ class LatentSpaceVisualiser:
                                       markersize=10,
                                       label=r'$\mathbf{' + lab + '}$' + f' ({list(labels).count(idx)})')
                            for idx, lab in enumerate(self.b_names)]
-        print(type(legend_elements))
         return legend_elements
 
     def _plot_ps_comp(self, ax, b, color_dict, **kwargs):
@@ -375,3 +390,173 @@ class LatentSpaceVisualiser:
                       color=color_dict[b[i]], **kwargs)
         ax.set_axis_off()
         return ax
+
+    def make_movie(self,
+                   fps=None,
+                   filename='figures/movie.gif',
+                   show_fig=False,
+                   colors=None,
+                   initial_alpha=None,
+                   fade=0,
+                   bitrate=1800,
+                   dpi=144,
+                   **kwargs):
+        """
+        Creates a GIF from data and saves it in "filename".
+
+        Parameters:
+            -----------
+            dpi: int, optional
+                Gives resolution of GIF.
+
+            bitrate: int, optional
+                Gives bitrate of the GIF.
+
+            fade: int, optional
+                If given and greater than 0 it will define how many frames are seen simultaneously.
+
+            initial_alpha: float, optional
+                If given and greater than 0, all frames will be drawn at the start with this initial_alpha.
+
+            colors: numpy.ndarray, optional
+                If given, defines colors of quivers.
+
+            fps: int, optional
+                Gives frames per second of the GIF.
+
+            filename: str, optional
+                Name and path of the GIF-file that will be saved.
+
+            show_fig: bool, optional
+                If True, the GIF will play after saving.
+
+        Returns:
+        --------
+        """
+        if self.y.shape[1] != 3:
+            print('The mapping does not map into a 3D space.')
+            return False
+        if fps is not None:
+            interval = 1000 / fps
+        else:
+            print('The movie well be played with 100 fps.')
+            interval = 10
+        movie_animation = self._create_animation(colors=colors,
+                                                 initial_alpha=initial_alpha,
+                                                 fade=fade,
+                                                 interval=interval,
+                                                 **kwargs)
+        if os.path.dirname(filename):
+            os.makedirs(os.path.dirname(filename), exist_ok=True)
+
+        movie_animation.save(filename,
+                             dpi=dpi,
+                             writer=anim.PillowWriter(fps=int(1000 / interval),
+                                                      metadata=dict(artist='Me'),
+                                                      bitrate=bitrate))
+        if show_fig:
+            plt.show()
+        return True
+
+    def _create_animation(self,
+                          colors=None,
+                          initial_alpha=None,
+                          fade=0,
+                          interval=10,
+                          **kwargs):
+        """
+        Creates the animation.
+
+        Parameters:
+            -----------
+            colors: numpy.ndarray, optional
+                Gives colors for quivers in GIF.
+
+            fade: int, optional
+                If given and greater than 0 it will define how many frames are seen simultaneously.
+
+            initial_alpha: float, optional
+                If given and greater than 0, all frames will be drawn at the start with this initial_alpha.
+
+            colors: numpy.ndarray, optional
+                If given, defines colors of quivers.
+
+            interval: int, optional
+                Gives interval between frames in milliseconds.
+
+        Returns:
+        --------
+            animation: matplotlib.animation.FuncAnimation
+                The animation generated.
+
+        """
+        if colors is None:
+            colors = sns.color_palette('deep', len(self.b_names))
+        color_dict = {name: color for name, color in zip(np.unique(self.b), colors)}
+
+        fig = plt.figure()
+        movie_ax = fig.add_subplot(111, projection='3d')
+        self.scatter = None
+        kwargs.setdefault('alpha', 0.4)
+        kwargs_initial = kwargs.copy()
+        if initial_alpha is None:
+            kwargs_initial['alpha'] = 0
+        else:
+            kwargs_initial['alpha'] = initial_alpha
+
+        movie_ax = self._plot_ps_comp(movie_ax, self.b, color_dict, **kwargs_initial)
+        self.quiver_artists = []
+
+        if self.legend:
+            legend_elements = self._generate_legend(color_dict, labels=self.b)
+        else:
+            legend_elements = []
+
+
+        animation = anim.FuncAnimation(fig, self._update,
+                                       fargs=(movie_ax, legend_elements, color_dict, fade, kwargs),
+                                       frames=self.y.shape[0],
+                                       interval=interval)
+
+        return animation
+
+    def _update(self,
+                frame,
+                movie_ax,
+                legend_elements,
+                color_dict,
+                fade,
+                kwargs):
+
+        """
+        Update function to create a frame in the movie.
+        """
+        if frame == 0:
+            return movie_ax
+
+        if fade and len(self.quiver_artists) > fade:
+            to_remove = self.quiver_artists.pop(0)
+            to_remove.remove()
+
+        d = (self.y[frame] - self.y[frame - 1])
+        kwargs.setdefault('arrow_length_ratio', 0.1 / np.linalg.norm(d))
+        kwargs.setdefault('linewidths', 1)
+        quiver = movie_ax.quiver(self.y[frame - 1, 0], self.y[frame - 1, 1], self.y[frame - 1, 2],
+                                 d[0], d[1], d[2],
+                                 color=color_dict[self.b[frame - 1]], **kwargs)
+        self.quiver_artists.append(quiver)
+        movie_ax.set_axis_off()
+
+        # Red Point at current frame
+        if self.scatter is not None:
+            self.scatter.remove()
+        x, y, z = self.y[frame, :]
+        self.scatter = movie_ax.scatter(x, y, z, s=20, alpha=0.8, color='red')
+
+        # Title adn Legend of the frame
+        movie_ax.set_title(f'Frame: {frame}\nBehavior: {self.b_names[self.b[frame - 1]]}')
+        if legend_elements:
+            movie_ax.legend(handles=legend_elements, loc='lower center', bbox_to_anchor=[1, 0])
+
+        return movie_ax
+

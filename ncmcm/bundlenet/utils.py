@@ -9,6 +9,9 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 from sklearn.model_selection import KFold
+import tensorflow as tf
+from scipy import signal
+
 
 
 def prep_data(x, b, win=15):
@@ -91,39 +94,6 @@ def timeseries_train_test_split(x_paired, b_1):
             return x_train, x_test, b_train_1, b_test_1
 
 
-# def torch_batch_prep(x_, b_, device, batch_size=100, shuffle=True):
-#     """
-#     Prepare datasets for PyTorch by creating batches.
-#
-#     Parameters:
-#         x_ : np.ndarray
-#             Input data of shape (n_samples, ...).
-#         b_ : np.ndarray
-#             Target data of shape (n_samples, ...).
-#         device : torch.device
-#             Device where the tensors should be created.
-#         batch_size : int, optional
-#             Size of the batches to be created. Default is 100.
-#         shuffle : bool, optional
-#             Defines whether the data should be reshuffled at every epoch
-#
-#     Returns:
-#         dataloader : torch.utils.data.DataLoader
-#             PyTorch DataLoader containing batches of input data and target data.
-#
-#     This function prepares datasets for PyTorch by creating batches. It takes input data 'x_' and target data 'b_'
-#     and creates a PyTorch dataloader from them.
-#
-#     The function returns the prepared batch dataloader, which will be used for training the PyTorch model.
-#     """
-#     tensor_x = torch.tensor(x_, dtype=torch.float, device=device)
-#     tensor_b = torch.tensor(b_, device=device)
-#     dataset = TensorDataset(tensor_x, tensor_b)
-#     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
-#
-#     return dataloader
-
-
 class CustomDataset(Dataset):
     def __init__(self, x_, b_, device):
         """
@@ -200,3 +170,4 @@ class GaussianNoise(nn.Module):
         if self.training and self.stddev > 0:
             return x + torch.normal(self.mean, self.stddev, size=x.shape, device=x.device)
         return x
+

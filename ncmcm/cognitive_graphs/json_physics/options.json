@@ -1,0 +1,73 @@
+{
+    "0": {
+        "edges": {
+            "color": {
+                "inherit": true
+            },
+            "selfReferenceSize": null,
+            "selfReference": {
+                "angle": 0.8
+            },
+            "smooth": {
+                "forceDirection": "none"
+            }
+        },
+        "physics": {
+            "minVelocity": 0.75
+        }
+    },
+    "2": {
+        "edges": {
+            "color": {
+                "inherit": true
+            },
+            "scaling": {
+                "max": 6
+            },
+            "selfReferenceSize": null,
+            "selfReference": {
+                "angle": 0.5
+            },
+            "smooth": {
+                "forceDirection": "none"
+            }
+        },
+        "physics": {
+
+            "barnesHut": {
+                "theta": 0.2,
+                "springConstant": 0.001,
+                "centralGravity": 0.001,
+                "springLength": 10,
+                "nodeDistance": 10,
+                "damping": 0.8
+            },
+            "maxVelocity": 5,
+            "minVelocity": 0.5
+        }
+    },
+    "1": {
+        "nodes": {
+            "physics": false
+        },
+        "edges": {
+            "color": {
+                "inherit": true
+            },
+            "selfReferenceSize": null,
+            "selfReference": {
+                "angle": 0.7853981633974483
+            },
+            "smooth": {
+                "forceDirection": "none"
+            }
+        },
+        "physics": {
+            "barnesHut": {
+                "theta": 1,
+                "springConstant": 0.005
+            },
+            "minVelocity": 0.75
+        }
+    }
+}

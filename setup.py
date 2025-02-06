@@ -28,7 +28,6 @@ setup(
         'scikit-learn',
         'networkx',
         'statsmodels',
-        'tensorflow==2.15',
         'tqdm',
         'scipy',
         'mat73',
@@ -36,5 +35,6 @@ setup(
         'pytest',
         'pyvis',
         'torch',
+        'ray[tune, train]'
     ],
 )
