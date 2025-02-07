@@ -5,32 +5,32 @@ Vittorio Boarini
 """
 
 import torch
-import tensorflow as tf
 
 
-class ScaleInvariantMSE(tf.keras.losses.Loss):
-    def __init__(self, name="scale_invariant_mse"):
-        super().__init__(name=name)
 
-    def call(self, y_true, y_pred):
-        # Ensure numerical stability by adding a small epsilon before taking the log
-        epsilon = tf.keras.backend.epsilon()
-
-        # Compute the logarithms of the true and predicted values
-        log_y_true = tf.math.log(tf.abs(y_true) + epsilon)
-        log_y_pred = tf.math.log(tf.abs(y_pred) + epsilon)
-
-        # Compute the first term: mean squared error in log space
-        log_mse = tf.reduce_mean(tf.square(log_y_pred - log_y_true), axis=-1)
-
-        # Compute the second term: squared mean of log differences
-        log_diff_mean = tf.reduce_mean(log_y_pred - log_y_true, axis=-1)
-        log_diff_mean_sq = tf.square(log_diff_mean)
-
-        # Compute the scale-invariant MSE
-        scale_invariant_mse = log_mse #- log_diff_mean_sq
-
-        return scale_invariant_mse
+#class ScaleInvariantMSE(tf.keras.losses.Loss):
+#    def __init__(self, name="scale_invariant_mse"):
+#        super().__init__(name=name)
+#
+#    def call(self, y_true, y_pred):
+#        # Ensure numerical stability by adding a small epsilon before taking the log
+#        epsilon = tf.keras.backend.epsilon()
+#
+#        # Compute the logarithms of the true and predicted values
+#        log_y_true = tf.math.log(tf.abs(y_true) + epsilon)
+#        log_y_pred = tf.math.log(tf.abs(y_pred) + epsilon)
+#
+#        # Compute the first term: mean squared error in log space
+#        log_mse = tf.reduce_mean(tf.square(log_y_pred - log_y_true), axis=-1)
+#
+#        # Compute the second term: squared mean of log differences
+#        log_diff_mean = tf.reduce_mean(log_y_pred - log_y_true, axis=-1)
+#        log_diff_mean_sq = tf.square(log_diff_mean)
+#
+#        # Compute the scale-invariant MSE
+#        scale_invariant_mse = log_mse #- log_diff_mean_sq
+#
+#        return scale_invariant_mse
 
 
 
@@ -75,28 +75,28 @@ class BccDccLoss:
         return self.gamma * DCC_loss, (1 - self.gamma) * behaviour_loss, total_loss
 
 
-@tf.function
-def contrastive_loss(y1, y2, b1, b2, margin=1.0):
-    """Computes the contrastive loss between `y_true` and `y_pred`.
-
-    Args:
-      y1:
-      y2:
-      b1: label
-      b2: label
-      margin: margin term in the loss definition.
-
-    Returns:
-      contrastive_loss: 1-D float `Tensor` with shape `[batch_size]`.
-    """
-    y1 = tf.convert_to_tensor(y1)
-    y2 = tf.convert_to_tensor(y2)
-    d = tf.norm(y1 - y2)
-
-    if b1 == b2:
-        loss = tf.math.square(d)
-    else:
-        loss = tf.math.square(0.0, tf.math.maximum(margin - d))
-    # return loss
-
-    raise NotImplementedError("This function is not yet implemented.")
+# @tf.function
+# def contrastive_loss(y1, y2, b1, b2, margin=1.0):
+#     """Computes the contrastive loss between `y_true` and `y_pred`.
+#
+#     Args:
+#       y1:
+#       y2:
+#       b1: label
+#       b2: label
+#       margin: margin term in the loss definition.
+#
+#     Returns:
+#       contrastive_loss: 1-D float `Tensor` with shape `[batch_size]`.
+#     """
+#     y1 = tf.convert_to_tensor(y1)
+#     y2 = tf.convert_to_tensor(y2)
+#     d = tf.norm(y1 - y2)
+#
+#     if b1 == b2:
+#         loss = tf.math.square(d)
+#     else:
+#         loss = tf.math.square(0.0, tf.math.maximum(margin - d))
+#     # return loss
+#
+#     raise NotImplementedError("This function is not yet implemented.")

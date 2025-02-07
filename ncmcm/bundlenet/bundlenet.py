@@ -64,7 +64,6 @@ class BunDLeNet(nn.Module):
         )
 
     def forward(self, x):
-        x, = x
         # Upper arm of commutativity diagram
         yt1_upper = self.tau(x[:, 1])
         bt1_upper = self.predictor(yt1_upper)
@@ -197,8 +196,8 @@ def train_model(x_train, b_train_1, model, b_type, gamma, learning_rate, n_epoch
         test_loader = torch_batch_prep(x_test, b_test_1, device=device, shuffle=False)
 
     if initialisation == 'pca_init':
-        pca_initialisation(x_train, model.tau, model.latent_dim, device)
-        model.tau.load_state_dict(torch.load('temp/tau_pca.weights.pt'))
+        pca_model_path = pca_initialisation(x_train, model.tau, model.latent_dim, device)
+        model.tau.load_state_dict(torch.load(pca_model_path))
     elif initialisation == 'best_of_5_init':
         model = best_of_5_runs(x_train, b_train_1, model, b_type, gamma, learning_rate, validation_data, device)
     elif isinstance(initialisation, tuple):
