@@ -3,75 +3,9 @@
 Akshey Kumar
 Vittorio Boarini
 """
-import os
 import copy
 import uuid
-import numpy as np
 import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset
-from sklearn.decomposition import PCA
-
-
-def pca_initialisation(X_, tau, latent_dim, device):
-    """
-    Initialises BunDLe Net's tau such that its output is the PCA of the input traces.
-    PCA initialisation may make the embeddings more reproducible across runs.
-    This function is called within the train_model() function and saves the learned tau weights
-    in a .pt file in the same repository.
-
-    Parameters:
-        X_ (np.ndarray): Input data.
-        tau (object): BunDLe Net tau (tf sequential layer).
-        latent_dim (int): Dimension of the latent space.
-        device (torch.device): Device where the model should be run.
-
-    """
-    # Performing PCA on the time slice
-    X0_ = X_[:, 0, :, :]
-    X_pca = X_.reshape(X_.shape[0], 2, 1, -1)[:, 0, 0, :]
-    pca = PCA(n_components=latent_dim, whiten=True)
-    pca.fit(X_pca)
-    Y0_ = pca.transform(X_pca)
-
-    # Training tau to reproduce the PCA
-    class PCA_encoder(nn.Module):
-        def __init__(self, latent_dim):
-            super(PCA_encoder, self).__init__()
-            self.latent_dim = latent_dim
-            self.encoder = tau
-
-        def forward(self, x):
-            encoded = self.encoder(x)
-            return encoded
-
-    X0_tensor = torch.tensor(X0_, dtype=torch.float, device=device)
-    Y0_tensor = torch.tensor(Y0_, dtype=torch.float, device=device)
-
-    dataset = TensorDataset(X0_tensor, Y0_tensor)
-    dataloader = DataLoader(dataset, batch_size=100, shuffle=True)
-
-    pcaencoder = PCA_encoder(latent_dim=latent_dim).to(device)
-    opt = torch.optim.Adam(pcaencoder.parameters(), lr=0.01)
-    mse = nn.MSELoss()
-
-    pcaencoder.train()
-    epochs = 10
-    for _ in range(epochs):
-        for batch_X, batch_Y in dataloader:
-            opt.zero_grad()
-            outputs = pcaencoder(batch_X)
-            loss = mse(outputs, batch_Y)
-            loss.backward()
-            opt.step()
-
-    # Saving weights of this model
-    unique_id = str(uuid.uuid4())
-    os.makedirs(f"temp/{unique_id}/", exist_ok=True)
-    weights_filepath = f"temp/{unique_id}/tau_pca.weights.pt"
-    torch.save(pcaencoder.encoder.state_dict(), weights_filepath)
-
-    return weights_filepath
 
 def best_of_5_runs(x_train, b_train_1, model, b_type, gamma, learning_rate, validation_data, device):
     """
@@ -92,7 +26,7 @@ def best_of_5_runs(x_train, b_train_1, model, b_type, gamma, learning_rate, vali
     best_weights = None
 
     for i in range(5):
-        from ncmcm.bundlenet.bundlenet import train_model
+        from .bundlenet_subsystem import train_model
         model_ = copy.deepcopy(model)
 
         train_history, test_history = train_model(
@@ -140,7 +74,7 @@ def best_of_n_runs(n, n_epochs, x_train, b_train_1, model, b_type, gamma, learni
     best_weights = None
 
     for i in range(n):
-        from ncmcm.bundlenet.bundlenet import train_model
+        from .bundlenet_subsystem import train_model
         model_ = copy.deepcopy(model)
         train_history, test_history = train_model(
             x_train,
