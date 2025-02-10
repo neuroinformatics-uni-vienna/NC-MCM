@@ -1,4 +1,3 @@
-
 # setup.py
 from setuptools import setup, find_packages
 
@@ -29,13 +28,13 @@ setup(
         'scikit-learn',
         'networkx',
         'statsmodels',
-        'tensorflow==2.15',
         'tqdm',
         'scipy',
         'mat73',
         'seaborn',
         'pytest',
         'pyvis',
+        'torch',
         'ray[tune, train]'
     ],
 )
