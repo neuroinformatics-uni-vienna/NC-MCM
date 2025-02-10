@@ -6,8 +6,8 @@ with open("README.md", "r") as fh:
 
 setup(
     name='ncmcm',
-    version='1.1.0',
-    author='Akshey Kumar, Hofer Michael, Paul Eder, Emilija Mazuraite, Nenad Subat',
+    version='1.0.0',
+    author='Akshey Kumar, Michael Hofer, Vittorio Boarini',
     author_email='akshey.kumar@univie.ac.at',
     description='A toolbox to visualize neuronal imaging data and apply the NC-MCM framework to it',
     long_description=long_description,
