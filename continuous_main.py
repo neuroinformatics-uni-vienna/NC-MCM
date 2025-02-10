@@ -1,7 +1,8 @@
+import torch
 import numpy as np
 import matplotlib.pyplot as plt
 from ncmcm.data_loaders.matlab_dataset import Database
-from ncmcm.bundlenet.bundlenet import BunDLeNet, train_model
+from ncmcm.bundlenet.bundlenet import BunDLeNet, train_model, model_inference
 from ncmcm.bundlenet.utils import prep_data
 from ncmcm.visualisers.neuronal_behavioural import plotting_neuronal_behavioural
 from ncmcm.visualisers.latent_space import LatentSpaceVisualiser
@@ -13,7 +14,7 @@ x, b = data['x'], data['b']
 x_, b_ = prep_data(x, b, win=20)
 
 ### Deploy BunDLe Net
-model = BunDLeNet(latent_dim=3, num_behaviour=b_.shape[1])
+model = BunDLeNet(latent_dim=3, num_behaviour=b_.shape[1], input_shape=x_.shape)
 
 loss_array, _ = train_model(
     x_,
@@ -36,7 +37,7 @@ for i, label in enumerate([
 plt.legend()
 plt.show()
 
-y0_ = model.tau(x_[:,0]).numpy()
+y0_ = model_inference(x_, model)
 
 fig = plt.figure(figsize=(8, 8))
 ax = plt.axes(projection='3d')

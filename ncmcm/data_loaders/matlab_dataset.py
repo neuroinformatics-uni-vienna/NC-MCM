@@ -68,11 +68,7 @@ class Database:
             None
 
         """
-        neuron_names = self.neuron_names
-        mask = np.zeros_like(self.neuron_names, dtype='bool')
-        for exclude_neuron in exclude_neurons:
-            mask = np.logical_or(mask, neuron_names == exclude_neuron)
-        mask = ~mask
+        mask = ~np.isin(self.neuron_names, exclude_neurons)
         self.neuron_traces = self.neuron_traces[mask]
         self.neuron_names = self.neuron_names[mask]
 

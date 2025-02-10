@@ -1,17 +1,16 @@
 """
 @authors:
 Akshey Kumar
+Vittorio Boarini
 """
 
 import numpy as np
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader, TensorDataset
 from sklearn.model_selection import KFold
-import tensorflow as tf
 from scipy import signal
 
-
-########################################################
-##########  Preparing the data for bunDLe Net ##########
-########################################################
 
 
 def prep_data(x, b, win=15):
@@ -94,70 +93,46 @@ def timeseries_train_test_split(x_paired, b_1):
             return x_train, x_test, b_train_1, b_test_1
 
 
-def tf_batch_prep(x_, b_, batch_size=100):
+def torch_batch_prep(x_, b_, device, batch_size=100, shuffle=True):
     """
-    Prepare datasets for TensorFlow by creating batches.
+    Prepare datasets for PyTorch by creating batches.
 
     Parameters:
         x_ : np.ndarray
             Input data of shape (n_samples, ...).
         b_ : np.ndarray
             Target data of shape (n_samples, ...).
+        device : torch.device
+            Device where the tensors should be created.
         batch_size : int, optional
             Size of the batches to be created. Default is 100.
+        shuffle : bool, optional
+            Defines whether the data should be reshuffled at every epoch
 
     Returns:
-        batch_dataset : tf.data.Dataset
-            TensorFlow dataset containing batches of input data and target data.
+        dataloader : torch.utils.data.DataLoader
+            PyTorch DataLoader containing batches of input data and target data.
 
-    This function prepares datasets for TensorFlow by creating batches. It takes input data 'x_' and target data 'b_'
-    and creates a TensorFlow dataset from them.
+    This function prepares datasets for PyTorch by creating batches. It takes input data 'x_' and target data 'b_'
+    and creates a PyTorch dataloader from them.
 
-    The function returns the prepared batch dataset, which will be used for training the TensorFlow model.
+    The function returns the prepared batch dataloader, which will be used for training the PyTorch model.
     """
-    batch_dataset = tf.data.Dataset.from_tensor_slices((x_, b_))
-    batch_dataset = batch_dataset.batch(batch_size)
-    return batch_dataset
+    tensor_x = torch.tensor(x_, dtype=torch.float, device=device)
+    tensor_b = torch.tensor(b_, device=device)
+    dataset = TensorDataset(tensor_x, tensor_b)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
+    return dataloader
 
 
-def bandpass(traces, f_l, f_h, sampling_freq):
-    """
-    Apply a bandpass filter to the input traces.
+class GaussianNoise(nn.Module):
+    def __init__(self, mean=0, stddev=0.05):
+        super(GaussianNoise, self).__init__()
+        self.mean = mean
+        self.stddev = stddev
 
-    Parameters:
-        traces (np.ndarray): Input traces to be filtered.
-        f_l (float): Lower cutoff frequency in Hz.
-        f_h (float): Upper cutoff frequency in Hz.
-        sampling_freq (float): Sampling frequency in Hz.
+    def forward(self, x):
+        if self.training and self.stddev > 0:
+            return x + torch.normal(self.mean, self.stddev, size=x.shape, device=x.device)
+        return x
 
-    Returns:
-        filtered (np.ndarray): Filtered traces.
-
-    """
-    cut_off_h = f_h * sampling_freq / 2  ## in units of sampling_freq/2
-    cut_off_l = f_l * sampling_freq / 2  ## in units of sampling_freq/2
-    #### Note: the input f_l and f_h are angular frequencies. Hence the argument sampling_freq in the function is redundant: since the signal.butter function takes angular frequencies if fs is None.
-
-    sos = signal.butter(4, [cut_off_l, cut_off_h], 'bandpass', fs=sampling_freq, output='sos')
-    ### filtering the traces forward and backwards
-    filtered = signal.sosfilt(sos, traces)
-    filtered = np.flip(filtered, axis=1)
-    filtered = signal.sosfilt(sos, filtered)
-    filtered = np.flip(filtered, axis=1)
-    return filtered
-
-
-def preprocess_data(X, fps):
-    """Preprocess the input data by applying bandpass filtering.
-
-    Args:
-        X: Input data.
-        fps (float): Frames per second.
-
-    Returns:
-        numpy.ndarray: Preprocessed data after bandpass filtering.
-    """
-    time = 1 / fps * np.arange(0, X.shape[0])
-    filtered = bandpass(X.T, f_l=1e-10, f_h=0.05, sampling_freq=fps).T
-
-    return time, filtered
