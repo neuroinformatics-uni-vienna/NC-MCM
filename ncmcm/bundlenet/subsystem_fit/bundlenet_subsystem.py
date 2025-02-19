@@ -12,7 +12,7 @@ from .utils_subsystem import torch_batch_prep, GaussianNoise
 from .initialisations_subsystem import best_of_5_runs, best_of_n_runs
 from ..losses import BccDccLoss
 
-
+#===============================================================================
 class BunDLeNet(nn.Module):
     """
     Subsystem Behaviour and Dynamical Learning Network (BunDLeNet) model.
@@ -36,6 +36,7 @@ class BunDLeNet(nn.Module):
             nn.Linear(latent_dim, num_behaviour),
         )
     
+    #---------------------------------------------------------------------------
     def _build_tau_network(self, in_features):
         return nn.Sequential(
             nn.Flatten(),
@@ -52,6 +53,7 @@ class BunDLeNet(nn.Module):
             nn.Linear(3, 1)
         )
 
+    #---------------------------------------------------------------------------
     def forward(self, inputs):
         xs, xi, xm = inputs
         # Upper arm of commutativity diagram
@@ -72,7 +74,9 @@ class BunDLeNet(nn.Module):
 
         return yt1_upper, yt1_lower, bt1_upper
     
+    #---------------------------------------------------------------------------
 
+#===============================================================================
 class BunDLeTrainer:
     """
     Trainer for the BunDLe Net model.
@@ -92,6 +96,7 @@ class BunDLeTrainer:
         self.gamma = gamma
         self.bccdcc_loss = BccDccLoss(b_type, gamma)
 
+    #---------------------------------------------------------------------------
     def train_step(self, x_train, b_train_1):
         self.model.train()
         self.optimizer.zero_grad()
@@ -109,6 +114,7 @@ class BunDLeTrainer:
 
         return dcc_loss.item(), behaviour_loss.item(), total_loss.item()
 
+    #---------------------------------------------------------------------------
     def test_step(self, x_test, b_test_1):
         self.model.eval()
 
@@ -124,6 +130,7 @@ class BunDLeTrainer:
 
         return dcc_loss.item(), behaviour_loss.item(), total_loss.item()
 
+    #---------------------------------------------------------------------------
     def train_loop(self, train_loader):
         """
         Handles the training within a single epoch and logs losses
@@ -143,6 +150,7 @@ class BunDLeTrainer:
 
         return avg_train_loss
 
+    #---------------------------------------------------------------------------
     def test_loop(self, test_loader):
         """
         Handles testing within a single epoch and logs losses
@@ -162,21 +170,13 @@ class BunDLeTrainer:
 
         return avg_test_loss
 
+    #---------------------------------------------------------------------------
+#===============================================================================
 
-def train_model(
-        x_train, 
-        b_train_1, 
-        model, 
-        b_type, 
-        gamma, 
-        learning_rate, 
-        n_epochs, 
-        initialisation=None, 
-        validation_data=None, 
-        device=None, 
-        report_ray_tune=False, 
-        pca_file_save=False
-):
+#-------------------------------------------------------------------------------
+def train_model(x_train, b_train_1, model, b_type, gamma, learning_rate, 
+                n_epochs, initialisation=None, validation_data=None, 
+                device=None, report_ray_tune=False, pca_file_save=False):
     """
     Training BunDLe Net
 
@@ -263,7 +263,7 @@ def train_model(
 
     return train_history, test_history
 
-
+#-------------------------------------------------------------------------------
 def model_inference(x_, model):
     """
     Inference using BunDLe Net
@@ -284,4 +284,5 @@ def model_inference(x_, model):
 
     return y0_
 
+#-------------------------------------------------------------------------------
 

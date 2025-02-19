@@ -15,6 +15,7 @@ from sklearn.metrics import accuracy_score
 import matplotlib.animation as anim  # FuncAnimation
 from sklearn.model_selection import cross_val_score
 
+#===============================================================================
 
 class LatentSpaceVisualiser:
     def __init__(self, y, b, b_names, show_points=False, legend=True):
@@ -24,11 +25,11 @@ class LatentSpaceVisualiser:
         self.show_points = show_points
         self.legend = legend
 
-    def plot_latent_timeseries(
-            self, 
-            show_fig=True, 
-            filename='figures/latent_time_series.png'
-    ):
+    #---------------------------------------------------------------------------
+
+    def plot_latent_timeseries(self, 
+                               show_fig=True, 
+                               filename='figures/latent_time_series.png'):
         """
         Plot time series of dynamics in latent space.
 
@@ -85,13 +86,13 @@ class LatentSpaceVisualiser:
         if show_fig:
             plt.show()
 
-    def plot_phase_space(
-            self, 
-            show_fig=True, 
-            filename='figures/phase_space_dynamics.png', 
-            axis_view=None, 
-            **kwargs
-    ):
+    #---------------------------------------------------------------------------
+    
+    def plot_phase_space(self, 
+                         show_fig=True, 
+                         filename='figures/phase_space_dynamics.png', 
+                         axis_view=None, 
+                         **kwargs):
         """
         Plot the neuronal dynamics in a 3D phase space.
 
@@ -143,6 +144,8 @@ class LatentSpaceVisualiser:
 
         return fig, ax
 
+    #---------------------------------------------------------------------------
+    
     def _plot_ps(self, fig, ax, colors=None, **kwargs):
         """
         Helper to plot neuronal dynamics in a 3D phase space.
@@ -192,12 +195,12 @@ class LatentSpaceVisualiser:
                         )
         return fig, ax
 
-    def rotating_plot(
-            self, 
-            show_fig=True, 
-            filename='figures/rotation.gif', 
-            **kwargs
-    ):
+    #---------------------------------------------------------------------------
+    
+    def rotating_plot(self, 
+                      show_fig=True, 
+                      filename='figures/rotation.gif', 
+                      **kwargs):
         """
         Create a rotating 3D phase space plot of the neuronal dynamics.
 
@@ -243,18 +246,18 @@ class LatentSpaceVisualiser:
 
         return fig, ax
 
-    def make_movie(
-            self,
-            fps=None,
-            filename='figures/movie.gif',
-            show_fig=False,
-            colors=None,
-            initial_alpha=None,
-            fade_time=0,
-            bitrate=1800,
-            dpi=144,
-            **kwargs
-    ):
+    #---------------------------------------------------------------------------
+    
+    def make_movie(self,
+                   fps=None,
+                   filename='figures/movie.gif',
+                   show_fig=False,
+                   colors=None,
+                   initial_alpha=None,
+                   fade_time=0,
+                   bitrate=1800,
+                   dpi=144,
+                   **kwargs):
         """
         Creates a GIF from data and saves it in "filename".
 
@@ -318,14 +321,14 @@ class LatentSpaceVisualiser:
             plt.show()
         return True
 
-    def _create_animation(
-            self,
-            colors=None,
-            initial_alpha=None,
-            fade_time=0,
-            interval=10,
-            **kwargs
-    ):
+    #---------------------------------------------------------------------------
+    
+    def _create_animation(self,
+                          colors=None,
+                          initial_alpha=None,
+                          fade_time=0,
+                          interval=10,
+                          **kwargs):
         """
         Creates the animation.
 
@@ -398,6 +401,8 @@ class LatentSpaceVisualiser:
 
         return animation
 
+    #---------------------------------------------------------------------------
+    
     def _plot_ps_comp(self, ax, b, color_dict, **kwargs):
         """
         Helper to comparison plot in a 3D phase space.
@@ -413,15 +418,16 @@ class LatentSpaceVisualiser:
         ax.set_axis_off()
         return ax
 
-    def _update(
-            self,
-            frame,
-            ax,
-            legend_elements,
-            color_dict,
-            fade_time,
-            kwargs
-    ):
+    #---------------------------------------------------------------------------
+    
+    def _update(self,
+                frame,
+                ax,
+                legend_elements,
+                color_dict,
+                fade_time,
+                kwargs):
+
         """
         Update function to create a frame in the movie.
         """
@@ -464,4 +470,7 @@ class LatentSpaceVisualiser:
                     )
         
         return ax
+
+    #---------------------------------------------------------------------------
+#===============================================================================
 

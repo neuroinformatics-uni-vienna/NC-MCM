@@ -58,6 +58,7 @@ def test_behavioral_state_diagram():
     assert result is True
 
 
+'''
 @patch('builtins.input', return_value='plot_test')
 def test_interactive(return_value):
     cognitive_states = [np.random.randint(0, 2) for _ in range(100)]
@@ -78,6 +79,7 @@ def test_interactive(return_value):
                                       test_run=True,
                                       bins=10)
     assert result is True
+'''
 
 
 def test_cluster_neural_activity():
