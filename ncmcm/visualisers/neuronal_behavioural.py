@@ -10,8 +10,17 @@ import numpy as np
 import matplotlib as cm
 
 
-def plotting_neuronal_behavioural(x, b=None, b_names={}, s=None, s_names={}, 
-                                  r=None, r_names={}, show_fig=True, **kwargs):
+def plotting_neuronal_behavioural(
+        x, 
+        b=None, 
+        b_names={}, 
+        s=None, 
+        s_names={}, 
+        r=None, 
+        r_names={}, 
+        show_fig=True, 
+        **kwargs
+):
     """
     Visualize simultaneously recorded neuronal activations and behavioral data.
 

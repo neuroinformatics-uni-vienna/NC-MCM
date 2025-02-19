@@ -12,7 +12,6 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.decomposition import PCA
 
-#-------------------------------------------------------------------------------
 
 def pca_initialisation(X_, tau, latent_dim, device, flag_file_save=False):
     """
@@ -83,10 +82,17 @@ def pca_initialisation(X_, tau, latent_dim, device, flag_file_save=False):
     else:
         return pcaencoder.encoder
 
-#-------------------------------------------------------------------------------
 
-def best_of_5_runs(x_train, b_train_1, model, b_type, gamma, learning_rate, 
-                   validation_data, device):
+def best_of_5_runs(
+        x_train, 
+        b_train_1, 
+        model, 
+        b_type, 
+        gamma, 
+        learning_rate, 
+        validation_data, 
+        device
+):
     """
     Initialises BunDLe net with the best of 5 runs
 
@@ -134,9 +140,18 @@ def best_of_5_runs(x_train, b_train_1, model, b_type, gamma, learning_rate,
     return model
 
 
-#-------------------------------------------------------------------------------
-
-def best_of_n_runs(n, n_epochs, x_train, b_train_1, model, b_type, gamma, learning_rate, validation_data, device):
+def best_of_n_runs(
+        n, 
+        n_epochs, 
+        x_train, 
+        b_train_1, 
+        model, 
+        b_type, 
+        gamma, 
+        learning_rate, 
+        validation_data, 
+        device
+):
     """
     Initialises BunDLe net with the best of n runs
 
@@ -181,6 +196,4 @@ def best_of_n_runs(n, n_epochs, x_train, b_train_1, model, b_type, gamma, learni
     # Set the best weights back to the original model
     model.load_state_dict(best_weights)
     return model
-
-#-------------------------------------------------------------------------------
 
