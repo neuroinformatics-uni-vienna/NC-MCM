@@ -36,8 +36,7 @@ def plotting_neuronal_behavioural(
     - s_names: Dictionary mapping stimulus labels to their names (optional).
     - r: 1D numpy array of response data (optional).
     - r_names: Dictionary mapping response labels to their names (optional).
-    - show_fig: Boolean indicating whether to display the plot 
-        immediately (default: True).
+    - show_fig: Boolean indicating whether to display the plot
     - kwargs: Additional keyword arguments for customizing the neuronal 
         activation plot.
 
@@ -65,8 +64,9 @@ def plotting_neuronal_behavioural(
     # tell the colorbar to tick at integers
     axs[0].set_xlabel("time $t$")
     axs[0].set_ylabel("Neuronal activation")
+    cax0 = plt.colorbar(im0)
 
-    def discrete_plot(ax, b, b_names, y_label, cmap):
+    def discrete_plot(ax, b, b_names, y_label, cmap, alpha=1.0):
         colors = sns.color_palette(cmap, len(b_names))
         cmap = ListedColormap(colors)
         im1 = ax.imshow(
@@ -74,7 +74,8 @@ def plotting_neuronal_behavioural(
             cmap=cmap, 
             vmin=np.min(b) - 0.5, 
             vmax=np.max(b) + 0.5, 
-            aspect='auto'
+            aspect='auto',
+            alpha=alpha
         )
         cbar = plt.colorbar(im1, ticks=np.unique(b))
         if b_names:
@@ -85,7 +86,7 @@ def plotting_neuronal_behavioural(
         ax.set_yticks([])
 
     if b is not None:
-        discrete_plot(axs[1], b, b_names, y_label="Behaviour", cmap='Pastel1')
+        discrete_plot(axs[1], b, b_names, y_label="Behaviour", cmap=sns.color_palette("deep", as_cmap=True), alpha=0.6)
     if s is not None:
         discrete_plot(axs[2], s, s_names, y_label="Stimulus", cmap='Set2')
     if r is not None:
