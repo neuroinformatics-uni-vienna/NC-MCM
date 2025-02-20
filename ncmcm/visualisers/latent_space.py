@@ -5,17 +5,13 @@ Michael Hofer
 Jinook Oh
 """
 import os
-import time
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
-#from matplotlib import animation
 from matplotlib.lines import Line2D
 from matplotlib.colors import ListedColormap
-from sklearn.metrics import accuracy_score
 import matplotlib.animation as anim  # FuncAnimation
-from sklearn.model_selection import cross_val_score
-
+from tqdm import tqdm
 
 class LatentSpaceVisualiser:
     def __init__(self, y, b, b_names, show_points=False, legend=True, colors=None):
@@ -179,7 +175,6 @@ class LatentSpaceVisualiser:
 
         if self.y.shape[0] != self.b.shape[0]:
             raise ValueError("Y and b must have the same number of time steps")
-            raise ValueError("Y and b must have the same number of time steps")
 
         for i in range(len(self.y) - 1):
             d = (self.y[i + 1] - self.y[i])
@@ -271,16 +266,18 @@ class LatentSpaceVisualiser:
 
         return fig, ax
 
+
+
     def make_movie(
-        self,
-        fps=None,
-        filename='figures/movie.gif',
-        show_fig=False,
-        initial_alpha=None,
-        fade_time=0,
-        bitrate=1800,
-        dpi=144,
-        **kwargs
+            self,
+            fps=None,
+            filename='figures/movie.gif',
+            show_fig=False,
+            initial_alpha=None,
+            fade_time=0,
+            bitrate=1800,
+            dpi=144,
+            **kwargs
     ):
         """
         Creates a GIF from data and saves it in "filename".
@@ -294,13 +291,13 @@ class LatentSpaceVisualiser:
                 Gives bitrate of the GIF.
 
             fade_time: int, optional
-                If given and greater than 0 it will define how many 
+                If given and greater than 0 it will define how many
                 last frames are seen simultaneously.
 
             initial_alpha: float, optional
-                If given and greater than 0, all frames in initial figure will 
+                If given and greater than 0, all frames in initial figure will
                 be drawn at the start with this initial_alpha.
-                'initial figure' is necessary to properly draw the animation 
+                'initial figure' is necessary to properly draw the animation
                 on the space with all the given data.
                 If initial_alpha is greater than 0, the entire data will be
                 visible and the animation will be drawn on top of it.
@@ -320,36 +317,38 @@ class LatentSpaceVisualiser:
         if self.y.shape[1] != 3:
             print('The mapping does not map into a 3D space.')
             return False
-        
+
         if fps is not None:
             interval = 1000 / fps
         else:
-            print('The movie well be played with 100 fps.')
+            print('The movie will be played with 100 fps.')
             interval = 10
-        
+
         movie_animation = self._create_animation(
             initial_alpha=initial_alpha,
             fade_time=fade_time,
             interval=interval,
             **kwargs
         )
+
         if os.path.dirname(filename):
             os.makedirs(os.path.dirname(filename), exist_ok=True)
 
-        movie_animation.save(
-            filename,
-            dpi=dpi,
-            #writer=anim.PillowWriter(
-            writer=anim.FFMpegWriter(
-                fps=int(1000 / interval),
-                metadata=dict(artist='Me'),
-                bitrate=bitrate
+        with tqdm(total=self.y.shape[0], desc="Creating movie") as pbar:
+            movie_animation.save(
+                filename,
+                dpi=dpi,
+                writer=anim.PillowWriter(
+                    fps=int(1000 / interval),
+                    metadata=dict(artist='Me'),
+                    bitrate=bitrate
+                ),
+                progress_callback=lambda i, n: pbar.update(1)
             )
-        )
 
         if show_fig:
             plt.show()
-        
+
         return True
 
     def _create_animation(
@@ -398,7 +397,7 @@ class LatentSpaceVisualiser:
         else:
             kwargs_initial['alpha'] = initial_alpha
 
-        ax = self._plot_ps_comp(ax, self.b, **kwargs_initial)
+        ax = self._plot_ps_comp(ax, **kwargs_initial)
         
         self.quiver_artists = []
 
@@ -424,7 +423,7 @@ class LatentSpaceVisualiser:
 
         return animation
 
-    def _plot_ps_comp(self, ax, b, **kwargs):
+    def _plot_ps_comp(self, ax, **kwargs):
         """
         Helper to comparison plot in a 3D phase space.
         """
@@ -434,7 +433,7 @@ class LatentSpaceVisualiser:
             kwargs.setdefault('linewidths', 1)
             ax.quiver(self.y[i, 0], self.y[i, 1], self.y[i, 2],
                       d[0], d[1], d[2],
-                      color=self.color_dict[b[i]], **kwargs)
+                      color=self.color_dict[self.b[i]], **kwargs)
         ax.set_axis_off()
         return ax
 
