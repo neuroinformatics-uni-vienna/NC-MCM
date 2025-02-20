@@ -10,8 +10,17 @@ import numpy as np
 import matplotlib as cm
 
 
-def plotting_neuronal_behavioural(x, b=None, b_names={}, s=None, s_names={}, 
-                                  r=None, r_names={}, show_fig=True, **kwargs):
+def plotting_neuronal_behavioural(
+    x, 
+    b=None, 
+    b_names={}, 
+    s=None, 
+    s_names={}, 
+    r=None, 
+    r_names={}, 
+    show_fig=True, 
+    **kwargs
+):
     """
     Visualize simultaneously recorded neuronal activations and behavioral data.
 
@@ -19,7 +28,8 @@ def plotting_neuronal_behavioural(x, b=None, b_names={}, s=None, s_names={},
     stimulus, and response variables if provided.
 
     Parameters:
-    - x: 2D numpy array of neuronal activation data, with shape (neurons, time).
+    - x: 2D numpy array of neuronal activation data, 
+        with shape (neurons, time).
     - b: 1D numpy array of behavioral data (optional).
     - b_names: Dictionary mapping behavior labels to their names (optional).
     - s: 1D numpy array of stimulus data (optional).
@@ -59,15 +69,13 @@ def plotting_neuronal_behavioural(x, b=None, b_names={}, s=None, s_names={},
     def discrete_plot(ax, b, b_names, y_label, cmap):
         colors = sns.color_palette(cmap, len(b_names))
         cmap = ListedColormap(colors)
-        '''
-        cmap = plt.get_cmap(
-                    cm.colors.ListedColormap(colors[::-1]), 
-                    np.max(b) - np.min(b) + 1
-                    )
-        '''
-        im1 = ax.imshow([b], cmap=cmap, 
-                        vmin=np.min(b) - 0.5, vmax=np.max(b) + 0.5, 
-                        aspect='auto')
+        im1 = ax.imshow(
+            [b], 
+            cmap=cmap, 
+            vmin=np.min(b) - 0.5, 
+            vmax=np.max(b) + 0.5, 
+            aspect='auto'
+        )
         cbar = plt.colorbar(im1, ticks=np.unique(b))
         if b_names:
             cbar.ax.invert_yaxis() 

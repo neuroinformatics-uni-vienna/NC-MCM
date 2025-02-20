@@ -2,20 +2,20 @@
 @authors:
 Akshey Kumar
 Michael Hofer
-Jinook Oh (last edit: 2025-02-17)
+Jinook Oh
 """
 import os
+import time
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
-from matplotlib import animation
+#from matplotlib import animation
 from matplotlib.lines import Line2D
 from matplotlib.colors import ListedColormap
 from sklearn.metrics import accuracy_score
 import matplotlib.animation as anim  # FuncAnimation
 from sklearn.model_selection import cross_val_score
 
-#===============================================================================
 
 class LatentSpaceVisualiser:
     def __init__(self, y, b, b_names, show_points=False, legend=True):
@@ -25,11 +25,11 @@ class LatentSpaceVisualiser:
         self.show_points = show_points
         self.legend = legend
 
-    #---------------------------------------------------------------------------
-
-    def plot_latent_timeseries(self, 
-                               show_fig=True, 
-                               filename='figures/latent_time_series.png'):
+    def plot_latent_timeseries(
+        self, 
+        show_fig=True, 
+        filename='figures/latent_time_series.png'
+    ):
         """
         Plot time series of dynamics in latent space.
 
@@ -40,7 +40,8 @@ class LatentSpaceVisualiser:
         Parameters:
         -----------
         show_fig : bool, optional
-            If True, the plot will be displayed interactively. Default is True.
+            If True, the plot will be displayed interactively. 
+            Default is True.
         
         filename : str, optional
             The path and filename where the plot will be saved. 
@@ -56,16 +57,16 @@ class LatentSpaceVisualiser:
         cmap = ListedColormap(colors)
 
         im = plt.imshow(
-                            [self.b], 
-                            aspect=600, 
-                            cmap=cmap, 
-                            vmin=np.min(self.b) - 0.5, 
-                            vmax=np.max(self.b) + 0.5
-                            )
+            [self.b], 
+            aspect=600, 
+            cmap=cmap, 
+            vmin=np.min(self.b) - 0.5, 
+            vmax=np.max(self.b) + 0.5
+        )
         cbar = plt.colorbar(
-                            im, 
-                            ticks=np.arange(np.min(self.b), np.max(self.b) + 1)
-                            )
+            im, 
+            ticks=np.arange(np.min(self.b), np.max(self.b) + 1)
+        )
         
         cbar.ax.invert_yaxis() 
         cbar.ax.set_yticklabels(list(self.b_names.values()), fontsize=12)
@@ -86,13 +87,13 @@ class LatentSpaceVisualiser:
         if show_fig:
             plt.show()
 
-    #---------------------------------------------------------------------------
-    
-    def plot_phase_space(self, 
-                         show_fig=True, 
-                         filename='figures/phase_space_dynamics.png', 
-                         axis_view=None, 
-                         **kwargs):
+    def plot_phase_space(
+        self, 
+        show_fig=True, 
+        filename='figures/phase_space_dynamics.png', 
+        axis_view=None, 
+        **kwargs
+    ):
         """
         Plot the neuronal dynamics in a 3D phase space.
 
@@ -110,12 +111,13 @@ class LatentSpaceVisualiser:
             'figures/phase_space_dynamics.png'.
         
         axis_view : (float, float), optional
-            A tuple specifying the elevation and azimuthal angles for the view 
-            of the 3D plot. If None, the default view is used. Default is None.
+            A tuple specifying the elevation and azimuthal angles for 
+            the view of the 3D plot. If None, the default view is used. 
+            Default is None.
         
         **kwargs : additional keyword arguments to customise plot
-            Additional keyword arguments are passed to the ax.quiver() function.
-            (e.g., color, alpha). 
+            Additional keyword arguments are passed to the ax.quiver() 
+            function. (e.g., color, alpha). 
 
         Returns:
         --------
@@ -144,8 +146,6 @@ class LatentSpaceVisualiser:
 
         return fig, ax
 
-    #---------------------------------------------------------------------------
-    
     def _plot_ps(self, fig, ax, colors=None, **kwargs):
         """
         Helper to plot neuronal dynamics in a 3D phase space.
@@ -157,50 +157,55 @@ class LatentSpaceVisualiser:
         if colors is None:
             colors = sns.color_palette('Pastel1', len(self.b_names))
             color_dict = {
-                            name: color 
-                            for name, color in zip(np.unique(self.b), colors)
-                            }
+                name: color 
+                for name, color in zip(np.unique(self.b), colors)
+            }
 
         for i in range(len(self.y) - 1):
             d = (self.y[i + 1] - self.y[i])
             kwargs.setdefault('arrow_length_ratio', 0.01 / np.linalg.norm(d))
             kwargs.setdefault('linewidths', 1)
             ax.set_facecolor('#444444')
-            ax.quiver(self.y[i, 0], self.y[i, 1], self.y[i, 2],
-                      d[0], d[1], d[2],
-                      color=color_dict[self.b[i]], **kwargs)
+            ax.quiver(
+                self.y[i, 0], 
+                self.y[i, 1], 
+                self.y[i, 2],
+                d[0], 
+                d[1], 
+                d[2],
+                color=color_dict[self.b[i]], 
+                **kwargs
+            )
         ax.set_axis_off()
 
         if self.legend:
             legend_elements = [
                 Line2D(
-                        [0], 
-                        [0], 
-                        color=color_dict[b], 
-                        lw=4, 
-                        label=self.b_names[b]
-                        )
-                for b in color_dict
-                ]
+                    [0], 
+                    [0], 
+                    color=color_dict[b], 
+                    lw=4, 
+                    label=self.b_names[b]
+                ) for b in color_dict]
             ax.legend(handles=legend_elements)
 
         if self.show_points:
             ax.scatter(
-                        self.y[:, 0], 
-                        self.y[:, 1], 
-                        self.y[:, 2], 
-                        c='k', 
-                        s=1, 
-                        cmap=ListedColormap(colors)
-                        )
+                self.y[:, 0], 
+                self.y[:, 1], 
+                self.y[:, 2], 
+                c='k', 
+                s=1, 
+                cmap=ListedColormap(colors)
+            )
         return fig, ax
 
-    #---------------------------------------------------------------------------
-    
-    def rotating_plot(self, 
-                      show_fig=True, 
-                      filename='figures/rotation.gif', 
-                      **kwargs):
+    def rotating_plot(
+        self, 
+        show_fig=True, 
+        filename='figures/rotation.gif', 
+        **kwargs
+    ):
         """
         Create a rotating 3D phase space plot of the neuronal dynamics.
 
@@ -231,10 +236,12 @@ class LatentSpaceVisualiser:
             ax.view_init(azim=angle)
 
         self._plot_ps(fig, ax, **kwargs)
-        rot_animation = animation.FuncAnimation(fig, 
-                                                rotate, 
-                                                frames=np.arange(0, 362, 5), 
-                                                interval=150)
+        rot_animation = anim.FuncAnimation(
+            fig, 
+            rotate, 
+            frames=np.arange(0, 362, 5), 
+            interval=150
+        )
 
         if os.path.dirname(filename):
             os.makedirs(os.path.dirname(filename), exist_ok=True)
@@ -246,18 +253,18 @@ class LatentSpaceVisualiser:
 
         return fig, ax
 
-    #---------------------------------------------------------------------------
-    
-    def make_movie(self,
-                   fps=None,
-                   filename='figures/movie.gif',
-                   show_fig=False,
-                   colors=None,
-                   initial_alpha=None,
-                   fade_time=0,
-                   bitrate=1800,
-                   dpi=144,
-                   **kwargs):
+    def make_movie(
+        self,
+        fps=None,
+        filename='figures/movie.gif',
+        show_fig=False,
+        colors=None,
+        initial_alpha=None,
+        fade_time=0,
+        bitrate=1800,
+        dpi=144,
+        **kwargs
+    ):
         """
         Creates a GIF from data and saves it in "filename".
 
@@ -270,8 +277,8 @@ class LatentSpaceVisualiser:
                 Gives bitrate of the GIF.
 
             fade_time: int, optional
-                If given and greater than 0 it will define how many last frames 
-                are seen simultaneously.
+                If given and greater than 0 it will define how many 
+                last frames are seen simultaneously.
 
             initial_alpha: float, optional
                 If given and greater than 0, all frames in initial figure will 
@@ -299,36 +306,47 @@ class LatentSpaceVisualiser:
         if self.y.shape[1] != 3:
             print('The mapping does not map into a 3D space.')
             return False
+        
         if fps is not None:
             interval = 1000 / fps
         else:
             print('The movie well be played with 100 fps.')
             interval = 10
-        movie_animation = self._create_animation(colors=colors,
-                                                 initial_alpha=initial_alpha,
-                                                 fade_time=fade_time,
-                                                 interval=interval,
-                                                 **kwargs)
+        
+        movie_animation = self._create_animation(
+            colors=colors,
+            initial_alpha=initial_alpha,
+            fade_time=fade_time,
+            interval=interval,
+            **kwargs
+        )
         if os.path.dirname(filename):
             os.makedirs(os.path.dirname(filename), exist_ok=True)
 
-        movie_animation.save(filename,
-                             dpi=dpi,
-                             writer=anim.PillowWriter(fps=int(1000 / interval),
-                                                      metadata=dict(artist='Me'),
-                                                      bitrate=bitrate))
+        movie_animation.save(
+            filename,
+            dpi=dpi,
+            #writer=anim.PillowWriter(
+            writer=anim.FFMpegWriter(
+                fps=int(1000 / interval),
+                metadata=dict(artist='Me'),
+                bitrate=bitrate
+            )
+        )
+
         if show_fig:
             plt.show()
+        
         return True
 
-    #---------------------------------------------------------------------------
-    
-    def _create_animation(self,
-                          colors=None,
-                          initial_alpha=None,
-                          fade_time=0,
-                          interval=10,
-                          **kwargs):
+    def _create_animation(
+        self,
+        colors=None,
+        initial_alpha=None,
+        fade_time=0,
+        interval=10,
+        **kwargs
+    ):
         """
         Creates the animation.
 
@@ -338,8 +356,8 @@ class LatentSpaceVisualiser:
                 Gives colors for quivers in GIF.
 
             fade_time: int, optional
-                If given and greater than 0 it will define how many last frames 
-                are seen simultaneously.
+                If given and greater than 0 it will define how many last 
+                frames are seen simultaneously.
 
             initial_alpha: float, optional
                 If given and greater than 0, all frames will be drawn at 
@@ -360,8 +378,8 @@ class LatentSpaceVisualiser:
         if colors is None:
             colors = sns.color_palette('deep', len(self.b_names))
         color_dict = {
-                name: color for name, color in zip(np.unique(self.b), colors)
-                }
+            name: color for name, color in zip(np.unique(self.b), colors)
+        }
 
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
@@ -380,34 +398,29 @@ class LatentSpaceVisualiser:
         if self.legend:
             legend_elements = [
                 Line2D(
-                        [0], 
-                        [0], 
-                        color=color_dict[b], 
-                        lw=4, 
-                        label=self.b_names[b]
-                        ) 
-                for b in color_dict
-                ]
+                    [0], 
+                    [0], 
+                    color=color_dict[b], 
+                    lw=4, 
+                    label=self.b_names[b]
+                ) for b in color_dict
+            ]
             ax.legend(handles=legend_elements)
 
-
         animation = anim.FuncAnimation(
-                    fig, 
-                    self._update,
-                    fargs=(ax, legend_elements, color_dict, fade_time, kwargs),
-                    frames=self.y.shape[0],
-                    interval=interval
-                    )
+            fig, 
+            self._update,
+            fargs=(ax, legend_elements, color_dict, fade_time, kwargs),
+            frames=range(self.y.shape[0]),
+            interval=interval
+        )
 
         return animation
 
-    #---------------------------------------------------------------------------
-    
     def _plot_ps_comp(self, ax, b, color_dict, **kwargs):
         """
         Helper to comparison plot in a 3D phase space.
         """
-
         for i in range(len(self.y) - 1):
             d = (self.y[i + 1] - self.y[i])
             kwargs.setdefault('arrow_length_ratio', 0.01 / np.linalg.norm(d))
@@ -418,16 +431,14 @@ class LatentSpaceVisualiser:
         ax.set_axis_off()
         return ax
 
-    #---------------------------------------------------------------------------
-    
-    def _update(self,
-                frame,
-                ax,
-                legend_elements,
-                color_dict,
-                fade_time,
-                kwargs):
-
+    def _update(self, 
+        frame, 
+        ax, 
+        legend_elements, 
+        color_dict, 
+        fade_time, 
+        kwargs
+    ):
         """
         Update function to create a frame in the movie.
         """
@@ -442,35 +453,36 @@ class LatentSpaceVisualiser:
         kwargs.setdefault('arrow_length_ratio', 0.01 / np.linalg.norm(d))
         kwargs.setdefault('linewidths', 1)
         quiver = ax.quiver(
-                    self.y[frame - 1, 0], 
-                    self.y[frame - 1, 1], 
-                    self.y[frame - 1, 2],
-                    d[0], 
-                    d[1], 
-                    d[2],
-                    color=color_dict[self.b[frame - 1]], 
-                    **kwargs)
+            self.y[frame - 1, 0],
+            self.y[frame - 1, 1],
+            self.y[frame - 1, 2],
+            d[0],
+            d[1],
+            d[2],
+            color=color_dict[self.b[frame - 1]],
+            **kwargs
+        )
         self.quiver_artists.append(quiver)
-        ax.set_axis_off()
 
+        ax.set_axis_off()
+        
         # Red Point at current frame
         if self.scatter is not None:
             self.scatter.remove()
         x, y, z = self.y[frame, :]
         self.scatter = ax.scatter(x, y, z, s=20, alpha=0.8, color='red')
 
-        # Title adn Legend of the frame
+        # Title and Legend of the frame
         title = f'Frame: {frame}\nBehavior: {self.b_names[self.b[frame - 1]]}'
         ax.set_title(title)
-        if legend_elements:
-            ax.legend(
-                    handles=legend_elements, 
-                    loc='lower center', 
-                    bbox_to_anchor=[1, 0]
-                    )
-        
-        return ax
 
-    #---------------------------------------------------------------------------
-#===============================================================================
+        if legend_elements:
+            legend = ax.legend(
+                handles=legend_elements,
+                loc='lower center',
+                bbox_to_anchor=[1, 0]
+            )
+
+        return ax 
+
 
