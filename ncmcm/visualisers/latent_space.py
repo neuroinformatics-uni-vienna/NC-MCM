@@ -53,15 +53,15 @@ class LatentSpaceVisualiser:
         """
         plt.figure(figsize=(19, 5))
 
-        colors = sns.color_palette('Pastel1', len(self.b_names))
-        cmap = ListedColormap(colors)
+        cmap = sns.color_palette('deep', len(self.b_names), as_cmap=True)
 
         im = plt.imshow(
             [self.b], 
             aspect=600, 
             cmap=cmap, 
             vmin=np.min(self.b) - 0.5, 
-            vmax=np.max(self.b) + 0.5
+            vmax=np.max(self.b) + 0.5,
+            alpha=0.6
         )
         cbar = plt.colorbar(
             im, 
@@ -73,7 +73,7 @@ class LatentSpaceVisualiser:
         bbox = im.axes.get_position()  # bounding box of `imshow`
         cbar.ax.set_position([bbox.x1 + 0.03, bbox.y0, 0.02, bbox.height])
 
-        plt.plot(self.y / np.max(np.abs(self.y)) / 3)
+        plt.plot(self.y / np.max(np.abs(self.y)) / 3, linewidth=2)
         plt.xlabel("time $t$", fontsize=14)
         plt.axis([0, self.y.shape[0], -0.5, 0.5])
         plt.xticks(fontsize=12)
@@ -155,17 +155,17 @@ class LatentSpaceVisualiser:
             raise ValueError("Y and b must have the same number of time steps")
 
         if colors is None:
-            colors = sns.color_palette('Pastel1', len(self.b_names))
-            color_dict = {
-                name: color 
-                for name, color in zip(np.unique(self.b), colors)
-            }
+            colors = sns.color_palette('deep', len(self.b_names))
+
+        color_dict = {
+            name: color
+            for name, color in zip(np.unique(self.b), colors)
+        }
 
         for i in range(len(self.y) - 1):
             d = (self.y[i + 1] - self.y[i])
             kwargs.setdefault('arrow_length_ratio', 0.01 / np.linalg.norm(d))
             kwargs.setdefault('linewidths', 1)
-            ax.set_facecolor('#444444')
             ax.quiver(
                 self.y[i, 0], 
                 self.y[i, 1], 
