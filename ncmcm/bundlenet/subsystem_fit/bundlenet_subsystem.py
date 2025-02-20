@@ -12,14 +12,19 @@ from .utils_subsystem import torch_batch_prep, GaussianNoise
 from .initialisations_subsystem import best_of_5_runs, best_of_n_runs
 from ..losses import BccDccLoss
 
-#===============================================================================
+
 class BunDLeNet(nn.Module):
     """
     Subsystem Behaviour and Dynamical Learning Network (BunDLeNet) model.
 
     """
 
-    def __init__(self, latent_dim: int, num_behaviour: int, input_shapes: tuple):
+    def __init__(
+        self, 
+        latent_dim: int, 
+        num_behaviour: int, 
+        input_shapes: tuple
+    ):
         super(BunDLeNet, self).__init__()
         self.latent_dim = latent_dim
         self.num_behaviour = num_behaviour
@@ -36,7 +41,6 @@ class BunDLeNet(nn.Module):
             nn.Linear(latent_dim, num_behaviour),
         )
     
-    #---------------------------------------------------------------------------
     def _build_tau_network(self, in_features):
         return nn.Sequential(
             nn.Flatten(),
@@ -53,7 +57,6 @@ class BunDLeNet(nn.Module):
             nn.Linear(3, 1)
         )
 
-    #---------------------------------------------------------------------------
     def forward(self, inputs):
         xs, xi, xm = inputs
         # Upper arm of commutativity diagram
@@ -74,9 +77,7 @@ class BunDLeNet(nn.Module):
 
         return yt1_upper, yt1_lower, bt1_upper
     
-    #---------------------------------------------------------------------------
 
-#===============================================================================
 class BunDLeTrainer:
     """
     Trainer for the BunDLe Net model.
@@ -96,7 +97,6 @@ class BunDLeTrainer:
         self.gamma = gamma
         self.bccdcc_loss = BccDccLoss(b_type, gamma)
 
-    #---------------------------------------------------------------------------
     def train_step(self, x_train, b_train_1):
         self.model.train()
         self.optimizer.zero_grad()
@@ -105,16 +105,17 @@ class BunDLeTrainer:
         yt1_upper, yt1_lower, bt1_upper = self.model(x_train)
         # loss calculation
         dcc_loss, behaviour_loss, total_loss = self.bccdcc_loss(
-                                                    yt1_upper, yt1_lower, 
-                                                    bt1_upper, b_train_1
-                                                    )
+            yt1_upper, 
+            yt1_lower, 
+            bt1_upper, 
+            b_train_1
+        )
 
         total_loss.backward()
         self.optimizer.step()
 
         return dcc_loss.item(), behaviour_loss.item(), total_loss.item()
 
-    #---------------------------------------------------------------------------
     def test_step(self, x_test, b_test_1):
         self.model.eval()
 
@@ -124,13 +125,14 @@ class BunDLeTrainer:
 
         # loss calculation
         dcc_loss, behaviour_loss, total_loss = self.bccdcc_loss(
-                                                        yt1_upper, yt1_lower, 
-                                                        bt1_upper, b_test_1
-                                                        )
+            yt1_upper, 
+            yt1_lower, 
+            bt1_upper, 
+            b_test_1
+        )
 
         return dcc_loss.item(), behaviour_loss.item(), total_loss.item()
 
-    #---------------------------------------------------------------------------
     def train_loop(self, train_loader):
         """
         Handles the training within a single epoch and logs losses
@@ -138,19 +140,19 @@ class BunDLeTrainer:
         loss_array = np.zeros((0, 3))
         for x_train, b_train_1 in train_loader:
             dcc_loss, behaviour_loss, total_loss = self.train_step(
-                                                            x_train, b_train_1
-                                                            )
+                x_train, 
+                b_train_1
+            )
             loss_array = np.append(
-                                loss_array, 
-                                [[dcc_loss, behaviour_loss, total_loss]], 
-                                axis=0
-                                )
+                loss_array, 
+                [[dcc_loss, behaviour_loss, total_loss]], 
+                axis=0
+            )
 
         avg_train_loss = loss_array.mean(axis=0)
 
         return avg_train_loss
 
-    #---------------------------------------------------------------------------
     def test_loop(self, test_loader):
         """
         Handles testing within a single epoch and logs losses
@@ -158,25 +160,34 @@ class BunDLeTrainer:
         loss_array = np.zeros((0, 3))
         for x_test, b_test_1 in test_loader:
             dcc_loss, behaviour_loss, total_loss = self.test_step(
-                                                                x_test, b_test_1
-                                                                )
+                x_test, 
+                b_test_1
+            )
             loss_array = np.append(
-                            loss_array, 
-                            [[dcc_loss, behaviour_loss, total_loss]], 
-                            axis=0
-                            )
+                loss_array, 
+                [[dcc_loss, behaviour_loss, total_loss]], 
+                axis=0
+            )
 
         avg_test_loss = loss_array.mean(axis=0)
 
         return avg_test_loss
 
-    #---------------------------------------------------------------------------
-#===============================================================================
 
-#-------------------------------------------------------------------------------
-def train_model(x_train, b_train_1, model, b_type, gamma, learning_rate, 
-                n_epochs, initialisation=None, validation_data=None, 
-                device=None, report_ray_tune=False, pca_file_save=False):
+def train_model(
+    x_train, 
+    b_train_1, 
+    model, 
+    b_type, 
+    gamma, 
+    learning_rate, 
+    n_epochs, 
+    initialisation=None, 
+    validation_data=None, 
+    device=None, 
+    report_ray_tune=False, 
+    pca_file_save=False
+):
     """
     Training BunDLe Net
 
@@ -192,10 +203,10 @@ def train_model(x_train, b_train_1, model, b_type, gamma, learning_rate,
                                 tuple (n, n_epochs) for 'best_of_n_init'
         validation_data: (x_test, b_test_1)
         device (torch.device): Device where the model should be trained.
-        report_ray_tune (bool): Reports validation loss per epoch to ray tune for
-                                hyperparameter optimisiaton.
-        pca_file_save (bool): Whether save weights file or not 
-                                in case of 'pca_init'.
+        report_ray_tune (bool): Reports validation loss per epoch to ray tune 
+            for hyperparameter optimisiaton.
+        pca_file_save (bool): Whether save weights file or not in case of 
+            'pca_init'.
     Returns:
         numpy.ndarray: Array of loss values during training.
     """
@@ -208,13 +219,21 @@ def train_model(x_train, b_train_1, model, b_type, gamma, learning_rate,
 
     if validation_data is not None:
         x_test, b_test_1 = validation_data
-        test_loader = torch_batch_prep(x_test, b_test_1, 
-                                       device=device, shuffle=False)
+        test_loader = torch_batch_prep(
+            x_test, 
+            b_test_1, 
+            device=device, 
+            shuffle=False
+        )
 
     if initialisation == 'pca_init':
         ret = pca_initialisation(
-                    x_train, model.tau, model.latent_dim, device, pca_file_save 
-                    )
+            x_train, 
+            model.tau, 
+            model.latent_dim, 
+            device, 
+            pca_file_save 
+        )
         if pca_file_save: # ret is file path of the weights
             model.tau.load_state_dict(torch.load(ret))
         else: # ret is encoder
@@ -222,15 +241,29 @@ def train_model(x_train, b_train_1, model, b_type, gamma, learning_rate,
 
     elif initialisation == 'best_of_5_init':
         model = best_of_5_runs(
-                    x_train, b_train_1, model, b_type, gamma, learning_rate, 
-                    validation_data, device
-                    )
+            x_train, 
+            b_train_1, 
+            model, 
+            b_type, 
+            gamma, 
+            learning_rate, 
+            validation_data, 
+            device
+        )
 
     elif isinstance(initialisation, tuple):
         model = best_of_n_runs(
-                    initialisation[0], initialisation[1], x_train, b_train_1, 
-                    model, b_type, gamma, learning_rate, validation_data, device
-                    )
+            initialisation[0], 
+            initialisation[1], 
+            x_train, 
+            b_train_1, 
+            model, 
+            b_type, 
+            gamma, 
+            learning_rate, 
+            validation_data, 
+            device
+        )
 
     elif initialisation is None:
         pass
@@ -263,7 +296,7 @@ def train_model(x_train, b_train_1, model, b_type, gamma, learning_rate,
 
     return train_history, test_history
 
-#-------------------------------------------------------------------------------
+
 def model_inference(x_, model):
     """
     Inference using BunDLe Net
@@ -279,10 +312,9 @@ def model_inference(x_, model):
     model.eval()
     with torch.no_grad():
         y0_ = model.tau(
-                    torch.tensor(x_[:, 0], dtype=torch.float, device=device)
-                    ).cpu().numpy()
+            torch.tensor(x_[:, 0], dtype=torch.float, device=device)
+        ).cpu().numpy()
 
     return y0_
 
-#-------------------------------------------------------------------------------
 
