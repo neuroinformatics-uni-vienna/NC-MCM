@@ -13,26 +13,19 @@ from torch.utils.data import DataLoader, TensorDataset
 from sklearn.decomposition import PCA
 
 
-def pca_initialisation(X_, tau, latent_dim, device, flag_file_save=False):
+def pca_initialisation(X_, tau, latent_dim, device):
     """
-    Initialises BunDLe Net's tau such that its output is the PCA of 
-    the input traces.
+    Initialises BunDLe Net's tau such that its output is the PCA of the input traces.
     PCA initialisation may make the embeddings more reproducible across runs.
-    This function is called within the train_model() function and saves 
-    the learned tau weights in a .pt file in the same repository, if 
-    flag_save_file is True.
+    This function is called within the train_model() function and saves the learned tau weights
+    in a .pt file in the same repository.
 
-    Args:
+    Parameters:
         X_ (np.ndarray): Input data.
         tau (object): BunDLe Net tau (tf sequential layer).
         latent_dim (int): Dimension of the latent space.
         device (torch.device): Device where the model should be run.
-        flag_file_save (bool): Whether to save the weights as a file or not.
 
-    Returns:
-        weights_filepath (str): Path to the weights file.
-        or
-        pcaencoder.encoder (torch.nn.modules.container.Sequential)
     """
     # Performing PCA on the time slice
     X0_ = X_[:, 0, :, :]
@@ -72,27 +65,15 @@ def pca_initialisation(X_, tau, latent_dim, device, flag_file_save=False):
             loss.backward()
             opt.step()
 
-    if flag_file_save: 
-        # Saving weights of this model
-        unique_id = str(uuid.uuid4())
-        os.makedirs(f"temp/{unique_id}/", exist_ok=True)
-        weights_filepath = f"temp/{unique_id}/tau_pca.weights.pt"
-        torch.save(pcaencoder.encoder.state_dict(), weights_filepath)
-        return weights_filepath
-    else:
-        return pcaencoder.encoder
+    # Saving weights of this model
+    unique_id = str(uuid.uuid4())
+    os.makedirs(f"temp/{unique_id}/", exist_ok=True)
+    weights_filepath = f"temp/{unique_id}/tau_pca.weights.pt"
+    torch.save(pcaencoder.encoder.state_dict(), weights_filepath)
 
+    return weights_filepath
 
-def best_of_5_runs(
-    x_train, 
-    b_train_1, 
-    model, 
-    b_type, 
-    gamma, 
-    learning_rate, 
-    validation_data, 
-    device
-):
+def best_of_5_runs(x_train, b_train_1, model, b_type, gamma, learning_rate, validation_data, device):
     """
     Initialises BunDLe net with the best of 5 runs
 
@@ -102,9 +83,9 @@ def best_of_5_runs(
     if validation_data is None:
         import warnings
 
-        msg = "No validation data given. Will proceed to use train dataset"
-        msg += " loss as deciding factor for the best model"
-        warnings.warn(msg)
+        warnings.warn(
+            "No validation data given. Will proceed to use train dataset loss as deciding factor for the best model"
+        )
         validation_data = (x_train, b_train_1)
 
     best_loss = float('inf')
@@ -140,18 +121,7 @@ def best_of_5_runs(
     return model
 
 
-def best_of_n_runs(
-    n, 
-    n_epochs, 
-    x_train, 
-    b_train_1, 
-    model, 
-    b_type, 
-    gamma, 
-    learning_rate, 
-    validation_data, 
-    device
-):
+def best_of_n_runs(n, n_epochs, x_train, b_train_1, model, b_type, gamma, learning_rate, validation_data, device):
     """
     Initialises BunDLe net with the best of n runs
 
@@ -161,9 +131,9 @@ def best_of_n_runs(
     if validation_data is None:
         import warnings
 
-        msg = "No validation data given. Will proceed to use train dataset"
-        msg += " loss as deciding factor for the best model" 
-        warnings.warn(msg)
+        warnings.warn(
+            "No validation data given. Will proceed to use train dataset loss as deciding factor for the best model"
+        )
         validation_data = (x_train, b_train_1)
 
     best_loss = float('inf')
@@ -196,5 +166,3 @@ def best_of_n_runs(
     # Set the best weights back to the original model
     model.load_state_dict(best_weights)
     return model
-
-
