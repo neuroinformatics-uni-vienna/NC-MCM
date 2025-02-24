@@ -2,7 +2,7 @@ import torch
 import functools
 import numpy as np
 from ncmcm.bundlenet.utils import prep_data
-from ncmcm.bundlenet.bundlenet import GaussianNoise, BunDLeNet, BunDLeTrainer, train_model, model_inference
+from ncmcm.bundlenet.bundlenet import GaussianNoise, BunDLeNet, BunDLeTrainer, train_model, project_into_latent_space
 
 
 assert_equal = functools.partial(torch.testing.assert_close, rtol=0, atol=0)
@@ -33,28 +33,30 @@ def test_gaussian_noise_eval():
     assert_equal(output, X)
 
 
-def test_model_inference_eval():
+def test_project_into_latent_space_eval():
     latent_dim = 3
-    num_behaviour = 8
-    X = torch.randn(50, 2, 3, 10)
+    X = np.random.rand(50, 10)
+    B = np.random.randint(5, size=(50,))
+    X_, B_ = prep_data(X, B, win=3)
 
-    model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour, input_shape=X.shape)
+    model = BunDLeNet(latent_dim=latent_dim, num_behaviour=np.unique(B).shape[0], input_shape=X_.shape)
 
-    model_inference(X, model)
+    project_into_latent_space(X_, model)
 
     assert not model.training
 
 
-def test_model_inference_shape():
-    latent_dim = 5
-    num_behaviour = 8
-    X = torch.randn(50, 2, 3, 10)
+def test_project_into_latent_space_shape():
+    latent_dim = 3
+    X = np.random.rand(50, 10)
+    B = np.random.randint(5, size=(50,))
+    X_, B_ = prep_data(X, B, win=3)
 
-    model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour, input_shape=X.shape)
+    model = BunDLeNet(latent_dim=latent_dim, num_behaviour=np.unique(B).shape[0], input_shape=X_.shape)
 
-    Y = model_inference(X, model)
+    Y_ = project_into_latent_space(X_, model)
 
-    assert_equal(Y.shape, (len(X), latent_dim))
+    assert_equal(Y_.shape, (X_.shape[0], latent_dim))
 
 
 def test_bundlenet_architecture():
