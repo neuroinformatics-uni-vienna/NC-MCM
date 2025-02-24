@@ -215,7 +215,7 @@ def train_model(x_train, b_train_1, model, b_type, gamma, learning_rate, n_epoch
     return train_history, test_history
 
 
-def model_inference(x_, model):
+def project_into_latent_space(x_, model):
     """
     Inference using BunDLe Net
 
