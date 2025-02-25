@@ -145,7 +145,7 @@ class BunDLeTrainer:
 
 
 def train_model(x_train, b_train_1, model, b_type, gamma, learning_rate, n_epochs, initialisation=None,
-                validation_data=None, device=None, report_ray_tune=False):
+                validation_data=None, device=None, report_ray_tune=False, pca_file_save=False):
     """
     Training BunDLe Net
 
@@ -163,6 +163,8 @@ def train_model(x_train, b_train_1, model, b_type, gamma, learning_rate, n_epoch
         device (torch.device): Device where the model should be trained.
         report_ray_tune (bool): reports validation loss per epoch to ray tune for
                                 hyperparameter optimisiaton
+        pca_file_save (bool): Whether save weights file or not 
+            in case 'initialisation' is 'pca_init'.
     Returns:
         numpy.ndarray: Array of loss values during training.
     """
@@ -178,8 +180,11 @@ def train_model(x_train, b_train_1, model, b_type, gamma, learning_rate, n_epoch
         test_loader = torch_batch_prep(x_test, b_test_1, device=device, shuffle=False)
 
     if initialisation == 'pca_init':
-        pca_model_path = pca_initialisation(x_train, model.tau, model.latent_dim, device)
-        model.tau.load_state_dict(torch.load(pca_model_path))
+        ret = pca_initialisation(x_train, model.tau, model.latent_dim, device, pca_file_save)
+        if pca_file_save: # ret is file path of the weights
+            model.tau.load_state_dict(torch.load(ret))
+        else: # ret is encoder
+            model.tau.load_state_dict(ret.state_dict())
     elif initialisation == 'best_of_5_init':
         model = best_of_5_runs(x_train, b_train_1, model, b_type, gamma, learning_rate, validation_data, device)
     elif isinstance(initialisation, tuple):

@@ -4,6 +4,7 @@ Michael Hofer
 """
 import json
 import os
+import time 
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
@@ -180,8 +181,13 @@ def behavioral_state_diagram(C,
         physics = json.dumps(physics, indent=2)
         net.set_options(physics)
 
-        net.show(f'{interactive}.html', notebook=False)
-        print(f'Plot has been saved under: {interactive}.html')
+        filename = f'{interactive}.html'
+        net.show(filename, notebook=False)
+        if test_run:
+            time.sleep(0.1)
+            os.remove(filename)
+        else:
+            print(f'Plot has been saved under: {filename}')
 
     else:
 
