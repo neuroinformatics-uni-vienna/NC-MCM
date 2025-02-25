@@ -2,7 +2,7 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 from ncmcm.data_loaders.matlab_dataset import Database
-from ncmcm.bundlenet.bundlenet import BunDLeNet, train_model, model_inference
+from ncmcm.bundlenet.bundlenet import BunDLeNet, train_model, project_into_latent_space
 from ncmcm.bundlenet.utils import prep_data
 from ncmcm.visualisers.neuronal_behavioural import plotting_neuronal_behavioural
 from ncmcm.visualisers.latent_space import LatentSpaceVisualiser
@@ -51,7 +51,7 @@ for i, label in enumerate([
 plt.legend()
 plt.show()
 
-Y0_ = model_inference(X_, model)
+Y0_ = project_into_latent_space(X_, model)
 
 # Save the weights
 save_model = False
