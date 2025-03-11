@@ -1,9 +1,0 @@
-{
-    "nodes": {
-            "physics": false
-        },
-  "physics": {
-            "minVelocity": 0.75
-        }
-}
-
