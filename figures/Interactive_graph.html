@@ -1,0 +1,570 @@
+<html>
+    <head>
+        <meta charset="utf-8">
+        
+            <script>function neighbourhoodHighlight(params) {
+  // console.log("in nieghbourhoodhighlight");
+  allNodes = nodes.get({ returnType: "Object" });
+  // originalNodes = JSON.parse(JSON.stringify(allNodes));
+  // if something is selected:
+  if (params.nodes.length > 0) {
+    highlightActive = true;
+    var i, j;
+    var selectedNode = params.nodes[0];
+    var degrees = 2;
+
+    // mark all nodes as hard to read.
+    for (let nodeId in allNodes) {
+      // nodeColors[nodeId] = allNodes[nodeId].color;
+      allNodes[nodeId].color = "rgba(200,200,200,0.5)";
+      if (allNodes[nodeId].hiddenLabel === undefined) {
+        allNodes[nodeId].hiddenLabel = allNodes[nodeId].label;
+        allNodes[nodeId].label = undefined;
+      }
+    }
+    var connectedNodes = network.getConnectedNodes(selectedNode);
+    var allConnectedNodes = [];
+
+    // get the second degree nodes
+    for (i = 1; i < degrees; i++) {
+      for (j = 0; j < connectedNodes.length; j++) {
+        allConnectedNodes = allConnectedNodes.concat(
+          network.getConnectedNodes(connectedNodes[j])
+        );
+      }
+    }
+
+    // all second degree nodes get a different color and their label back
+    for (i = 0; i < allConnectedNodes.length; i++) {
+      // allNodes[allConnectedNodes[i]].color = "pink";
+      allNodes[allConnectedNodes[i]].color = "rgba(150,150,150,0.75)";
+      if (allNodes[allConnectedNodes[i]].hiddenLabel !== undefined) {
+        allNodes[allConnectedNodes[i]].label =
+          allNodes[allConnectedNodes[i]].hiddenLabel;
+        allNodes[allConnectedNodes[i]].hiddenLabel = undefined;
+      }
+    }
+
+    // all first degree nodes get their own color and their label back
+    for (i = 0; i < connectedNodes.length; i++) {
+      // allNodes[connectedNodes[i]].color = undefined;
+      allNodes[connectedNodes[i]].color = nodeColors[connectedNodes[i]];
+      if (allNodes[connectedNodes[i]].hiddenLabel !== undefined) {
+        allNodes[connectedNodes[i]].label =
+          allNodes[connectedNodes[i]].hiddenLabel;
+        allNodes[connectedNodes[i]].hiddenLabel = undefined;
+      }
+    }
+
+    // the main node gets its own color and its label back.
+    // allNodes[selectedNode].color = undefined;
+    allNodes[selectedNode].color = nodeColors[selectedNode];
+    if (allNodes[selectedNode].hiddenLabel !== undefined) {
+      allNodes[selectedNode].label = allNodes[selectedNode].hiddenLabel;
+      allNodes[selectedNode].hiddenLabel = undefined;
+    }
+  } else if (highlightActive === true) {
+    // console.log("highlightActive was true");
+    // reset all nodes
+    for (let nodeId in allNodes) {
+      // allNodes[nodeId].color = "purple";
+      allNodes[nodeId].color = nodeColors[nodeId];
+      // delete allNodes[nodeId].color;
+      if (allNodes[nodeId].hiddenLabel !== undefined) {
+        allNodes[nodeId].label = allNodes[nodeId].hiddenLabel;
+        allNodes[nodeId].hiddenLabel = undefined;
+      }
+    }
+    highlightActive = false;
+  }
+
+  // transform the object into an array
+  var updateArray = [];
+  if (params.nodes.length > 0) {
+    for (let nodeId in allNodes) {
+      if (allNodes.hasOwnProperty(nodeId)) {
+        // console.log(allNodes[nodeId]);
+        updateArray.push(allNodes[nodeId]);
+      }
+    }
+    nodes.update(updateArray);
+  } else {
+    // console.log("Nothing was selected");
+    for (let nodeId in allNodes) {
+      if (allNodes.hasOwnProperty(nodeId)) {
+        // console.log(allNodes[nodeId]);
+        // allNodes[nodeId].color = {};
+        updateArray.push(allNodes[nodeId]);
+      }
+    }
+    nodes.update(updateArray);
+  }
+}
+
+function filterHighlight(params) {
+  allNodes = nodes.get({ returnType: "Object" });
+  // if something is selected:
+  if (params.nodes.length > 0) {
+    filterActive = true;
+    let selectedNodes = params.nodes;
+
+    // hiding all nodes and saving the label
+    for (let nodeId in allNodes) {
+      allNodes[nodeId].hidden = true;
+      if (allNodes[nodeId].savedLabel === undefined) {
+        allNodes[nodeId].savedLabel = allNodes[nodeId].label;
+        allNodes[nodeId].label = undefined;
+      }
+    }
+
+    for (let i=0; i < selectedNodes.length; i++) {
+      allNodes[selectedNodes[i]].hidden = false;
+      if (allNodes[selectedNodes[i]].savedLabel !== undefined) {
+        allNodes[selectedNodes[i]].label = allNodes[selectedNodes[i]].savedLabel;
+        allNodes[selectedNodes[i]].savedLabel = undefined;
+      }
+    }
+
+  } else if (filterActive === true) {
+    // reset all nodes
+    for (let nodeId in allNodes) {
+      allNodes[nodeId].hidden = false;
+      if (allNodes[nodeId].savedLabel !== undefined) {
+        allNodes[nodeId].label = allNodes[nodeId].savedLabel;
+        allNodes[nodeId].savedLabel = undefined;
+      }
+    }
+    filterActive = false;
+  }
+
+  // transform the object into an array
+  var updateArray = [];
+  if (params.nodes.length > 0) {
+    for (let nodeId in allNodes) {
+      if (allNodes.hasOwnProperty(nodeId)) {
+        updateArray.push(allNodes[nodeId]);
+      }
+    }
+    nodes.update(updateArray);
+  } else {
+    for (let nodeId in allNodes) {
+      if (allNodes.hasOwnProperty(nodeId)) {
+        updateArray.push(allNodes[nodeId]);
+      }
+    }
+    nodes.update(updateArray);
+  }
+}
+
+function selectNode(nodes) {
+  network.selectNodes(nodes);
+  neighbourhoodHighlight({ nodes: nodes });
+  return nodes;
+}
+
+function selectNodes(nodes) {
+  network.selectNodes(nodes);
+  filterHighlight({nodes: nodes});
+  return nodes;
+}
+
+function highlightFilter(filter) {
+  let selectedNodes = []
+  let selectedProp = filter['property']
+  if (filter['item'] === 'node') {
+    let allNodes = nodes.get({ returnType: "Object" });
+    for (let nodeId in allNodes) {
+      if (allNodes[nodeId][selectedProp] && filter['value'].includes((allNodes[nodeId][selectedProp]).toString())) {
+        selectedNodes.push(nodeId)
+      }
+    }
+  }
+  else if (filter['item'] === 'edge'){
+    let allEdges = edges.get({returnType: 'object'});
+    // check if the selected property exists for selected edge and select the nodes connected to the edge
+    for (let edge in allEdges) {
+      if (allEdges[edge][selectedProp] && filter['value'].includes((allEdges[edge][selectedProp]).toString())) {
+        selectedNodes.push(allEdges[edge]['from'])
+        selectedNodes.push(allEdges[edge]['to'])
+      }
+    }
+  }
+  selectNodes(selectedNodes)
+}</script>
+            <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.2/dist/dist/vis-network.min.css" integrity="sha512-WgxfT5LWjfszlPHXRmBWHkV2eceiWTOBvrKCNbdgDYTHrT2AeLCGbF4sZlZw3UMN3WtL0tGUoIAKsu8mllg/XA==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.2/dist/vis-network.min.js" integrity="sha512-LnvoEWDFrqGHlHmDD2101OrLcbsfkrzoSpvtSQtxK3RMnRV0eOkhhBN2dXHKRrUU8p2DGRTk35n4O8nWSVe1mQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+            
+            
+            
+            
+            
+            
+                <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tom-select/2.0.0-rc.4/css/tom-select.min.css" integrity="sha512-43fHB3GLgZfz8QXl1RPQ8O66oIgv3po9cJ5erMt1c4QISq9dYb195T3vr5ImnJPXuVroKcGBPXBFKETW8jrPNQ==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+                <script src="https://cdnjs.cloudflare.com/ajax/libs/tom-select/2.0.0-rc.4/js/tom-select.complete.js" integrity="sha512-jeF9CfnvzDiw9G9xiksVjxR2lib44Gnovvkv+3CgCG6NXCD4gqlA5nDAVW5WjpA+i+/zKsUWV5xNEbW1X/HH0Q==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+            
+
+        
+<center>
+<h1></h1>
+</center>
+
+<!-- <link rel="stylesheet" href="../node_modules/vis/dist/vis.min.css" type="text/css" />
+<script type="text/javascript" src="../node_modules/vis/dist/vis.js"> </script>-->
+        <link
+          href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.0-beta3/dist/css/bootstrap.min.css"
+          rel="stylesheet"
+          integrity="sha384-eOJMYsd53ii+scO/bJGFsiCZc+5NDVN2yr8+0RDqr0Ql0h+rP48ckxlpbzKgwra6"
+          crossorigin="anonymous"
+        />
+        <script
+          src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.0-beta3/dist/js/bootstrap.bundle.min.js"
+          integrity="sha384-JEW9xMcG8R+pH31jmWH6WWP0WintQrMb4s7ZOdauHnUtxwoG2vI5DkLtS3qm9Ekf"
+          crossorigin="anonymous"
+        ></script>
+
+
+        <center>
+          <h1></h1>
+        </center>
+        <style type="text/css">
+
+             #mynetwork {
+                 width: 100%;
+                 height: 600px;
+                 background-color: #ffffff;
+                 border: 1px solid lightgray;
+                 position: relative;
+                 float: left;
+             }
+
+             
+
+             
+
+             
+        </style>
+    </head>
+
+
+    <body>
+        <div class="card" style="width: 100%">
+            
+                <div id="select-menu" class="card-header">
+                    <div class="row no-gutters">
+                        <div class="col-10 pb-2">
+                            <select
+                            class="form-select"
+                            aria-label="Default select example"
+                            onchange="selectNode([value]);"
+                            id="select-node"
+                            placeholder="Select node..."
+                            >
+                                <option selected>Select a Node by ID</option>
+                                
+                                    <option value="C1:Dorsal turn">C1:Dorsal turn</option>
+                                
+                                    <option value="C1:Forward">C1:Forward</option>
+                                
+                                    <option value="C1:Slowing">C1:Slowing</option>
+                                
+                                    <option value="C1:Reverse-1">C1:Reverse-1</option>
+                                
+                                    <option value="C2:Reverse-1">C2:Reverse-1</option>
+                                
+                                    <option value="C1:Reverse-2">C1:Reverse-2</option>
+                                
+                                    <option value="C3:Reverse-2">C3:Reverse-2</option>
+                                
+                                    <option value="C3:Sustained reversal">C3:Sustained reversal</option>
+                                
+                                    <option value="C2:Sustained reversal">C2:Sustained reversal</option>
+                                
+                                    <option value="C3:Reverse-1">C3:Reverse-1</option>
+                                
+                                    <option value="C2:Slowing">C2:Slowing</option>
+                                
+                                    <option value="C2:Ventral turn">C2:Ventral turn</option>
+                                
+                                    <option value="C2:Forward">C2:Forward</option>
+                                
+                                    <option value="C3:Ventral turn">C3:Ventral turn</option>
+                                
+                                    <option value="C3:Dorsal turn">C3:Dorsal turn</option>
+                                
+                                    <option value="C1:No state">C1:No state</option>
+                                
+                                    <option value="C1:Sustained reversal">C1:Sustained reversal</option>
+                                
+                                    <option value="C1:Ventral turn">C1:Ventral turn</option>
+                                
+                                    <option value="C2:Dorsal turn">C2:Dorsal turn</option>
+                                
+                                    <option value="C2:No state">C2:No state</option>
+                                
+                                    <option value="C2:Reverse-2">C2:Reverse-2</option>
+                                
+                                    <option value="C3:Forward">C3:Forward</option>
+                                
+                                    <option value="C3:No state">C3:No state</option>
+                                
+                                    <option value="C3:Slowing">C3:Slowing</option>
+                                
+                            </select>
+                        </div>
+                        <div class="col-2 pb-2">
+                            <button type="button" class="btn btn-primary btn-block" onclick="neighbourhoodHighlight({nodes: []});">Reset Selection</button>
+                        </div>
+                    </div>
+                </div>
+            
+            
+              <div id="filter-menu" class="card-header">
+                <div class="row no-gutters">
+                  <div class="col-3 pb-2">
+                    <select
+                            class="form-select"
+                            aria-label="Default select example"
+                            onchange="updateFilter(value, 'item')"
+                            id="select-item"
+                        >
+                        <option value="">Select a network item</option>
+                        <option value="edge">edge</option>
+                        <option value="node">node</option>
+                    </select>
+                  </div>
+                  <div class="col-3 pb-2">
+                    <select
+                            class="form-select"
+                            aria-label="Default select example"
+                            onchange="updateFilter(value, 'property')"
+                            id="select-property"
+                        >
+                        <option value="">Select a property...</option>
+                    </select>
+                  </div>
+                  <div class="col-3 pb-2">
+                    <select
+                            class="form-select"
+                            aria-label="Default select example"
+                            id="select-value"
+                        >
+                        <option value="">Select value(s)...</option>
+                    </select>
+                  </div>
+                  <div class="col-1 pb-2">
+                    <button type="button" class="btn btn-primary btn-block" onclick="highlightFilter(filter);">Filter</button>
+                  </div>
+                  <div class="col-2 pb-2">
+                    <button type="button" class="btn btn-primary btn-block" onclick="clearFilter(true)">Reset Selection</button>
+                  </div>
+                </div>
+              </div>
+            
+            <div id="mynetwork" class="card-body"></div>
+        </div>
+
+        
+        
+
+        <script type="text/javascript">
+
+              // initialize global variables.
+              var edges;
+              var nodes;
+              var allNodes;
+              var allEdges;
+              var nodeColors;
+              var originalNodes;
+              var network;
+              var container;
+              var options, data;
+              var filter = {
+                  item : '',
+                  property : '',
+                  value : []
+              };
+
+              
+                  new TomSelect("#select-node",{
+                      create: false,
+                      sortField: {
+                          field: "text",
+                          direction: "asc"
+                      }
+                  });
+              
+
+              
+                  // explicitly using onItemAdd and this function as we need to save multiple values
+                  let updateValueFilter = function() {
+                      return function () {
+                      filter['value'].push(arguments[0])
+                      }
+                  }
+
+                  let valueControl = new TomSelect("#select-value",{
+                      maxItems: null,
+                      valueField: 'id',
+                      labelField: 'title',
+                      searchField: 'title',
+                      create: false,
+                      sortField: {
+                          field: "text",
+                          direction: "asc"
+                      },
+                      onItemAdd: updateValueFilter()
+                  });
+
+                  let addValues = function() {
+                      return function () {
+                          // clear the current value options and add the selected attribute values
+                          // tom-select handles duplicates
+                          let selectedProperty = arguments[0];
+                          valueControl.clear();
+                          valueControl.clearOptions();
+                          filter['value'] = []
+                          if (filter['item'] === 'node') {
+                              for (let each in allNodes) {
+                                  valueControl.addOption({
+                                      id:allNodes[each][selectedProperty],
+                                      title:allNodes[each][selectedProperty]
+                                  })
+                              }
+                          }
+                          else if (filter['item'] === 'edge') {
+                              for (let each in allEdges) {
+                                  valueControl.addOption({
+                                      id:allEdges[each][selectedProperty],
+                                      title:allEdges[each][selectedProperty]
+                                  })
+                              }
+                          }
+                      }
+                  };
+
+                  let propControl = new TomSelect("#select-property",{
+                      valueField: 'id',
+                      labelField: 'title',
+                      searchField: 'title',
+                      create: false,
+                      sortField: {
+                          field: "text",
+                          direction: "asc"
+                      },
+                      onItemAdd: addValues()
+                  });
+
+                  let addProperties = function() {
+                      return function () {
+                          // loops through the selected network item and adds the attributes to dropdown
+                          // tom-select handles duplicates
+                          clearFilter(false)
+                          if (arguments[0] === 'edge') {
+                              for (let each in allEdges) {
+                                  if (allEdges.hasOwnProperty(each)) {
+                                      for (let eachProp in allEdges[each]) {
+                                          if (allEdges[each].hasOwnProperty(eachProp)) {
+                                              propControl.addOption({id: eachProp, title: eachProp})
+                                          }
+                                      }
+                                  }
+                              }
+                          }
+                          else if (arguments[0] === 'node') {
+                              for (let each in allNodes) {
+                                  if (allNodes.hasOwnProperty(each)) {
+                                      for (let eachProp in allNodes[each]) {
+                                          if (allNodes[each].hasOwnProperty(eachProp)
+                                              && (eachProp !== 'hidden' && eachProp !== 'savedLabel'
+                                                  && eachProp !== 'hiddenLabel')) {
+                                              propControl.addOption({id: eachProp, title: eachProp})
+
+                                          }
+                                      }
+                                  }
+                              }
+                          }
+                      }
+                  };
+
+                  let itemControl = new TomSelect("#select-item",{
+                      create: false,
+                      sortField:{
+                          field: "text",
+                          direction: "asc"
+                      },
+                      onItemAdd: addProperties()
+                  });
+
+                  function clearFilter(reset) {
+                      // utility function to clear all the selected filter options
+                      // if reset is set to true, the existing filter will be removed
+                      // else, only the dropdown options are cleared
+                      propControl.clear();
+                      propControl.clearOptions();
+                      valueControl.clear();
+                      valueControl.clearOptions();
+                      filter = {
+                          item : '',
+                          property : '',
+                          value : []
+                      }
+                      if (reset) {
+                          itemControl.clear();
+                          filterHighlight({nodes: []})
+                      }
+                  }
+
+                  function updateFilter(value, key) {
+                      // key could be 'item' or 'property' and value is as selected in dropdown
+                      filter[key] = value
+                  }
+
+              
+
+              // This method is responsible for drawing the graph, returns the drawn network
+              function drawGraph() {
+                  var container = document.getElementById('mynetwork');
+
+                  
+
+                  // parsing and collecting nodes and edges from the python
+                  nodes = new vis.DataSet([{"behavior": "Dorsal turn", "cog_state": "C1", "color": "rgb(255.0,0.0,0.0)", "id": "C1:Dorsal turn", "label": "C1:Dorsal turn", "shape": "dot", "size": 3.2506039964009195, "title": "C1:Dorsal turn:22\nC1:Forward:7\n"}, {"behavior": "Forward", "cog_state": "C1", "color": "rgb(255.0,191.25,0.0)", "id": "C1:Forward", "label": "C1:Forward", "shape": "dot", "size": 17.804291343452256, "title": "C1:Forward:660\nC1:Slowing:15\n"}, {"behavior": "Slowing", "cog_state": "C1", "color": "rgb(127.5,0.0,255.0)", "id": "C1:Slowing", "label": "C1:Slowing", "shape": "dot", "size": 16.8051110850154, "title": "C1:Forward:3\nC1:Reverse-1:1\nC1:Reverse-2:13\nC1:Slowing:588\n"}, {"behavior": "Reverse-1", "cog_state": "C1", "color": "rgb(0.0,255.0,63.75)", "id": "C1:Reverse-1", "label": "C1:Reverse-1", "shape": "dot", "size": 1.5496646515102455, "title": "C1:Reverse-1:5\nC2:Reverse-1:1\n"}, {"behavior": "Reverse-1", "cog_state": "C2", "color": "rgb(0.0,255.0,63.75)", "id": "C2:Reverse-1", "label": "C2:Reverse-1", "shape": "dot", "size": 6.389431042462724, "title": "C2:Reverse-1:85\nC2:Sustained reversal:3\nC3:Reverse-1:1\nC3:Sustained reversal:7\n"}, {"behavior": "Reverse-2", "cog_state": "C1", "color": "rgb(0.0,255.0,255.0)", "id": "C1:Reverse-2", "label": "C1:Reverse-2", "shape": "dot", "size": 6.501207992801839, "title": "C1:Reverse-2:88\nC3:Reverse-2:12\nC3:Sustained reversal:1\n"}, {"behavior": "Reverse-2", "cog_state": "C3", "color": "rgb(0.0,255.0,255.0)", "id": "C3:Reverse-2", "label": "C3:Reverse-2", "shape": "dot", "size": 3.732086693314365, "title": "C3:Reverse-2:29\nC3:Sustained reversal:12\n"}, {"behavior": "Sustained reversal", "cog_state": "C3", "color": "rgb(0.0,63.75,255.0)", "id": "C3:Sustained reversal", "label": "C3:Sustained reversal", "shape": "dot", "size": 22.133638394006432, "title": "C2:Ventral turn:3\nC3:Dorsal turn:7\nC3:Sustained reversal:1020\nC3:Ventral turn:14\n"}, {"behavior": "Sustained reversal", "cog_state": "C2", "color": "rgb(0.0,63.75,255.0)", "id": "C2:Sustained reversal", "label": "C2:Sustained reversal", "shape": "dot", "size": 0.9800939816446932, "title": "C2:Sustained reversal:1\nC3:Sustained reversal:3\n"}, {"behavior": "Reverse-1", "cog_state": "C3", "color": "rgb(0.0,255.0,63.75)", "id": "C3:Reverse-1", "label": "C3:Reverse-1", "shape": "dot", "size": 0.0, "title": ""}, {"behavior": "Slowing", "cog_state": "C2", "color": "rgb(127.5,0.0,255.0)", "id": "C2:Slowing", "label": "C2:Slowing", "shape": "dot", "size": 1.9601879632893864, "title": "C2:Reverse-1:9\nC2:Slowing:7\n"}, {"behavior": "Ventral turn", "cog_state": "C2", "color": "rgb(255.0,0.0,191.25)", "id": "C2:Ventral turn", "label": "C2:Ventral turn", "shape": "dot", "size": 11.239075762293957, "title": "C1:Forward:3\nC2:Forward:1\nC2:Slowing:10\nC2:Ventral turn:263\nC3:Ventral turn:1\n"}, {"behavior": "Forward", "cog_state": "C2", "color": "rgb(255.0,191.25,0.0)", "id": "C2:Forward", "label": "C2:Forward", "shape": "dot", "size": 0.9800939816446932, "title": "C2:Forward:1\n"}, {"behavior": "Ventral turn", "cog_state": "C3", "color": "rgb(255.0,0.0,191.25)", "id": "C3:Ventral turn", "label": "C3:Ventral turn", "shape": "dot", "size": 4.100027283443684, "title": "C2:Ventral turn:15\nC3:Ventral turn:35\n"}, {"behavior": "Dorsal turn", "cog_state": "C3", "color": "rgb(255.0,0.0,0.0)", "id": "C3:Dorsal turn", "label": "C3:Dorsal turn", "shape": "dot", "size": 8.022414989350896, "title": "C1:Dorsal turn:7\nC3:Dorsal turn:134\n"}, {"behavior": "No state", "cog_state": "C1", "color": "rgb(127.5,255.0,0.0)", "id": "C1:No state", "label": "C1:No state", "shape": "dot", "size": 1.2003650775011, "title": "C1:No state:3\n"}, {"behavior": "Sustained reversal", "cog_state": "C1", "color": "rgb(0.0,63.75,255.0)", "id": "C1:Sustained reversal", "label": "C1:Sustained reversal", "shape": "dot", "size": 0.0, "title": ""}, {"behavior": "Ventral turn", "cog_state": "C1", "color": "rgb(255.0,0.0,191.25)", "id": "C1:Ventral turn", "label": "C1:Ventral turn", "shape": "dot", "size": 0.0, "title": ""}, {"behavior": "Dorsal turn", "cog_state": "C2", "color": "rgb(255.0,0.0,0.0)", "id": "C2:Dorsal turn", "label": "C2:Dorsal turn", "shape": "dot", "size": 0.0, "title": ""}, {"behavior": "No state", "cog_state": "C2", "color": "rgb(127.5,255.0,0.0)", "id": "C2:No state", "label": "C2:No state", "shape": "dot", "size": 0.0, "title": ""}, {"behavior": "Reverse-2", "cog_state": "C2", "color": "rgb(0.0,255.0,255.0)", "id": "C2:Reverse-2", "label": "C2:Reverse-2", "shape": "dot", "size": 0.0, "title": ""}, {"behavior": "Forward", "cog_state": "C3", "color": "rgb(255.0,191.25,0.0)", "id": "C3:Forward", "label": "C3:Forward", "shape": "dot", "size": 0.0, "title": ""}, {"behavior": "No state", "cog_state": "C3", "color": "rgb(127.5,255.0,0.0)", "id": "C3:No state", "label": "C3:No state", "shape": "dot", "size": 2.8574404296987996, "title": "C3:No state:17\n"}, {"behavior": "Slowing", "cog_state": "C3", "color": "rgb(127.5,0.0,255.0)", "id": "C3:Slowing", "label": "C3:Slowing", "shape": "dot", "size": 0.0, "title": ""}]);
+                  edges = new vis.DataSet([{"arrows": "to", "from": "C1:Dorsal turn", "to": "C1:Forward", "width": 4.375}, {"arrows": "to", "from": "C1:Forward", "to": "C1:Slowing", "width": 10.0}, {"arrows": "to", "from": "C1:Reverse-1", "to": "C2:Reverse-1", "width": 1.25}, {"arrows": "to", "from": "C1:Reverse-2", "to": "C3:Reverse-2", "width": 7.500000000000001}, {"arrows": "to", "from": "C1:Reverse-2", "to": "C3:Sustained reversal", "width": 1.25}, {"arrows": "to", "from": "C1:Slowing", "to": "C1:Forward", "width": 1.8750000000000002}, {"arrows": "to", "from": "C1:Slowing", "to": "C1:Reverse-1", "width": 1.25}, {"arrows": "to", "from": "C1:Slowing", "to": "C1:Reverse-2", "width": 8.125000000000002}, {"arrows": "to", "from": "C2:Reverse-1", "to": "C2:Sustained reversal", "width": 1.8750000000000002}, {"arrows": "to", "from": "C2:Reverse-1", "to": "C3:Reverse-1", "width": 1.25}, {"arrows": "to", "from": "C2:Reverse-1", "to": "C3:Sustained reversal", "width": 5.0}, {"arrows": "to", "from": "C2:Sustained reversal", "to": "C3:Sustained reversal", "width": 2.5}, {"arrows": "to", "from": "C2:Slowing", "to": "C2:Reverse-1", "width": 5.625000000000001}, {"arrows": "to", "from": "C2:Ventral turn", "to": "C1:Forward", "width": 2.5}, {"arrows": "to", "from": "C2:Ventral turn", "to": "C2:Forward", "width": 1.25}, {"arrows": "to", "from": "C2:Ventral turn", "to": "C2:Slowing", "width": 6.250000000000001}, {"arrows": "to", "from": "C2:Ventral turn", "to": "C3:Ventral turn", "width": 1.25}, {"arrows": "to", "from": "C3:Dorsal turn", "to": "C1:Dorsal turn", "width": 5.0}, {"arrows": "to", "from": "C3:Reverse-2", "to": "C3:Sustained reversal", "width": 7.500000000000001}, {"arrows": "to", "from": "C3:Sustained reversal", "to": "C2:Ventral turn", "width": 1.8750000000000002}, {"arrows": "to", "from": "C3:Sustained reversal", "to": "C3:Dorsal turn", "width": 5.0}, {"arrows": "to", "from": "C3:Sustained reversal", "to": "C3:Ventral turn", "width": 8.75}, {"arrows": "to", "from": "C3:Ventral turn", "to": "C2:Ventral turn", "width": 10.0}]);
+
+                  nodeColors = {};
+                  allNodes = nodes.get({ returnType: "Object" });
+                  for (nodeId in allNodes) {
+                    nodeColors[nodeId] = allNodes[nodeId].color;
+                  }
+                  allEdges = edges.get({ returnType: "Object" });
+                  // adding nodes and edges to the graph
+                  data = {nodes: nodes, edges: edges};
+
+                  var options = {"edges": {"color": {"inherit": true}, "selfReferenceSize": null, "selfReference": {"angle": 0.8}, "smooth": {"forceDirection": "none"}}, "physics": {"minVelocity": 0.75}};
+
+                  
+
+
+                  
+
+                  network = new vis.Network(container, data, options);
+
+                  
+
+                  
+                    network.on("selectNode", neighbourhoodHighlight);
+                  
+
+                  
+
+
+                  
+
+                  return network;
+
+              }
+              drawGraph();
+        </script>
+    </body>
+</html>
