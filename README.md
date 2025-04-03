@@ -9,7 +9,7 @@ Cognitive graphs is an algorithm for learning cognitive-level causal models dire
 
 ## References
 
-- Preprint 2023 [Neuro-Cognitive Multilevel Causal Modeling: A Framework that Bridges the Explanatory Gap between Neuronal Activity and Cognition](https://www.biorxiv.org/content/early/2023/10/27/2023.10.27.564404) Moritz Grosse-Wentrup, Akshey Kumar, Anja Meunier, and Manuel Zimmer.
+- PLOS 2024 [Neuro-Cognitive Multilevel Causal Modeling: A Framework that Bridges the Explanatory Gap between Neuronal Activity and Cognition](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1012674) Moritz Grosse-Wentrup, Akshey Kumar, Anja Meunier, and Manuel Zimmer.
 
 - Preprint 2023 [BunDLe-Net: Neuronal Manifold Learning Meets Behaviour](https://www.biorxiv.org/content/early/2024/04/15/2023.08.08.551978) Akshey Kumar, Aditya Gilra, Mauricio Gonzalez-Soto, Anja Meunier, and Moritz Grosse-Wentrup.
 
