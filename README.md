@@ -14,6 +14,33 @@ Cognitive graphs is an algorithm for learning cognitive-level causal models dire
 - Preprint 2023 [BunDLe-Net: Neuronal Manifold Learning Meets Behaviour](https://www.biorxiv.org/content/early/2024/04/15/2023.08.08.551978) Akshey Kumar, Aditya Gilra, Mauricio Gonzalez-Soto, Anja Meunier, and Moritz Grosse-Wentrup.
 
 
+## Installation
+
+To set up your environment and install the NC-MCM repository, follow these steps:
+
+1. Navigate to your project repository and create a virtual environment using Python 3.10. You can use `venv` as follows:
+
+   ```sh
+   python3.10 -m venv .env
+   source .env/bin/activate
+   ```
+
+2. Upgrade `pip` within the virtual environment:
+
+   ```sh
+   python -m pip install --upgrade pip
+   ```
+
+3. Install the NC-MCM repository from your local path:
+
+   ```sh
+   python -m pip install <local path to ncmcm repo>
+   ```
+
+4. To get started, explore the Jupyter notebooks in `ncmcm/demos`. These notebooks cover all the necessary syntax and examples to help you begin.
+
+If you have any questions or issues, please feel free to reach out.
+
 <!---
 ## A toolbox to visualize neuronal imaging data and apply the NC-MCM framework to it
 
