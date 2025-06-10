@@ -6,6 +6,8 @@ from ncmcm.bundlenet.bundlenet import BunDLeNet, train_model, project_into_laten
 from ncmcm.bundlenet.utils import prep_data
 from ncmcm.visualisers.neuronal_behavioural import plotting_neuronal_behavioural
 from ncmcm.visualisers.latent_space import LatentSpaceVisualiser
+from sklearn.preprocessing import LabelEncoder
+
 
 # Load Data (excluding behavioural neurons) and plot
 worm_num = 0
@@ -28,6 +30,9 @@ B = data.behaviour
 
 plotting_neuronal_behavioural(X, B, b_names=data.behaviour_names)
 
+# Prepare data for BunDLe Net
+label_encoder = LabelEncoder()
+B = label_encoder.fit_transform(B)
 X_, B_ = prep_data(X, B, win=15)
 
 # Deploy BunDLe Net
