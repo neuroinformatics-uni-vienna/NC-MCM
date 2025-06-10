@@ -66,6 +66,16 @@ def plotting_neuronal_behavioural(
     axs[0].set_ylabel("Neuronal activation")
     cax0 = plt.colorbar(im0)
 
+    if isinstance(b_names, (list, np.ndarray)):
+        b_names = {i: str(name) for i, name in enumerate(b_names)}
+
+    if isinstance(s_names, (list, np.ndarray)):
+        s_names = {i: str(name) for i, name in enumerate(s_names)}
+
+    if isinstance(r_names, (list, np.ndarray)):
+        r_names = {i: str(name) for i, name in enumerate(r_names)}
+
+
     def discrete_plot(ax, b, b_names, y_label, cmap, alpha=1.0):
         colors = sns.color_palette(cmap, len(b_names))
         cmap = ListedColormap(colors)
