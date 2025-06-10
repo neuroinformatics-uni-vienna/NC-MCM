@@ -40,6 +40,11 @@ class LatentSpaceVisualiser:
         self.legend = legend
         self.colors = colors
 
+        if isinstance(self.b_names, (list, np.ndarray)):
+            self.b_names = {i: str(name) for i, name in enumerate(self.b_names)}
+        elif not isinstance(b_names, dict):
+            raise ValueError("`b_names` must be either a dictionary or a list or numpy array.")
+
         if self.colors is None:
             self.colors = sns.color_palette('deep', len(self.b_names))
 
