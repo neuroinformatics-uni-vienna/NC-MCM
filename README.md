@@ -3,9 +3,9 @@ NC-MCM is a toolbox for learning **N**euro-**C**ognitive **M**ultilevel **C**aus
 
 It includes BunDLe-Net, a neuronal manifold learning algorithm and cognitive graphs, an algorithm for learning cognitive-level causal models.
 
-BunDLe-Net (**B**ehavio**u**ral a**n**d **D**ynamics **Le**arning **Net**work) is a neuronal manifold learning algorithm that learns meaningful abstractions from time-series neuronal and behavioural data. It maps high-dimensional neuronal data to low-dimensional latent space while preserving both dynamical and behavioural information. In doing so, it enables visualisation of the neuronal data that may reveal useful insights. BunDLe-Net can be used for both discrete and continuous-valued behaviours as well as multiple behaviours.
+BunDLe-Net (**B**ehavio**u**ral a**n**d **D**ynamics **Le**arning **Net**work) is a neuronal manifold learning algorithm that learns meaningful abstractions from time-series brain activity and behavioural data. It maps high-dimensional brain activity to low-dimensional latent space while preserving both dynamical and behavioural information. In doing so, it enables visualisation of the brain activity that may reveal useful insights. BunDLe-Net can be used for both discrete and continuous-valued behaviours as well as multiple behaviours.
 
-Cognitive graphs is an algorithm for learning cognitive-level causal models directly from neuronal and behavioural data. The resulting cognitive-level model provides a concise representation of the neuronal manifold and its relation to behavior as a graph.
+Cognitive graphs is an algorithm for learning cognitive-level causal models directly from brain activity and behavioural data. The resulting cognitive-level model provides a concise representation of the neuronal manifold and its relation to behavior as a graph.
 
 ## References
 
