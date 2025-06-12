@@ -41,7 +41,7 @@ def test_project_into_latent_space_eval():
 
     model = BunDLeNet(latent_dim=latent_dim, num_behaviour=np.unique(B).shape[0], input_shape=X_.shape)
 
-    project_into_latent_space(X_, model)
+    project_into_latent_space(X_[:,0], model)
 
     assert not model.training
 
@@ -54,7 +54,7 @@ def test_project_into_latent_space_shape():
 
     model = BunDLeNet(latent_dim=latent_dim, num_behaviour=np.unique(B).shape[0], input_shape=X_.shape)
 
-    Y_ = project_into_latent_space(X_, model)
+    Y_ = project_into_latent_space(X_[:,0], model)
 
     assert_equal(Y_.shape, (X_.shape[0], latent_dim))
 

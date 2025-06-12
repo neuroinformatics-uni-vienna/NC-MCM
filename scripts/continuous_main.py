@@ -37,7 +37,7 @@ for i, label in enumerate([
 plt.legend()
 plt.show()
 
-y0_ = project_into_latent_space(x_, model)
+y0_ = project_into_latent_space(x_[:,0], model)
 
 fig = plt.figure(figsize=(8, 8))
 ax = plt.axes(projection='3d')

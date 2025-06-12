@@ -232,7 +232,7 @@ def train_model(x_train, b_train_1, model, b_type, gamma, learning_rate, n_epoch
 
     return train_history, test_history
 
-#
+
 # def project_into_latent_space(x_, model):
 #     """
 #     Inference using BunDLe Net
@@ -252,20 +252,20 @@ def train_model(x_train, b_train_1, model, b_type, gamma, learning_rate, n_epoch
 #     return y0_
 
 
-def project_into_latent_space(x_, model):
+def project_into_latent_space(x, model):
     """
     Inference using BunDLe Net
 
     Args:
-        x_ (np.array): Neuronal time-series data for model inference.
+        x (np.array): Neuronal time-series data for model inference.
         model: Instance of the BunDLeNet class.
     Returns:
         numpy.ndarray: Model predictions.
     """
     device = next(model.parameters()).device
-
     model.eval()
     with torch.no_grad():
-        y0_ = model.tau(torch.from_numpy(x_[:, 0]).float().to(device)).cpu().numpy()
+        x_tensor = torch.from_numpy(x).float().to(device)
+        y = model.tau(x_tensor).cpu().numpy()
 
-    return y0_
+    return y

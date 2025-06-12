@@ -56,7 +56,7 @@ for i, label in enumerate([
 plt.legend()
 plt.show()
 
-Y0_ = project_into_latent_space(X_, model)
+Y0_ = project_into_latent_space(X_[:, 0], model)
 
 # Save the weights
 save_model = False
