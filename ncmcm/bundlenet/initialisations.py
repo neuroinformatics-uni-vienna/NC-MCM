@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from sklearn.decomposition import PCA
 
 
-def pca_initialisation(X_, tau, latent_dim, device):
+def pca_initialisation(X_, tau, latent_dim, device, flag_file_save=False):
     """
     Initialises BunDLe Net's tau such that its output is the PCA of the input traces.
     PCA initialisation may make the embeddings more reproducible across runs.
@@ -25,6 +25,7 @@ def pca_initialisation(X_, tau, latent_dim, device):
         tau (object): BunDLe Net tau (tf sequential layer).
         latent_dim (int): Dimension of the latent space.
         device (torch.device): Device where the model should be run.
+        flag_file_save (bool): Whether to save the weights as a file or not.
 
     """
     # Performing PCA on the time slice
@@ -65,13 +66,16 @@ def pca_initialisation(X_, tau, latent_dim, device):
             loss.backward()
             opt.step()
 
-    # Saving weights of this model
-    unique_id = str(uuid.uuid4())
-    os.makedirs(f"temp/{unique_id}/", exist_ok=True)
-    weights_filepath = f"temp/{unique_id}/tau_pca.weights.pt"
-    torch.save(pcaencoder.encoder.state_dict(), weights_filepath)
+    if flag_file_save: 
+        # Saving weights of this model
+        unique_id = str(uuid.uuid4())
+        os.makedirs(f"temp/{unique_id}/", exist_ok=True)
+        weights_filepath = f"temp/{unique_id}/tau_pca.weights.pt"
+        torch.save(pcaencoder.encoder.state_dict(), weights_filepath)
+        return weights_filepath
+    else:
+        return pcaencoder.encoder
 
-    return weights_filepath
 
 def best_of_5_runs(x_train, b_train_1, model, b_type, gamma, learning_rate, validation_data, device):
     """
