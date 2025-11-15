@@ -1,6 +1,7 @@
 """
 @authors:
 Akshey Kumar
+Kerim Atak (small modification to allow plotting only neuronal data without behaviour)
 """
 
 import matplotlib.pyplot as plt
@@ -59,7 +60,8 @@ def plotting_neuronal_behavioural(
     ```
     """
     num_plots = 1 + sum([1 if x is not None else 0 for x in [b, s, r]])
-    fig, axs = plt.subplots(num_plots, 1, figsize=(12, num_plots * 2))
+    fig, axs = plt.subplots(num_plots, 1, figsize=(12, num_plots * 2), squeeze=False)
+    axs = axs.flatten()  # Convert to 1D array for consistent indexing
     im0 = axs[0].imshow(x.T, aspect='auto', interpolation='None', **kwargs)
     # tell the colorbar to tick at integers
     axs[0].set_xlabel("time $t$")
