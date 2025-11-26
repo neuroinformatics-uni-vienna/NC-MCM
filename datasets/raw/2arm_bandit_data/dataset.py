@@ -11,16 +11,16 @@ from scipy import sparse
 import warnings
 
 class BanditTaskNeuroPixelsDataset:
-    def __init__(self, data_path, resample_fs=None):
+    def __init__(self, data_path, downsample_num_samples=None):
         """
         Initialize dataset with flexible spike representation options.
 
         Args:
             data_path: Path to the dataset directory
-            resample_fs: If provided, resample the data to this sampling frequency (Hz).
+            downsample_num_samples: If provided, downsample the data to this number of samples.
         """
         self.data_path = data_path
-        self.resample_fs = resample_fs
+        self.downsample_num_samples = downsample_num_samples
         self.x = None  # neuronal time-series data
         self.b = None  # behavioral time-series data
         self.b_labels_dict = None # behavioral lables as dict
@@ -54,65 +54,65 @@ class BanditTaskNeuroPixelsDataset:
         self.x = self._create_sparse_neuronal_data_matrix(spike_times, spike_clusters, cluster_info)
         
         # Create behavioral data
-        self.b, self.b_labels_dict = self._create_behavioral_data_matrix(metrics) 
-            
-        # Resample data if requested
-        if self.resample_fs is not None:
-            print(f"Resampling from {self.fs:.2f} Hz to {self.resample_fs:.2f} Hz")
-            self.x = self._resample_spike_data(self.x, self.fs, self.resample_fs)
-            self.fs = self.resample_fs  # Update sampling frequency
+        self.b, self.b_labels_dict = self._create_behavioral_data_matrix(metrics)
+
+        # Downsample data if requested
+        if self.downsample_num_samples is not None:
+            original_samples = self.x.shape[1]
+            print(f"Downsampling from {original_samples} samples to {self.downsample_num_samples} samples")
+            self.x = self._downsample_spike_data(self.x, self.downsample_num_samples)
+            # Update sampling frequency based on new number of samples
+            self.fs = self.fs * (self.downsample_num_samples / original_samples)
                  
-    def _resample_spike_data(self, spike_matrix, original_fs, target_fs):
+    def _downsample_spike_data(self, spike_matrix, target_num_samples):
         """
-        Resample spike data while maintaining binary rasterization.
+        Downsample spike data to a specific number of samples while maintaining binary rasterization.
         If any spike occurs in a time bin, mark the bin as 1.
-        
+
         Args:
             spike_matrix: scipy.sparse.csr_matrix or np.ndarray (n_neurons, n_timepoints)
-            original_fs: original sampling frequency in Hz
-            target_fs: target sampling frequency in Hz
-        
+            target_num_samples: target number of samples after downsampling
+
         Returns:
-            Resampled spike matrix with same type as input
+            Downsampled spike matrix with same type as input
         """
-        if target_fs >= original_fs:
-            raise ValueError("Target sampling rate must be lower than original sampling rate for downsampling")
-        
-        # Calculate bin size (how many original samples per new sample)
-        bin_size = int(np.round(original_fs / target_fs))
-        
         n_neurons, n_samples = spike_matrix.shape
-        n_resampled = n_samples // bin_size
-        
-        resampled = self._resample_sparse(spike_matrix, bin_size, n_neurons, n_resampled)
 
-        return resampled
+        if target_num_samples >= n_samples:
+            raise ValueError(f"Target number of samples ({target_num_samples}) must be lower than original number of samples ({n_samples}) for downsampling")
 
-    def _resample_sparse(self, spike_matrix, bin_size, n_neurons, n_resampled):
-        """Resample sparse spike matrix efficiently"""
+        # Calculate bin size (how many original samples per new sample)
+        bin_size = n_samples / target_num_samples
+
+        downsampled = self._downsample_sparse(spike_matrix, bin_size, n_neurons, target_num_samples)
+
+        return downsampled
+
+    def _downsample_sparse(self, spike_matrix, bin_size, n_neurons, n_downsampled):
+        """Downsample sparse spike matrix efficiently"""
         # Convert to COO format for easier manipulation
         coo = spike_matrix.tocoo() # Get row (neuron) and col (time) indices
-        
+
         # Bin the time indices
-        new_time_indices = coo.col // bin_size # Map original time indices to new binned indices
-        
+        new_time_indices = (coo.col / bin_size).astype(int) # Map original time indices to new binned indices
+
         # Keep only valid bins
-        valid_mask = new_time_indices < n_resampled 
-        neuron_indices = coo.row[valid_mask] 
-        new_time_indices = new_time_indices[valid_mask] 
-        
+        valid_mask = new_time_indices < n_downsampled
+        neuron_indices = coo.row[valid_mask]
+        new_time_indices = new_time_indices[valid_mask]
+
         # Create binary matrix (OR operation: if spike in bin, mark as 1)
         # Remove duplicates by converting to set of (neuron, time) tuples
         unique_spikes = np.unique(np.column_stack([neuron_indices, new_time_indices]), axis=0) # Get unique spikes
-        
+
         data = np.ones(len(unique_spikes), dtype=np.uint8) # Use uint8 to save memory
-        resampled = sparse.csr_matrix(
+        downsampled = sparse.csr_matrix(
             (data, (unique_spikes[:, 0], unique_spikes[:, 1])),
-            shape=(n_neurons, n_resampled),
+            shape=(n_neurons, n_downsampled),
             dtype=np.uint8
         )
-        
-        return resampled
+
+        return downsampled
 
     def _create_sparse_neuronal_data_matrix(self, spike_times, spike_clusters, cluster_info):
         """
