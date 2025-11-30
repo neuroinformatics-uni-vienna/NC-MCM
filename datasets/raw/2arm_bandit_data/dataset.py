@@ -8,7 +8,6 @@ import pandas as pd
 import os
 import numpy as np
 from scipy import sparse
-import warnings
 
 class BanditTaskNeuroPixelsDataset:
     def __init__(self, data_path, downsample_num_samples=None):
@@ -56,7 +55,7 @@ class BanditTaskNeuroPixelsDataset:
         # Create neuronal data representation based on chosen method
         self.x = self._create_sparse_neuronal_data_matrix(spike_times_in_neuronal_time, spike_clusters, cluster_info)
 
-        # Downsample data if requested
+        # Downsample neuronal data if requested
         if self.downsample_num_samples is not None:
             original_samples = self.x.shape[1]
             self.x = self._downsample_spike_data(self.x, self.downsample_num_samples)
@@ -231,24 +230,58 @@ class BanditTaskNeuroPixelsDataset:
             if state_name not in unique_state_names:
                 unique_state_names.append(state_name)
 
+        # Handle "choosing" state specially - split into "choosing left" and "choosing right"
+        if "choosing" in unique_state_names:
+            unique_state_names.remove("choosing")
+            unique_state_names.append("choosing left")
+            unique_state_names.append("choosing right")
+
         state_name_to_id = {name: idx for idx, name in enumerate(unique_state_names)}
         state_labels = {idx: name for name, idx in state_name_to_id.items()}
 
         # Initialize state array in behavioral time (milliseconds)
         state_array_ms = np.zeros(last_timestamp_ms + 1, dtype=np.int8)
 
+        # Create a mapping from trial start time to choice (l or r)
+        trial_choice_map = {}
+        for trial in trials:
+            start_time = trial.get('start')
+            choice = trial.get('choice', '').lower()
+            if start_time is not None:
+                trial_choice_map[start_time] = choice
+
         # Apply states from metrics.json to behavioral time array
         for i in range(len(states)):
             state_time = states[i][0]
             state_name = states[i][1]
-            state_id = state_name_to_id[state_name]
-
+            
             # Find end time (next state or end of recording)
             if i < len(states) - 1:
                 next_state_time = states[i + 1][0]
             else:
                 next_state_time = last_timestamp_ms + 1
 
+            # Handle "choosing" state: determine if left or right based on trial choice
+            if state_name == "choosing":
+                # Find the trial that contains this state time
+                trial_choice = None
+                for trial in trials:
+                    trial_start = trial.get('start')
+                    trial_end = trial.get('t chosen')
+                    if trial_start is not None and trial_end is not None:
+                        if trial_start <= state_time < trial_end:
+                            trial_choice = trial.get('choice', '').lower()
+                            break
+                
+                # Determine state name based on choice
+                if trial_choice == 'r':
+                    state_name = "choosing right"
+                elif trial_choice == 'l':
+                    state_name = "choosing left"
+                else:
+                    state_name = "choosing left"  # Default fallback
+
+            state_id = state_name_to_id[state_name]
             state_array_ms[state_time:next_state_time] = state_id
 
         # Map neuronal time to behavioral states using translation indices
@@ -260,7 +293,6 @@ class BanditTaskNeuroPixelsDataset:
             # Ensure we don't go out of bounds
             behavioral_ms = min(behavioral_ms, last_timestamp_ms)
             state_array_neuronal[neuronal_idx] = state_array_ms[behavioral_ms]
-
 
         return state_array_neuronal, state_labels
         
