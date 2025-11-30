@@ -10,23 +10,36 @@ import numpy as np
 from scipy import sparse
 
 class BanditTaskNeuroPixelsDataset:
-    def __init__(self, data_path, downsample_num_samples=None):
+    def __init__(self, data_path, downsample_fs=None):
         """
         Initialize dataset with flexible spike representation options.
 
         Args:
             data_path: Path to the dataset directory
-            downsample_num_samples: If provided, downsample the data to this number of samples.
+            downsample_fs: If provided, downsample the data to this sampling frequency (Hz).
+            
+        Attributes after loading:
+            x: Neuronal time-series data (scipy.sparse.csr_matrix) of shape (num_neurons, num_timepoints). Do .toarray() to convert to dense.
+            b: Behavioral time-series data (scipy.sparse.csr_matrix) of shape (num_behaviors, num_timepoints). Do .toarray() to convert to dense.
+            b_labels_dict: Behavioral labels as a dictionary
+            fs: Sampling frequency
+        
         """
         self.data_path = data_path
-        self.downsample_num_samples = downsample_num_samples
-        self.x = None  # neuronal time-series data
-        self.b = None  # behavioral time-series data
+        self.downsample_fs = downsample_fs
+        self.x = None  # neuronal time-series data (scipy.sparse.csr_matrix)
+        self.b = None  # behavioral time-series data (scipy.sparse.csr_matrix)
         self.b_labels_dict = None # behavioral lables as dict
+        self.b_labels = None # behavioral labels as list
         self.fs = None  # sampling frequency
         
-        # load data
+        # load data and assign to attributes
         self.load_data()
+        
+        # Print information about the loaded dataset
+        print(f"Loaded BanditTaskNeuroPixelsDataset from {data_path}")
+        print(f"Neuronal data shape: {self.x.shape}, Behavioral data shape: {self.b.shape}, Sampling frequency: {self.fs} Hz")
+        print(f"Behavioral labels: {self.b_labels_dict}")
         
 
     def load_data(self):
@@ -56,16 +69,18 @@ class BanditTaskNeuroPixelsDataset:
         self.x = self._create_sparse_neuronal_data_matrix(spike_times_in_neuronal_time, spike_clusters, cluster_info)
 
         # Downsample neuronal data if requested
-        if self.downsample_num_samples is not None:
+        if self.downsample_fs is not None:
             original_samples = self.x.shape[1]
-            self.x = self._downsample_spike_data(self.x, self.downsample_num_samples)
-            # Update sampling frequency based on new number of samples
-            self.fs = self.fs * (self.downsample_num_samples / original_samples)
+            # Calculate target number of samples based on desired sampling frequency
+            target_num_samples = int(original_samples * self.downsample_fs / self.fs)
+            self.x = self._downsample_spike_data(self.x, target_num_samples)
+            # Update sampling frequency to the new target
+            self.fs = self.downsample_fs
             # Downsample translation indices to match downsampled neuronal data
             translation_indices_neuronal_to_behavioral = self._downsample_translation_indices(
-                translation_indices_neuronal_to_behavioral, self.downsample_num_samples
+                translation_indices_neuronal_to_behavioral, target_num_samples
             )
-            neuronal_length = self.downsample_num_samples
+            neuronal_length = target_num_samples
         else:
             neuronal_length = max_spike_times_in_neuronal_time + 1
 
@@ -76,30 +91,42 @@ class BanditTaskNeuroPixelsDataset:
         self._trim_waiting_periods(self.x, self.b, self.b_labels_dict)
         self._relabel_behavioral_states()
         
+        # Final check to ensure lengths match
+        assert self.x.shape[1] == self.b.shape[1], "Final neuronal and behavioral data length mismatch after processing."
+        
+        # Sort behavioral labels by their state id (dict keys) and store as list
+        self.b_labels = [self.b_labels_dict[k] for k in sorted(self.b_labels_dict.keys())]
+        
     def _relabel_behavioral_states(self):        
         # relabel states to start from 0 in case some states are missing
-        unique_states = np.unique(self.b)
+        b_dense = self.b.toarray().flatten()
+        unique_states = np.unique(b_dense)
         state_mapping = {old_label: new_label for new_label, old_label in enumerate(unique_states)}
 
         # Apply the mapping to state_array_neuronal
-        relabeled_state_array = np.zeros_like(self.b)
+        relabeled_state_array = np.zeros_like(b_dense)
         for old_label, new_label in state_mapping.items():
-            relabeled_state_array[self.b == old_label] = new_label
+            relabeled_state_array[b_dense == old_label] = new_label
 
         # Update state_labels to reflect the new labeling
         relabeled_state_labels = {new_label: self.b_labels_dict[old_label] for old_label, new_label in state_mapping.items()}
 
-        self.b = relabeled_state_array
+        self.b = sparse.csr_matrix(relabeled_state_array, shape=(1, len(relabeled_state_array)))
         self.b_labels_dict = relabeled_state_labels
 
     def _trim_waiting_periods(self, x, b, b_labels_dict):
         waiting_state_id = next((k for k, v in b_labels_dict.items() if v == 'waiting'), None)
+        
+        # Extract dense array from sparse matrix for comparison
+        b_dense = b.toarray().flatten()
+        
         # from the start to the first non-waiting state
-        first_non_waiting_idx = np.argmax(b != waiting_state_id)
+        first_non_waiting_idx = np.argmax(b_dense != waiting_state_id)
         # last non-waiting state to the end
-        last_non_waiting_idx = len(b) - np.argmax(b[::-1] != waiting_state_id)
+        last_non_waiting_idx = len(b_dense) - np.argmax(b_dense[::-1] != waiting_state_id)
+        
         self.x = x[:, first_non_waiting_idx:last_non_waiting_idx]
-        self.b = b[first_non_waiting_idx:last_non_waiting_idx]
+        self.b = b[:, first_non_waiting_idx:last_non_waiting_idx]
 
     def _downsample_translation_indices(self, translation_indices, target_num_samples):
         """
@@ -294,7 +321,10 @@ class BanditTaskNeuroPixelsDataset:
             behavioral_ms = min(behavioral_ms, last_timestamp_ms)
             state_array_neuronal[neuronal_idx] = state_array_ms[behavioral_ms]
 
-        return state_array_neuronal, state_labels
+        # Convert to sparse matrix (1, neuronal_length) for consistency with x
+        state_array_sparse = sparse.csr_matrix(state_array_neuronal, shape=(1, neuronal_length))
+
+        return state_array_sparse, state_labels
         
     def _load_cluster_info(self, data_path):
         """Load cluster information and filter for good neurons"""
