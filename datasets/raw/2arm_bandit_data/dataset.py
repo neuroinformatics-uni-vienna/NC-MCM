@@ -31,8 +31,6 @@ class BanditTaskNeuroPixelsDataset:
         
 
     def load_data(self):
-        print(f"Loading data from {self.data_path}")
-
         # Load parameters
         with open(os.path.join(self.data_path, "params.py"), "r") as f:
             params_content = f.read()
@@ -40,8 +38,13 @@ class BanditTaskNeuroPixelsDataset:
         
         # Load spike data
         cluster_info = self._load_cluster_info(self.data_path)
-        spike_times = np.load(os.path.join(self.data_path, "spike_times.npy"))
+        spike_times_in_neuronal_time = np.load(os.path.join(self.data_path, "spike_times.npy"))
+        max_spike_times_in_neuronal_time = spike_times_in_neuronal_time.max()
         spike_clusters = np.load(os.path.join(self.data_path, "spike_clusters.npy"))
+        spike_times_in_behavioral_time = np.load(os.path.join(self.data_path, "spike_times_milliseconds_sync_to_behav.npy")) # in ms
+        translation_indices_neuronal_to_behavioral = np.interp(np.arange(max_spike_times_in_neuronal_time + 1),
+                                                               spike_times_in_neuronal_time,
+                                                               spike_times_in_behavioral_time)
         
         # Load behavioral data
         with open(os.path.join(self.data_path, "metrics.json"), "r") as metrics_file:
@@ -49,21 +52,79 @@ class BanditTaskNeuroPixelsDataset:
 
         # Saving sampling frequency
         self.fs = sample_rate
-        
+
         # Create neuronal data representation based on chosen method
-        self.x = self._create_sparse_neuronal_data_matrix(spike_times, spike_clusters, cluster_info)
-        
-        # Create behavioral data
-        self.b, self.b_labels_dict = self._create_behavioral_data_matrix(metrics)
+        self.x = self._create_sparse_neuronal_data_matrix(spike_times_in_neuronal_time, spike_clusters, cluster_info)
 
         # Downsample data if requested
         if self.downsample_num_samples is not None:
             original_samples = self.x.shape[1]
-            print(f"Downsampling from {original_samples} samples to {self.downsample_num_samples} samples")
             self.x = self._downsample_spike_data(self.x, self.downsample_num_samples)
             # Update sampling frequency based on new number of samples
             self.fs = self.fs * (self.downsample_num_samples / original_samples)
-                 
+            # Downsample translation indices to match downsampled neuronal data
+            translation_indices_neuronal_to_behavioral = self._downsample_translation_indices(
+                translation_indices_neuronal_to_behavioral, self.downsample_num_samples
+            )
+            neuronal_length = self.downsample_num_samples
+        else:
+            neuronal_length = max_spike_times_in_neuronal_time + 1
+
+        # Create behavioral data
+        self.b, self.b_labels_dict = self._create_behavioral_data_matrix(metrics, neuronal_length, translation_indices_neuronal_to_behavioral)
+        
+        # Post processing: Trim waiting periods from start and end
+        self._trim_waiting_periods(self.x, self.b, self.b_labels_dict)
+        self._relabel_behavioral_states()
+        
+    def _relabel_behavioral_states(self):        
+        # relabel states to start from 0 in case some states are missing
+        unique_states = np.unique(self.b)
+        state_mapping = {old_label: new_label for new_label, old_label in enumerate(unique_states)}
+
+        # Apply the mapping to state_array_neuronal
+        relabeled_state_array = np.zeros_like(self.b)
+        for old_label, new_label in state_mapping.items():
+            relabeled_state_array[self.b == old_label] = new_label
+
+        # Update state_labels to reflect the new labeling
+        relabeled_state_labels = {new_label: self.b_labels_dict[old_label] for old_label, new_label in state_mapping.items()}
+
+        self.b = relabeled_state_array
+        self.b_labels_dict = relabeled_state_labels
+
+    def _trim_waiting_periods(self, x, b, b_labels_dict):
+        waiting_state_id = next((k for k, v in b_labels_dict.items() if v == 'waiting'), None)
+        # from the start to the first non-waiting state
+        first_non_waiting_idx = np.argmax(b != waiting_state_id)
+        # last non-waiting state to the end
+        last_non_waiting_idx = len(b) - np.argmax(b[::-1] != waiting_state_id)
+        self.x = x[:, first_non_waiting_idx:last_non_waiting_idx]
+        self.b = b[first_non_waiting_idx:last_non_waiting_idx]
+
+    def _downsample_translation_indices(self, translation_indices, target_num_samples):
+        """
+        Downsample translation indices to match downsampled neuronal data.
+        Samples at the center of each bin.
+
+        Args:
+            translation_indices: array mapping neuronal time to behavioral time
+            target_num_samples: target number of samples after downsampling
+
+        Returns:
+            Downsampled translation indices array
+        """
+        original_samples = len(translation_indices)
+        bin_size = original_samples / target_num_samples
+
+        # Sample at the center of each bin
+        sample_indices = np.array([int((i + 0.5) * bin_size) for i in range(target_num_samples)])
+
+        # Ensure indices are within bounds
+        sample_indices = np.clip(sample_indices, 0, original_samples - 1)
+
+        return translation_indices[sample_indices]
+
     def _downsample_spike_data(self, spike_matrix, target_num_samples):
         """
         Downsample spike data to a specific number of samples while maintaining binary rasterization.
@@ -122,9 +183,7 @@ class BanditTaskNeuroPixelsDataset:
         """
         n_neurons = len(cluster_info)
         max_time = int(np.max(spike_times)) + 1
-        
-        print(f"Creating sparse matrix: {n_neurons} neurons x {max_time} time points")
-        
+                
         # Prepare data for sparse matrix construction
         neuron_indices = []
         time_indices = []
@@ -146,67 +205,65 @@ class BanditTaskNeuroPixelsDataset:
         
         return sparse_matrix
 
-    def _create_behavioral_data_matrix(self, metrics):
+    def _create_behavioral_data_matrix(self, metrics, neuronal_length, translation_indices_neuronal_to_behavioral):
         """
-        Create a behavioral state array for the entire experiment.
+        Create a behavioral state array aligned with neuronal data.
+        Uses translation_indices_neuronal_to_behavioral to map each neuronal time index to behavioral time.
+        The num of samples in the behavioral data will exactly match the num of samples in the neuronal data.
+
+        Args:
+            metrics: behavioral metrics from JSON
+            neuronal_length: number of samples in neuronal data (potentially downsampled)
+            translation_indices_neuronal_to_behavioral: mapping from neuronal time to behavioral time (potentially downsampled)
         """
         trials = metrics['metrics']['trials']
         states = metrics['metrics']['states']
-        
-        # Find the last timestamp in the data
+
+        # Find the last timestamp in behavioral time (ms)
         max_trial_time = max([t.get('t chosen', 0) for t in trials if 't chosen' in t], default=0)
         max_state_time = max([s[0] for s in states], default=0)
-        last_timestamp = max(max_trial_time, max_state_time)
-        
+        last_timestamp_ms = int(max(max_trial_time, max_state_time))
+
         # Build state_labels dictionary from unique state names in JSON
         unique_state_names = []
         for state in states:
             state_name = state[1]
             if state_name not in unique_state_names:
                 unique_state_names.append(state_name)
-        
+
         state_name_to_id = {name: idx for idx, name in enumerate(unique_state_names)}
         state_labels = {idx: name for name, idx in state_name_to_id.items()}
-        
-        # Initialize array
-        state_array = np.zeros(last_timestamp + 1, dtype=np.int8)
-        
-        # Apply states from metrics.json
+
+        # Initialize state array in behavioral time (milliseconds)
+        state_array_ms = np.zeros(last_timestamp_ms + 1, dtype=np.int8)
+
+        # Apply states from metrics.json to behavioral time array
         for i in range(len(states)):
             state_time = states[i][0]
             state_name = states[i][1]
             state_id = state_name_to_id[state_name]
-            
+
             # Find end time (next state or end of recording)
             if i < len(states) - 1:
                 next_state_time = states[i + 1][0]
             else:
-                next_state_time = last_timestamp + 1
-            
-            state_array[state_time:next_state_time] = state_id
-        
-        # cut the initial and last "delay" and "waiting" periods if they exist
-        waiting_state_id = state_name_to_id.get('waiting', None)
-        delay_state_id = state_name_to_id.get('delay', None)
-        if waiting_state_id is None:
-            raise ValueError("No 'waiting' state found in the states data.")
-        if delay_state_id is None:
-            raise ValueError("No 'delay' state found in the states data.")
-        # Find first non-waiting and non-delay state
-        first_experiment_idx = np.argmax((state_array != waiting_state_id) & (state_array != delay_state_id))
-        # Find last non-waiting and non-delay state
-        last_experiment_idx = np.argmax((state_array[::-1] != waiting_state_id) & (state_array[::-1] != delay_state_id))
-        
-        state_array = state_array[first_experiment_idx:len(state_array)-last_experiment_idx]
-        
-        # assert that state_array does not contain waiting or delay states anymore
-        assert not np.any((state_array == waiting_state_id) | (state_array == delay_state_id)), "State array still contains 'waiting' or 'delay' states after trimming."
-        
-        # remove states from state_labels and readapt the labels numbering starting from 1
-        # TODO: re-numbering the states in state_array and state_labels accordingly
-        
-        return state_array, state_labels
+                next_state_time = last_timestamp_ms + 1
 
+            state_array_ms[state_time:next_state_time] = state_id
+
+        # Map neuronal time to behavioral states using translation indices
+        # For each neuronal time index, look up the corresponding behavioral time and get the state
+        state_array_neuronal = np.zeros(neuronal_length, dtype=np.int8)
+
+        for neuronal_idx in range(neuronal_length):
+            behavioral_ms = int(translation_indices_neuronal_to_behavioral[neuronal_idx])
+            # Ensure we don't go out of bounds
+            behavioral_ms = min(behavioral_ms, last_timestamp_ms)
+            state_array_neuronal[neuronal_idx] = state_array_ms[behavioral_ms]
+
+
+        return state_array_neuronal, state_labels
+        
     def _load_cluster_info(self, data_path):
         """Load cluster information and filter for good neurons"""
         cluster_info = pd.read_csv(os.path.join(data_path, "cluster_info.tsv"), sep="\t")
