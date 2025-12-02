@@ -143,7 +143,7 @@ def train_bundlenet(x_train, b_train, x_test, b_test, x_shape, args, output_dir)
     device = torch.device(args.device)
     print(f"Training on {device} for {args.n_epochs} epochs...")
     
-    loss_array, _ = train_model(
+    loss_array, test_loss_array = train_model(
         x_train,
         b_train,
         model,
@@ -161,16 +161,17 @@ def train_bundlenet(x_train, b_train, x_test, b_test, x_shape, args, output_dir)
     torch.save(model.state_dict(), model_path)
     print(f"Model saved to {model_path}")
     
-    # Save loss array
+    # Save loss arrays
     np.save(output_dir / 'data' / 'loss_array.npy', loss_array)
+    np.save(output_dir / 'data' / 'test_loss_array.npy', test_loss_array)
     
-    return model, loss_array
+    return model, loss_array, test_loss_array
 
 
-def plot_training_loss(loss_array, output_dir):
-    """Plot and save training loss curves"""
+def plot_training_loss(loss_array, test_loss_array, output_dir):
+    """Plot and save training and validation loss curves"""
     print("Plotting training loss...")
-    plt.figure(figsize=(10, 6))
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
     
     labels = [
         r"$\mathcal{L}_{\mathrm{Markov}}$",
@@ -178,15 +179,16 @@ def plot_training_loss(loss_array, output_dir):
         r"Total loss $\mathcal{L}$"
     ]
     
-    for i, label in enumerate(labels):
-        plt.semilogy(loss_array[:, i], label=label)
+    for i, (ax, label) in enumerate(zip(axes, labels)):
+        ax.semilogy(loss_array[:, i], label='Train', linewidth=2)
+        ax.semilogy(test_loss_array[:, i], label='Test', linewidth=2, linestyle='--')
+        ax.set_xlabel('Epoch')
+        ax.set_ylabel('Loss')
+        ax.set_title(label)
+        ax.legend()
+        ax.grid(True, alpha=0.3)
     
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.legend()
-    plt.title('Training Loss vs Epochs')
-    plt.grid(True, alpha=0.3)
-    
+    plt.tight_layout()
     plot_path = output_dir / 'figures' / 'training_loss.png'
     plt.savefig(plot_path, dpi=300, bbox_inches='tight')
     plt.close()
@@ -381,14 +383,14 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
     
     # Train model
     step_start = time.time()
-    model, loss_array = train_bundlenet(
+    model, loss_array, test_loss_array = train_bundlenet(
         x_train, b_train, x_test, b_test, x_.shape, args, output_dir
     )
     print_step_time("Model training", run_start_time, step_start)
     
     # Plot training loss
     step_start = time.time()
-    plot_training_loss(loss_array, output_dir)
+    plot_training_loss(loss_array, test_loss_array, output_dir)
     print_step_time("Training loss plotting", run_start_time, step_start)
     
     # Project into latent space
