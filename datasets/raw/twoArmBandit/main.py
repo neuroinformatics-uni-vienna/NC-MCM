@@ -26,26 +26,24 @@ def parse_args():
     parser.add_argument('--data_path', type=str, 
                         default='/home/kerim/Projects/Neural Algorithms/NC-MCM/datasets/raw/twoArmBandit/JPAS_0023_20230922',
                         help='Path to dataset directory')
-    parser.add_argument('--downsample_fs', type=int, nargs='+', default=[50],
+    parser.add_argument('--downsample_fs', type=int, nargs='+', default=[25],
                         help='Downsampling frequency (can specify multiple values for grid search)')
-    parser.add_argument('--window', type=int, nargs='+', default=[1],
-                        help='Window length for time delay embedding (can specify multiple values)')
+    parser.add_argument('--window', type=int, nargs='+', default=[20],
+                        help='Window length for time delay embedding (can specify multiple values for grid search)')
     
     # Model parameters
     parser.add_argument('--latent_dim', type=int, nargs='+', default=[3],
-                        help='Dimensionality of latent space (can specify multiple values)')
-    parser.add_argument('--num_behaviour', type=int, default=6,
-                        help='Number of behavior states')
+                        help='Dimensionality of latent space (can specify multiple values for grid search)')
     
     # Training parameters
     parser.add_argument('--batch_size', type=int, nargs='+', default=[100],
-                        help='Batch size for training (can specify multiple values)')
+                        help='Batch size for training (can specify multiple values for grid search)')
     parser.add_argument('--n_epochs', type=int, default=500,
                         help='Number of training epochs')
     parser.add_argument('--learning_rate', type=float, nargs='+', default=[0.001],
-                        help='Learning rate (can specify multiple values)')
+                        help='Learning rate (can specify multiple values for grid search)')
     parser.add_argument('--gamma', type=float, nargs='+', default=[0.9],
-                        help='Weight for behavior loss (can specify multiple values)')
+                        help='Weight for behavior loss (can specify multiple values for grid search)')
     parser.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu',
                         choices=['cpu', 'cuda'],
                         help='Device to use for training')
@@ -59,7 +57,7 @@ def parse_args():
     
     # Output parameters
     parser.add_argument('--output_dir', type=str, 
-                        default='/home/kerim/Projects/Neural Algorithms/NC-MCM/datasets/raw/twoArmBandit/results',
+                        default='./results',
                         help='Base directory for output')
     
     return parser.parse_args()
@@ -133,9 +131,12 @@ def preprocess_data(x, b, window):
 def train_bundlenet(x_train, b_train, x_test, b_test, x_shape, args, output_dir):
     """Train BunDLeNet model"""
     print("Initializing BunDLeNet model...")
+    
+    num_behaviour = len(np.unique(b_train)) # Assuming discrete behavior
+    
     model = BunDLeNet(
         latent_dim=args.latent_dim,
-        num_behaviour=args.num_behaviour,
+        num_behaviour=num_behaviour,
         input_shape=x_shape
     )
     
@@ -232,10 +233,11 @@ def visualize_latent_space(y, b, b_labels, output_dir, vis_range):
     y_vis = y[start:end]
     b_vis = b[start:end]
     
-    # Save latent trajectories
+    # Save latent trajectories and behavior labels
     np.save(output_dir / 'data' / 'latent_trajectories.npy', y)
+    np.save(output_dir / 'data' / 'behavior_labels.npy', b)
     
-    vis = LatentSpaceVisualiser(y_vis, b_vis, b_labels)
+    vis = LatentSpaceVisualiser(y_vis, b_vis, b_labels, show_points=True)
     
     # Time series plot
     print("  - Latent time series...")
