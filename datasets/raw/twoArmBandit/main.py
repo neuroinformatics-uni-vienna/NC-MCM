@@ -1,0 +1,321 @@
+import torch
+import numpy as np
+import os
+import argparse
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend
+import matplotlib.pyplot as plt
+from datetime import datetime
+import json
+from pathlib import Path
+
+from dataset import BanditTaskNeuroPixelsDataset
+from ncmcm.bundlenet.bundlenet import BunDLeNet, train_model, project_into_latent_space
+from ncmcm.bundlenet.utils import prep_data, timeseries_train_test_split
+from ncmcm.visualisers.neuronal_behavioural import plotting_neuronal_behavioural
+from ncmcm.visualisers.latent_space import LatentSpaceVisualiser
+from sklearn.preprocessing import LabelEncoder
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='Train BunDLeNet on 2-arm bandit task data')
+    
+    # Data parameters
+    parser.add_argument('--data_path', type=str, 
+                        default='/home/kerim/Projects/Neural Algorithms/NC-MCM/datasets/raw/twoArmBandit/JPAS_0023_20230922',
+                        help='Path to dataset directory')
+    parser.add_argument('--downsample_fs', type=int, default=50,
+                        help='Downsampling frequency')
+    parser.add_argument('--window', type=int, default=1,
+                        help='Window length for time delay embedding')
+    
+    # Model parameters
+    parser.add_argument('--latent_dim', type=int, default=3,
+                        help='Dimensionality of latent space')
+    parser.add_argument('--num_behaviour', type=int, default=6,
+                        help='Number of behavior states')
+    
+    # Training parameters
+    parser.add_argument('--batch_size', type=int, default=100,
+                        help='Batch size for training')
+    parser.add_argument('--n_epochs', type=int, default=500,
+                        help='Number of training epochs')
+    parser.add_argument('--learning_rate', type=float, default=0.001,
+                        help='Learning rate')
+    parser.add_argument('--gamma', type=float, default=0.9,
+                        help='Weight for behavior loss')
+    parser.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu',
+                        choices=['cpu', 'cuda'],
+                        help='Device to use for training')
+    
+    # Visualization parameters
+    parser.add_argument('--vis_samples', type=int, nargs=2, default=None,
+                        metavar=('START', 'END'),
+                        help='Range of samples to use for visualization (start end). If not specified, uses full range.')
+    parser.add_argument('--recurrence_threshold', type=float, default=0.8,
+                        help='Threshold for recurrence plot')
+    
+    # Output parameters
+    parser.add_argument('--output_dir', type=str, 
+                        default='/home/kerim/Projects/Neural Algorithms/NC-MCM/datasets/raw/twoArmBandit/results',
+                        help='Base directory for output')
+    
+    return parser.parse_args()
+
+
+def create_output_directory(base_dir):
+    """Create timestamped output directory"""
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    output_dir = Path(base_dir) / f'run_{timestamp}'
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Create subdirectories
+    (output_dir / 'figures').mkdir(exist_ok=True)
+    (output_dir / 'model').mkdir(exist_ok=True)
+    (output_dir / 'data').mkdir(exist_ok=True)
+    
+    return output_dir
+
+
+def save_config(args, output_dir):
+    """Save configuration to JSON file"""
+    config = vars(args)
+    config_path = output_dir / 'config.json'
+    with open(config_path, 'w') as f:
+        json.dump(config, f, indent=4)
+    print(f"Configuration saved to {config_path}")
+
+
+def load_data(data_path, downsample_fs):
+    """Load and prepare dataset"""
+    print("Loading dataset...")
+    dataset = BanditTaskNeuroPixelsDataset(data_path=data_path, downsample_fs=downsample_fs)
+    x = dataset.x.T.toarray()
+    b = dataset.b.toarray().flatten()
+    b_labels = dataset.b_labels
+    
+    print(f"Data shapes - x: {x.shape}, b: {b.shape}")
+    print(f"Behavior labels: {b_labels}")
+    
+    return x, b, b_labels
+
+
+def preprocess_data(x, b, window):
+    """Preprocess data for BunDLeNet"""
+    print("Preprocessing data...")
+    
+    # Encode labels
+    label_encoder = LabelEncoder()
+    b = label_encoder.fit_transform(b)
+    
+    # Prepare data with time delay embedding
+    x_, b_ = prep_data(x, b, win=window)
+    print(f"Prepared data shapes - x_: {x_.shape}, b_: {b_.shape}")
+    
+    # Train/test split
+    x_train, x_test, b_train, b_test = timeseries_train_test_split(x_, b_)
+    print(f"Train shapes - x: {x_train.shape}, b: {b_train.shape}")
+    print(f"Test shapes - x: {x_test.shape}, b: {b_test.shape}")
+    
+    return x_, b_, x_train, x_test, b_train, b_test
+
+
+def train_bundlenet(x_train, b_train, x_test, b_test, x_shape, args, output_dir):
+    """Train BunDLeNet model"""
+    print("Initializing BunDLeNet model...")
+    model = BunDLeNet(
+        latent_dim=args.latent_dim,
+        num_behaviour=args.num_behaviour,
+        input_shape=x_shape
+    )
+    
+    device = torch.device(args.device)
+    print(f"Training on {device} for {args.n_epochs} epochs...")
+    
+    loss_array, _ = train_model(
+        x_train,
+        b_train,
+        model,
+        b_type='discrete',
+        gamma=args.gamma,
+        learning_rate=args.learning_rate,
+        batch_size=args.batch_size,
+        n_epochs=args.n_epochs,
+        device=device,
+        validation_data=(x_test, b_test)
+    )
+    
+    # Save model
+    model_path = output_dir / 'model' / 'bundlenet_model.pt'
+    torch.save(model.state_dict(), model_path)
+    print(f"Model saved to {model_path}")
+    
+    # Save loss array
+    np.save(output_dir / 'data' / 'loss_array.npy', loss_array)
+    
+    return model, loss_array
+
+
+def plot_training_loss(loss_array, output_dir):
+    """Plot and save training loss curves"""
+    print("Plotting training loss...")
+    plt.figure(figsize=(10, 6))
+    
+    labels = [
+        r"$\mathcal{L}_{\mathrm{Markov}}$",
+        r"$\mathcal{L}_{\mathrm{Behavior}}$",
+        r"Total loss $\mathcal{L}$"
+    ]
+    
+    for i, label in enumerate(labels):
+        plt.semilogy(loss_array[:, i], label=label)
+    
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.title('Training Loss vs Epochs')
+    plt.grid(True, alpha=0.3)
+    
+    plot_path = output_dir / 'figures' / 'training_loss.png'
+    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f"Training loss plot saved to {plot_path}")
+
+
+def visualize_neural_behavioral(x, b, b_labels, output_dir):
+    """Visualize neural activity and behavioral choices"""
+    print("Plotting neural-behavioral data...")
+    result = plotting_neuronal_behavioural(x, b, b_names=b_labels)
+    
+    plot_path = output_dir / 'figures' / 'neural_behavioral_overview.png'
+    
+    # Handle different return types (fig, tuple, or None)
+    if isinstance(result, tuple):
+        fig = result[0]
+        if fig is not None:
+            fig.savefig(plot_path, dpi=300, bbox_inches='tight')
+            plt.close(fig)
+    elif result is not None:
+        result.savefig(plot_path, dpi=300, bbox_inches='tight')
+        plt.close(result)
+    else:
+        plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+        plt.close()
+    
+    print(f"Neural-behavioral plot saved to {plot_path}")
+
+
+def visualize_latent_space(y, b, b_labels, output_dir, vis_range):
+    """Create all latent space visualizations"""
+    print("Creating latent space visualizations...")
+    
+    # Extract range
+    if vis_range is None:
+        start, end = 0, len(y)
+        print(f"  Using full range: 0 to {end}")
+    else:
+        start, end = vis_range
+        start = max(0, start)
+        end = min(end, len(y))
+        print(f"  Using samples from {start} to {end}")
+    
+    y_vis = y[start:end]
+    b_vis = b[start:end]
+    
+    # Save latent trajectories
+    np.save(output_dir / 'data' / 'latent_trajectories.npy', y)
+    
+    vis = LatentSpaceVisualiser(y_vis, b_vis, b_labels)
+    
+    # Time series plot
+    print("  - Latent time series...")
+    vis.plot_latent_timeseries(
+        filename=str(output_dir / 'figures' / 'latent_time_series.png')
+    )
+    
+    # Phase space plot
+    print("  - Phase space dynamics...")
+    vis.plot_phase_space(
+        filename=str(output_dir / 'figures' / 'phase_space_dynamics.png')
+    )
+    
+    # Rotating 3D plot
+    print("  - Rotating 3D plot...")
+    vis.rotating_plot(
+        filename=str(output_dir / 'figures' / 'rotation_3d.gif')
+    )
+
+
+def plot_recurrence(y, output_dir, threshold, vis_range):
+    """Generate recurrence plot"""
+    print("Creating recurrence plot...")
+    
+    if vis_range is None:
+        start, end = 0, len(y)
+    else:
+        start, end = vis_range
+        start = max(0, start)
+        end = min(end, len(y))
+    
+    y_subset = y[start:end]
+    
+    # Compute pairwise distances
+    pd_y = np.linalg.norm(y_subset[:, np.newaxis] - y_subset, axis=-1) < threshold
+    
+    plt.figure(figsize=(10, 10))
+    plt.matshow(pd_y, cmap='Greys', fignum=1)
+    plt.title(f'Recurrence Plot (threshold={threshold}, samples {start}-{end})')
+    plt.xlabel('Time')
+    plt.ylabel('Time')
+    
+    plot_path = output_dir / 'figures' / 'recurrence_plot.png'
+    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f"Recurrence plot saved to {plot_path}")
+
+
+def main():
+    args = parse_args()
+    
+    # Create output directory
+    output_dir = create_output_directory(args.output_dir)
+    print(f"Output directory: {output_dir}")
+    
+    # Save configuration
+    save_config(args, output_dir)
+    
+    # Load data
+    x, b, b_labels = load_data(args.data_path, args.downsample_fs)
+    
+    # Visualize raw data
+    visualize_neural_behavioral(x, b, b_labels, output_dir)
+    
+    # Preprocess data
+    x_, b_, x_train, x_test, b_train, b_test = preprocess_data(x, b, args.window)
+    
+    # Train model
+    model, loss_array = train_bundlenet(
+        x_train, b_train, x_test, b_test, x_.shape, args, output_dir
+    )
+    
+    # Plot training loss
+    plot_training_loss(loss_array, output_dir)
+    
+    # Project into latent space
+    print("Projecting data into latent space...")
+    y = project_into_latent_space(x_, model)
+    
+    # Visualize latent space
+    visualize_latent_space(y, b_, b_labels, output_dir, args.vis_samples)
+    
+    # Recurrence plot
+    plot_recurrence(y, output_dir, args.recurrence_threshold, args.vis_samples)
+    
+    print(f"\n{'='*60}")
+    print(f"Training and analysis complete!")
+    print(f"All results saved to: {output_dir}")
+    print(f"{'='*60}")
+
+
+if __name__ == '__main__':
+    main()
