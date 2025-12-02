@@ -162,7 +162,7 @@ class BunDLeTrainer:
         return avg_test_loss
 
 
-def train_model(x_train, b_train_1, model, b_type, gamma, learning_rate, n_epochs, initialisation=None,
+def train_model(x_train, b_train_1, model, b_type, gamma, learning_rate, batch_size, n_epochs, initialisation=None,
                 validation_data=None, device=None, report_ray_tune=False, pca_file_save=False):
     """
     Training BunDLe Net
@@ -174,6 +174,7 @@ def train_model(x_train, b_train_1, model, b_type, gamma, learning_rate, n_epoch
         model: Instance of the BunDLeNet class.
         gamma (float): Weight for the DCC loss component.
         learning_rate (float): Learning rate for the Adam optimiser.
+        batch_size (int): Batch size for training.
         n_epochs (int): Number of training epochs.
         initialisation (str): 'pca_init' or 'best_of_5_init' or tuple (n, n_epochs) for
                                 'best_of_n_init'
@@ -189,7 +190,7 @@ def train_model(x_train, b_train_1, model, b_type, gamma, learning_rate, n_epoch
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    train_loader = torch_batch_prep(x_train, b_train_1, device=device)
+    train_loader = torch_batch_prep(x_train, b_train_1, device=device, batch_size=batch_size)
 
     model = model.to(device)
 
