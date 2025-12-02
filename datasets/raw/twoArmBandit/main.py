@@ -9,6 +9,7 @@ from datetime import datetime
 import json
 from pathlib import Path
 import time
+import itertools
 
 from dataset import BanditTaskNeuroPixelsDataset
 from ncmcm.bundlenet.bundlenet import BunDLeNet, train_model, project_into_latent_space
@@ -25,26 +26,26 @@ def parse_args():
     parser.add_argument('--data_path', type=str, 
                         default='/home/kerim/Projects/Neural Algorithms/NC-MCM/datasets/raw/twoArmBandit/JPAS_0023_20230922',
                         help='Path to dataset directory')
-    parser.add_argument('--downsample_fs', type=int, default=50,
-                        help='Downsampling frequency')
-    parser.add_argument('--window', type=int, default=1,
-                        help='Window length for time delay embedding')
+    parser.add_argument('--downsample_fs', type=int, nargs='+', default=[50],
+                        help='Downsampling frequency (can specify multiple values for grid search)')
+    parser.add_argument('--window', type=int, nargs='+', default=[1],
+                        help='Window length for time delay embedding (can specify multiple values)')
     
     # Model parameters
-    parser.add_argument('--latent_dim', type=int, default=3,
-                        help='Dimensionality of latent space')
+    parser.add_argument('--latent_dim', type=int, nargs='+', default=[3],
+                        help='Dimensionality of latent space (can specify multiple values)')
     parser.add_argument('--num_behaviour', type=int, default=6,
                         help='Number of behavior states')
     
     # Training parameters
-    parser.add_argument('--batch_size', type=int, default=100,
-                        help='Batch size for training')
+    parser.add_argument('--batch_size', type=int, nargs='+', default=[100],
+                        help='Batch size for training (can specify multiple values)')
     parser.add_argument('--n_epochs', type=int, default=500,
                         help='Number of training epochs')
-    parser.add_argument('--learning_rate', type=float, default=0.001,
-                        help='Learning rate')
-    parser.add_argument('--gamma', type=float, default=0.9,
-                        help='Weight for behavior loss')
+    parser.add_argument('--learning_rate', type=float, nargs='+', default=[0.001],
+                        help='Learning rate (can specify multiple values)')
+    parser.add_argument('--gamma', type=float, nargs='+', default=[0.9],
+                        help='Weight for behavior loss (can specify multiple values)')
     parser.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu',
                         choices=['cpu', 'cuda'],
                         help='Device to use for training')
@@ -64,18 +65,26 @@ def parse_args():
     return parser.parse_args()
 
 
-def create_output_directory(base_dir):
-    """Create timestamped output directory"""
+def create_grid_search_directory(base_dir):
+    """Create timestamped grid search directory"""
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    output_dir = Path(base_dir) / f'run_{timestamp}'
-    output_dir.mkdir(parents=True, exist_ok=True)
+    grid_dir = Path(base_dir) / f'grid_search_{timestamp}'
+    grid_dir.mkdir(parents=True, exist_ok=True)
+    return grid_dir
+
+
+def create_run_directory(grid_dir, run_idx, params):
+    """Create directory for a specific parameter combination"""
+    param_str = '_'.join([f"{k}={v}" for k, v in params.items()])
+    run_dir = grid_dir / f'run_{run_idx:03d}_{param_str}'
+    run_dir.mkdir(parents=True, exist_ok=True)
     
     # Create subdirectories
-    (output_dir / 'figures').mkdir(exist_ok=True)
-    (output_dir / 'model').mkdir(exist_ok=True)
-    (output_dir / 'data').mkdir(exist_ok=True)
+    (run_dir / 'figures').mkdir(exist_ok=True)
+    (run_dir / 'model').mkdir(exist_ok=True)
+    (run_dir / 'data').mkdir(exist_ok=True)
     
-    return output_dir
+    return run_dir
 
 
 def save_config(args, output_dir):
@@ -291,70 +300,200 @@ def print_step_time(step_name, start_time, step_start_time):
     print(f"  Total elapsed time: {format_elapsed_time(total_elapsed)}\n")
 
 
-def main():
-    start_time = time.time()
-    args = parse_args()
+def generate_param_combinations(args):
+    """Generate all parameter combinations for grid search"""
+    # Parameters to grid search over
+    param_grid = {
+        'downsample_fs': args.downsample_fs,
+        'window': args.window,
+        'latent_dim': args.latent_dim,
+        'batch_size': args.batch_size,
+        'learning_rate': args.learning_rate,
+        'gamma': args.gamma
+    }
     
-    # Create output directory
-    step_start = time.time()
-    output_dir = create_output_directory(args.output_dir)
+    # Generate all combinations
+    keys = param_grid.keys()
+    values = param_grid.values()
+    combinations = [dict(zip(keys, v)) for v in itertools.product(*values)]
+    
+    return combinations
+
+
+def save_grid_search_summary(grid_dir, combinations, results):
+    """Save summary of all runs in the grid search"""
+    summary = {
+        'total_runs': len(combinations),
+        'timestamp': datetime.now().isoformat(),
+        'runs': []
+    }
+    
+    for i, (params, result) in enumerate(zip(combinations, results)):
+        run_info = {
+            'run_id': i,
+            'parameters': params,
+            'execution_time': result.get('execution_time', None),
+            'output_dir': str(result.get('output_dir', ''))
+        }
+        summary['runs'].append(run_info)
+    
+    summary_path = grid_dir / 'grid_search_summary.json'
+    with open(summary_path, 'w') as f:
+        json.dump(summary, f, indent=4)
+    print(f"\nGrid search summary saved to {summary_path}")
+
+
+def run_single_experiment(args, params, output_dir, run_idx, total_runs):
+    """Run a single experiment with specific parameters"""
+    run_start_time = time.time()
+    
+    print(f"\n{'='*80}")
+    print(f"RUN {run_idx + 1}/{total_runs}")
+    print(f"Parameters: {params}")
     print(f"Output directory: {output_dir}")
-    print_step_time("Setup", start_time, step_start)
+    print(f"{'='*80}\n")
+    
+    # Update args with current parameter combination
+    for key, value in params.items():
+        setattr(args, key, value)
     
     # Save configuration
     step_start = time.time()
     save_config(args, output_dir)
-    print_step_time("Configuration saved", start_time, step_start)
+    print_step_time("Configuration saved", run_start_time, step_start)
     
     # Load data
     step_start = time.time()
     x, b, b_labels = load_data(args.data_path, args.downsample_fs)
-    print_step_time("Data loading", start_time, step_start)
+    print_step_time("Data loading", run_start_time, step_start)
     
     # Visualize raw data
     step_start = time.time()
     visualize_neural_behavioral(x, b, b_labels, output_dir)
-    print_step_time("Neural-behavioral visualization", start_time, step_start)
+    print_step_time("Neural-behavioral visualization", run_start_time, step_start)
     
     # Preprocess data
     step_start = time.time()
     x_, b_, x_train, x_test, b_train, b_test = preprocess_data(x, b, args.window)
-    print_step_time("Data preprocessing", start_time, step_start)
+    print_step_time("Data preprocessing", run_start_time, step_start)
     
     # Train model
     step_start = time.time()
     model, loss_array = train_bundlenet(
         x_train, b_train, x_test, b_test, x_.shape, args, output_dir
     )
-    print_step_time("Model training", start_time, step_start)
+    print_step_time("Model training", run_start_time, step_start)
     
     # Plot training loss
     step_start = time.time()
     plot_training_loss(loss_array, output_dir)
-    print_step_time("Training loss plotting", start_time, step_start)
+    print_step_time("Training loss plotting", run_start_time, step_start)
     
     # Project into latent space
     step_start = time.time()
     print("Projecting data into latent space...")
     y = project_into_latent_space(x_, model)
-    print_step_time("Latent space projection", start_time, step_start)
+    print_step_time("Latent space projection", run_start_time, step_start)
     
     # Visualize latent space
     step_start = time.time()
     visualize_latent_space(y, b_, b_labels, output_dir, args.vis_samples)
-    print_step_time("Latent space visualization", start_time, step_start)
+    print_step_time("Latent space visualization", run_start_time, step_start)
     
     # Recurrence plot
     step_start = time.time()
     plot_recurrence(y, output_dir, args.recurrence_threshold, args.vis_samples)
-    print_step_time("Recurrence plot generation", start_time, step_start)
+    print_step_time("Recurrence plot generation", run_start_time, step_start)
     
-    total_time = time.time() - start_time
-    print(f"\n{'='*60}")
-    print(f"Training and analysis complete!")
+    total_time = time.time() - run_start_time
+    print(f"\n{'='*80}")
+    print(f"RUN {run_idx + 1}/{total_runs} COMPLETE!")
+    print(f"Execution time: {format_elapsed_time(total_time)}")
+    print(f"Results saved to: {output_dir}")
+    print(f"{'='*80}\n")
+    
+    return {
+        'output_dir': output_dir,
+        'execution_time': format_elapsed_time(total_time),
+        'execution_time_seconds': total_time
+    }
+
+
+def main():
+    overall_start_time = time.time()
+    args = parse_args()
+    
+    # Generate parameter combinations
+    param_combinations = generate_param_combinations(args)
+    total_runs = len(param_combinations)
+    
+    print(f"\n{'='*80}")
+    print(f"GRID SEARCH CONFIGURATION")
+    print(f"{'='*80}")
+    print(f"Total parameter combinations: {total_runs}")
+    print(f"Parameters being searched:")
+    print(f"  - downsample_fs: {args.downsample_fs}")
+    print(f"  - window: {args.window}")
+    print(f"  - latent_dim: {args.latent_dim}")
+    print(f"  - batch_size: {args.batch_size}")
+    print(f"  - learning_rate: {args.learning_rate}")
+    print(f"  - gamma: {args.gamma}")
+    print(f"{'='*80}\n")
+    
+    # Create grid search directory
+    if total_runs > 1:
+        grid_dir = create_grid_search_directory(args.output_dir)
+        print(f"Grid search directory: {grid_dir}\n")
+    else:
+        # Single run - use original structure
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        grid_dir = Path(args.output_dir) / f'run_{timestamp}'
+        grid_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Run experiments for each parameter combination
+    results = []
+    for run_idx, params in enumerate(param_combinations):
+        if total_runs > 1:
+            output_dir = create_run_directory(grid_dir, run_idx, params)
+        else:
+            output_dir = grid_dir
+            # Create subdirectories for single run
+            (output_dir / 'figures').mkdir(exist_ok=True)
+            (output_dir / 'model').mkdir(exist_ok=True)
+            (output_dir / 'data').mkdir(exist_ok=True)
+        
+        try:
+            result = run_single_experiment(args, params, output_dir, run_idx, total_runs)
+            results.append(result)
+        except Exception as e:
+            print(f"\n{'!'*80}")
+            print(f"ERROR in run {run_idx + 1}/{total_runs}")
+            print(f"Parameters: {params}")
+            print(f"Error: {str(e)}")
+            print(f"{'!'*80}\n")
+            results.append({
+                'output_dir': output_dir,
+                'execution_time': 'FAILED',
+                'error': str(e)
+            })
+    
+    # Save grid search summary
+    if total_runs > 1:
+        save_grid_search_summary(grid_dir, param_combinations, results)
+    
+    # Print final summary
+    total_time = time.time() - overall_start_time
+    successful_runs = sum(1 for r in results if 'error' not in r)
+    
+    print(f"\n{'='*80}")
+    print(f"GRID SEARCH COMPLETE!")
+    print(f"{'='*80}")
+    print(f"Total runs: {total_runs}")
+    print(f"Successful: {successful_runs}")
+    print(f"Failed: {total_runs - successful_runs}")
     print(f"Total execution time: {format_elapsed_time(total_time)}")
-    print(f"All results saved to: {output_dir}")
-    print(f"{'='*60}")
+    print(f"All results saved to: {grid_dir}")
+    print(f"{'='*80}\n")
 
 
 if __name__ == '__main__':
