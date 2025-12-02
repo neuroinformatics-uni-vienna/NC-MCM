@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 from datetime import datetime
 import json
 from pathlib import Path
+import time
 
 from dataset import BanditTaskNeuroPixelsDataset
 from ncmcm.bundlenet.bundlenet import BunDLeNet, train_model, project_into_latent_space
@@ -274,45 +275,84 @@ def plot_recurrence(y, output_dir, threshold, vis_range):
     print(f"Recurrence plot saved to {plot_path}")
 
 
+def format_elapsed_time(seconds):
+    """Format elapsed time as HH:MM:SS"""
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    return f"{hours:02d}h {minutes:02d}m {secs:02d}s"
+
+
+def print_step_time(step_name, start_time, step_start_time):
+    """Print timing information for a step"""
+    step_duration = time.time() - step_start_time
+    total_elapsed = time.time() - start_time
+    print(f"  ✓ {step_name} completed in {format_elapsed_time(step_duration)}")
+    print(f"  Total elapsed time: {format_elapsed_time(total_elapsed)}\n")
+
+
 def main():
+    start_time = time.time()
     args = parse_args()
     
     # Create output directory
+    step_start = time.time()
     output_dir = create_output_directory(args.output_dir)
     print(f"Output directory: {output_dir}")
+    print_step_time("Setup", start_time, step_start)
     
     # Save configuration
+    step_start = time.time()
     save_config(args, output_dir)
+    print_step_time("Configuration saved", start_time, step_start)
     
     # Load data
+    step_start = time.time()
     x, b, b_labels = load_data(args.data_path, args.downsample_fs)
+    print_step_time("Data loading", start_time, step_start)
     
     # Visualize raw data
+    step_start = time.time()
     visualize_neural_behavioral(x, b, b_labels, output_dir)
+    print_step_time("Neural-behavioral visualization", start_time, step_start)
     
     # Preprocess data
+    step_start = time.time()
     x_, b_, x_train, x_test, b_train, b_test = preprocess_data(x, b, args.window)
+    print_step_time("Data preprocessing", start_time, step_start)
     
     # Train model
+    step_start = time.time()
     model, loss_array = train_bundlenet(
         x_train, b_train, x_test, b_test, x_.shape, args, output_dir
     )
+    print_step_time("Model training", start_time, step_start)
     
     # Plot training loss
+    step_start = time.time()
     plot_training_loss(loss_array, output_dir)
+    print_step_time("Training loss plotting", start_time, step_start)
     
     # Project into latent space
+    step_start = time.time()
     print("Projecting data into latent space...")
     y = project_into_latent_space(x_, model)
+    print_step_time("Latent space projection", start_time, step_start)
     
     # Visualize latent space
+    step_start = time.time()
     visualize_latent_space(y, b_, b_labels, output_dir, args.vis_samples)
+    print_step_time("Latent space visualization", start_time, step_start)
     
     # Recurrence plot
+    step_start = time.time()
     plot_recurrence(y, output_dir, args.recurrence_threshold, args.vis_samples)
+    print_step_time("Recurrence plot generation", start_time, step_start)
     
+    total_time = time.time() - start_time
     print(f"\n{'='*60}")
     print(f"Training and analysis complete!")
+    print(f"Total execution time: {format_elapsed_time(total_time)}")
     print(f"All results saved to: {output_dir}")
     print(f"{'='*60}")
 
