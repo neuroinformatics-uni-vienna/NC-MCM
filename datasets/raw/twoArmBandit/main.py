@@ -218,9 +218,9 @@ def visualize_neural_behavioral(x, b, b_labels, output_dir):
     print(f"Neural-behavioral plot saved to {plot_path}")
 
 
-def visualize_latent_space(y, b, b_labels, output_dir, vis_range):
+def visualize_latent_space(y, b, b_labels, output_dir, vis_range, data_split='train'):
     """Create all latent space visualizations"""
-    print("Creating latent space visualizations...")
+    print(f"Creating latent space visualizations for {data_split} data...")
     
     # Extract range
     if vis_range is None:
@@ -235,34 +235,34 @@ def visualize_latent_space(y, b, b_labels, output_dir, vis_range):
     y_vis = y[start:end]
     b_vis = b[start:end]
     
-    # Save latent trajectories and behavior labels
-    np.save(output_dir / 'data' / 'latent_trajectories.npy', y)
-    np.save(output_dir / 'data' / 'behavior_labels.npy', b)
+    # Save latent trajectories and behavior labels with split name
+    np.save(output_dir / 'data' / f'latent_trajectories_{data_split}.npy', y)
+    np.save(output_dir / 'data' / f'behavior_labels_{data_split}.npy', b)
     
     vis = LatentSpaceVisualiser(y_vis, b_vis, b_labels, show_points=True)
     
     # Time series plot
     print("  - Latent time series...")
     vis.plot_latent_timeseries(
-        filename=str(output_dir / 'figures' / 'latent_time_series.png')
+        filename=str(output_dir / 'figures' / f'latent_time_series_{data_split}.png')
     )
     
     # Phase space plot
     print("  - Phase space dynamics...")
     vis.plot_phase_space(
-        filename=str(output_dir / 'figures' / 'phase_space_dynamics.png')
+        filename=str(output_dir / 'figures' / f'phase_space_dynamics_{data_split}.png')
     )
     
     # Rotating 3D plot
     print("  - Rotating 3D plot...")
     vis.rotating_plot(
-        filename=str(output_dir / 'figures' / 'rotation_3d.gif')
+        filename=str(output_dir / 'figures' / f'rotation_3d_{data_split}.gif')
     )
 
 
-def plot_recurrence(y, output_dir, threshold, vis_range):
+def plot_recurrence(y, output_dir, threshold, vis_range, data_split='train'):
     """Generate recurrence plot"""
-    print("Creating recurrence plot...")
+    print(f"Creating recurrence plot for {data_split} data...")
     
     if vis_range is None:
         start, end = 0, len(y)
@@ -278,11 +278,11 @@ def plot_recurrence(y, output_dir, threshold, vis_range):
     
     plt.figure(figsize=(10, 10))
     plt.matshow(pd_y, cmap='Greys', fignum=1)
-    plt.title(f'Recurrence Plot (threshold={threshold}, samples {start}-{end})')
+    plt.title(f'Recurrence Plot - {data_split.capitalize()} (threshold={threshold}, samples {start}-{end})')
     plt.xlabel('Time')
     plt.ylabel('Time')
     
-    plot_path = output_dir / 'figures' / 'recurrence_plot.png'
+    plot_path = output_dir / 'figures' / f'recurrence_plot_{data_split}.png'
     plt.savefig(plot_path, dpi=300, bbox_inches='tight')
     plt.close()
     print(f"Recurrence plot saved to {plot_path}")
@@ -393,21 +393,37 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
     plot_training_loss(loss_array, test_loss_array, output_dir)
     print_step_time("Training loss plotting", run_start_time, step_start)
     
-    # Project into latent space
+    # Project training data into latent space
     step_start = time.time()
-    print("Projecting data into latent space...")
-    y = project_into_latent_space(x_, model)
-    print_step_time("Latent space projection", run_start_time, step_start)
+    print("Projecting training data into latent space...")
+    y_train = project_into_latent_space(x_train, model)
+    print_step_time("Training latent space projection", run_start_time, step_start)
     
-    # Visualize latent space
+    # Visualize training latent space
     step_start = time.time()
-    visualize_latent_space(y, b_, b_labels, output_dir, args.vis_samples)
-    print_step_time("Latent space visualization", run_start_time, step_start)
+    visualize_latent_space(y_train, b_train, b_labels, output_dir, args.vis_samples, data_split='train')
+    print_step_time("Training latent space visualization", run_start_time, step_start)
     
-    # Recurrence plot
+    # Training recurrence plot
     step_start = time.time()
-    plot_recurrence(y, output_dir, args.recurrence_threshold, args.vis_samples)
-    print_step_time("Recurrence plot generation", run_start_time, step_start)
+    plot_recurrence(y_train, output_dir, args.recurrence_threshold, args.vis_samples, data_split='train')
+    print_step_time("Training recurrence plot generation", run_start_time, step_start)
+    
+    # Project validation data into latent space
+    step_start = time.time()
+    print("Projecting validation data into latent space...")
+    y_test = project_into_latent_space(x_test, model)
+    print_step_time("Validation latent space projection", run_start_time, step_start)
+    
+    # Visualize validation latent space
+    step_start = time.time()
+    visualize_latent_space(y_test, b_test, b_labels, output_dir, args.vis_samples, data_split='validation')
+    print_step_time("Validation latent space visualization", run_start_time, step_start)
+    
+    # Validation recurrence plot
+    step_start = time.time()
+    plot_recurrence(y_test, output_dir, args.recurrence_threshold, args.vis_samples, data_split='validation')
+    print_step_time("Validation recurrence plot generation", run_start_time, step_start)
     
     total_time = time.time() - run_start_time
     print(f"\n{'='*80}")
