@@ -25,6 +25,7 @@ class BanditTaskNeuroPixelsDataset:
             x: Neuronal time-series data (scipy.sparse.csr_matrix) of shape (num_neurons, num_timepoints). Do .toarray() to convert to dense.
             b: Behavioral time-series data (scipy.sparse.csr_matrix) of shape (num_behaviors, num_timepoints). Do .toarray() to convert to dense.
             b_labels_dict: Behavioral labels as a dictionary
+            b_continuous: Continuous behavioral data (np.ndarray) of shape (num_timepoints,) with running average of last 10 decisions (-1 for left, 1 for right)
             fs: Sampling frequency
         
         """
@@ -35,6 +36,7 @@ class BanditTaskNeuroPixelsDataset:
         self.b = None  # behavioral time-series data (scipy.sparse.csr_matrix)
         self.b_labels_dict = None # behavioral lables as dict
         self.b_labels = None # behavioral labels as list
+        self.b_continuous = None  # continuous behavioral data (running avg of last 10 decisions)
         self.fs = None  # sampling frequency
         
         # load data and assign to attributes
@@ -91,12 +93,16 @@ class BanditTaskNeuroPixelsDataset:
         # Create behavioral data
         self.b, self.b_labels_dict = self._create_behavioral_data_matrix(metrics, neuronal_length, translation_indices_neuronal_to_behavioral)
         
+        # Create continuous behavioral data (running average of last 10 decisions)
+        self.b_continuous = self._create_continuous_behavioral_data(metrics, neuronal_length, translation_indices_neuronal_to_behavioral)
+        
         # Post processing: Trim waiting periods from start and end
         self._trim_waiting_periods(self.x, self.b, self.b_labels_dict)
         self._relabel_behavioral_states()
         
         # Final check to ensure lengths match
         assert self.x.shape[1] == self.b.shape[1], "Final neuronal and behavioral data length mismatch after processing."
+        assert len(self.b_continuous) == self.b.shape[1], "Continuous behavioral data length mismatch after processing."
         
         # Sort behavioral labels by their state id (dict keys) and store as list
         self.b_labels = [self.b_labels_dict[k] for k in sorted(self.b_labels_dict.keys())]
@@ -131,6 +137,7 @@ class BanditTaskNeuroPixelsDataset:
         
         self.x = x[:, first_non_waiting_idx:last_non_waiting_idx]
         self.b = b[:, first_non_waiting_idx:last_non_waiting_idx]
+        self.b_continuous = self.b_continuous[first_non_waiting_idx:last_non_waiting_idx]
 
     def _downsample_translation_indices(self, translation_indices, target_num_samples):
         """
@@ -343,6 +350,66 @@ class BanditTaskNeuroPixelsDataset:
 
         return state_array_sparse, state_labels
         
+    def _create_continuous_behavioral_data(self, metrics, neuronal_length, translation_indices_neuronal_to_behavioral):
+        """
+        Create continuous behavioral data representing the running average of the last 10 trial decisions.
+        Values range from -1 (all left) to 1 (all right), with 0 being half left, half right.
+
+        Args:
+            metrics: behavioral metrics from JSON
+            neuronal_length: number of samples in neuronal data (potentially downsampled)
+            translation_indices_neuronal_to_behavioral: mapping from neuronal time to behavioral time (potentially downsampled)
+
+        Returns:
+            np.ndarray of shape (neuronal_length,) with continuous values
+        """
+        trials = metrics['metrics']['trials']
+        
+        # Find the last timestamp in behavioral time (ms)
+        max_trial_time = max([t.get('t chosen', 0) for t in trials if 't chosen' in t], default=0)
+        last_timestamp_ms = int(max_trial_time)
+        
+        # Initialize continuous array in behavioral time (milliseconds)
+        continuous_array_ms = np.zeros(last_timestamp_ms + 1, dtype=np.float32)
+        
+        # Sort trials by start time to process chronologically
+        sorted_trials = sorted(trials, key=lambda t: t.get('start', 0))
+        
+        # Track last 10 choices (use a rolling window)
+        recent_choices = []  # Will store 1 for right, -1 for left
+        
+        for trial in sorted_trials:
+            start_time = trial.get('start')
+            end_time = trial.get('t chosen')
+            choice = trial.get('choice', '').lower()
+            
+            if start_time is None or end_time is None or choice not in ['l', 'r']:
+                continue
+            
+            # Add current choice to the window
+            choice_value = 1.0 if choice == 'r' else -1.0
+            recent_choices.append(choice_value)
+            
+            # Keep only last 10 choices
+            if len(recent_choices) > 10:
+                recent_choices.pop(0)
+            
+            # Calculate running average
+            running_avg = np.mean(recent_choices)
+            
+            # Apply this value to the entire trial period
+            continuous_array_ms[start_time:end_time + 1] = running_avg
+        
+        # Map neuronal time to continuous behavioral data using translation indices
+        continuous_array_neuronal = np.zeros(neuronal_length, dtype=np.float32)
+        
+        for neuronal_idx in range(neuronal_length):
+            behavioral_ms = int(translation_indices_neuronal_to_behavioral[neuronal_idx])
+            behavioral_ms = min(behavioral_ms, last_timestamp_ms)
+            continuous_array_neuronal[neuronal_idx] = continuous_array_ms[behavioral_ms]
+        
+        return continuous_array_neuronal
+
     def _load_cluster_info(self, data_path):
         """Load cluster information and filter for good neurons"""
         cluster_info = pd.read_csv(os.path.join(data_path, "cluster_info.tsv"), sep="\t")
