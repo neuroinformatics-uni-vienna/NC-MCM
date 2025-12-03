@@ -23,9 +23,9 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Train BunDLeNet on 2-arm bandit task data')
     
     # Data parameters
-    parser.add_argument('--data_path', type=str, 
-                        default='/home/kerim/Projects/Neural Algorithms/NC-MCM/datasets/raw/twoArmBandit/JPAS_0023_20230922',
-                        help='Path to dataset directory')
+    parser.add_argument('--data_path', type=str, nargs='+',
+                        default=['/home/kerim/Projects/Neural Algorithms/NC-MCM/datasets/raw/twoArmBandit/JPAS_0023_20230922'],
+                        help='Path to dataset directory (can specify multiple paths for grid search)')
     parser.add_argument('--downsample_fs', type=int, nargs='+', default=[15],
                         help='Downsampling frequency (can specify multiple values for grid search)')
     parser.add_argument('--downsample_method', type=str, nargs='+', default=['binary'],
@@ -333,6 +333,7 @@ def generate_param_combinations(args):
     """Generate all parameter combinations for grid search"""
     # Parameters to grid search over
     param_grid = {
+        'data_path': args.data_path,
         'downsample_fs': args.downsample_fs,
         'downsample_method': args.downsample_method,
         'good_neurons_only': [x.lower() == 'true' for x in args.good_neurons_only],
@@ -479,6 +480,7 @@ def main():
     print(f"{'='*80}")
     print(f"Total parameter combinations: {total_runs}")
     print(f"Parameters being searched:")
+    print(f"  - data_path: {args.data_path}")
     print(f"  - downsample_fs: {args.downsample_fs}")
     print(f"  - downsample_method: {args.downsample_method}")
     print(f"  - good_neurons_only: {args.good_neurons_only}")
