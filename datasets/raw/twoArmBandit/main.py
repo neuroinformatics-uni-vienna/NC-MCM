@@ -279,15 +279,16 @@ def plot_recurrence(y, output_dir, threshold, vis_range, data_split='train'):
     # Compute pairwise distances
     pd_y = np.linalg.norm(y_subset[:, np.newaxis] - y_subset, axis=-1) < threshold
     
-    plt.figure(figsize=(10, 10))
-    plt.matshow(pd_y, cmap='Greys', fignum=1)
-    plt.title(f'Recurrence Plot - {data_split.capitalize()} (threshold={threshold}, samples {start}-{end})')
-    plt.xlabel('Time')
-    plt.ylabel('Time')
+    # Create a fresh figure and axis
+    fig, ax = plt.subplots(figsize=(10, 10))
+    ax.matshow(pd_y, cmap='Greys')
+    ax.set_title(f'Recurrence Plot - {data_split.capitalize()} (threshold={threshold}, samples {start}-{end})')
+    ax.set_xlabel('Time')
+    ax.set_ylabel('Time')
     
     plot_path = output_dir / 'figures' / f'recurrence_plot_{data_split}.png'
     plt.savefig(plot_path, dpi=300, bbox_inches='tight')
-    plt.close()
+    plt.close(fig)  # Close the specific figure
     print(f"Recurrence plot saved to {plot_path}")
 
 
