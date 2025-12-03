@@ -31,8 +31,9 @@ def parse_args():
     parser.add_argument('--downsample_method', type=str, nargs='+', default=['binary'],
                         choices=['binary', 'count'],
                         help='Downsampling method (can specify multiple values for grid search)')
-    parser.add_argument('--good_neurons_only', type=bool, nargs='+', default=[True],
-                        help='Whether to use only good neurons (can specify multiple values for grid search)')
+    parser.add_argument('--good_neurons_only', type=str, nargs='+', default=['false'],
+                        choices=['true', 'false'],
+                        help='Use only good neurons: true or false (can specify multiple for grid search, e.g., true false)')
     
     parser.add_argument('--window', type=int, nargs='+', default=[20],
                         help='Window length for time delay embedding (can specify multiple values for grid search)')
@@ -255,19 +256,31 @@ def visualize_latent_space(y, b, b_labels, output_dir, vis_range, data_split='tr
     # Time series plot
     print("  - Latent time series...")
     vis.plot_latent_timeseries(
+        show_fig=False,
         filename=str(output_dir / 'figures' / f'latent_time_series_{data_split}.png')
     )
     
     # Phase space plot
     print("  - Phase space dynamics...")
-    vis.plot_phase_space(
+    fig, ax = vis.plot_phase_space(
+        show_fig=False,
         filename=str(output_dir / 'figures' / f'phase_space_dynamics_{data_split}.png')
     )
+    plt.close(fig)
     
     # Rotating 3D plot
     print("  - Rotating 3D plot...")
-    vis.rotating_plot(
+    fig, ax = vis.rotating_plot(
+        show_fig=False,
         filename=str(output_dir / 'figures' / f'rotation_3d_{data_split}.gif')
+    )
+    plt.close(fig)
+    
+    # Interactive 3D plot
+    print("  - Interactive 3D plot...")
+    _ = vis.plot_interactive_3d(
+        show_fig=False,
+        filename=str(output_dir / 'figures' / f'interactive_3d_{data_split}.html')
     )
 
 
@@ -322,7 +335,7 @@ def generate_param_combinations(args):
     param_grid = {
         'downsample_fs': args.downsample_fs,
         'downsample_method': args.downsample_method,
-        'good_neurons_only': args.good_neurons_only,
+        'good_neurons_only': [x.lower() == 'true' for x in args.good_neurons_only],
         'window': args.window,
         'latent_dim': args.latent_dim,
         'batch_size': args.batch_size,
