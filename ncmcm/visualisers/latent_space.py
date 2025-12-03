@@ -3,6 +3,7 @@
 Akshey Kumar
 Michael Hofer
 Jinook Oh
+Kerim Atak
 """
 import os
 import matplotlib.pyplot as plt
@@ -272,6 +273,106 @@ class LatentSpaceVisualiser:
         return fig, ax
 
 
+    def plot_interactive_3d(
+        self, 
+        show_fig=True, 
+        filename='figures/interactive_phase_space.html'
+    ):
+        """
+        Plot the neuronal dynamics in an interactive 3D phase space using Plotly.
+        
+        This function creates an interactive 3D phase space plot of the neuronal 
+        activity, with line segments representing the transitions between states 
+        over time. The plot can be rotated and zoomed interactively.
+        
+        Parameters:
+        -----------
+        show_fig : bool, optional
+            If True, the plot will be displayed interactively. 
+            Default is True.
+        
+        filename : str, optional
+            The path and filename where the plot will be saved as HTML. 
+            Default is 'figures/interactive_phase_space.html'.
+        
+        Returns:
+        --------
+        fig : plotly.graph_objects.Figure
+        """
+        import plotly.graph_objects as go
+        
+        if self.y.shape[0] != self.b.shape[0]:
+            raise ValueError("Y and b must have the same number of time steps")
+        
+        fig = go.Figure()
+        
+        # Create line segments for each transition
+        for i in range(len(self.y) - 1):
+            color = self.color_dict[self.b[i]]
+            fig.add_trace(go.Scatter3d(
+                x=[self.y[i, 0], self.y[i + 1, 0]],
+                y=[self.y[i, 1], self.y[i + 1, 1]],
+                z=[self.y[i, 2], self.y[i + 1, 2]],
+                mode='lines',
+                line=dict(
+                    color=f'rgb({int(color[0]*255)}, {int(color[1]*255)}, {int(color[2]*255)})',
+                    width=2
+                ),
+                showlegend=False,
+                hoverinfo='skip'
+            ))
+        
+        # Add legend traces
+        if self.legend:
+            for b in self.color_dict:
+                color = self.color_dict[b]
+                fig.add_trace(go.Scatter3d(
+                    x=[None],
+                    y=[None],
+                    z=[None],
+                    mode='lines',
+                    line=dict(
+                        color=f'rgb({int(color[0]*255)}, {int(color[1]*255)}, {int(color[2]*255)})',
+                        width=4
+                    ),
+                    name=self.b_names[b]
+                ))
+        
+        # Add individual points if requested (after all lines so they're on top)
+        if self.show_points:
+            fig.add_trace(go.Scatter3d(
+                x=self.y[:, 0],
+                y=self.y[:, 1],
+                z=self.y[:, 2],
+                mode='markers',
+                marker=dict(
+                    size=3,
+                    color='black'
+                ),
+                showlegend=False,
+                hoverinfo='skip'
+            ))
+        
+        # Update layout to match matplotlib style
+        fig.update_layout(
+            scene=dict(
+                xaxis=dict(visible=False),
+                yaxis=dict(visible=False),
+                zaxis=dict(visible=False)
+            ),
+            showlegend=self.legend,
+            margin=dict(l=0, r=0, t=0, b=0)
+        )
+        
+        if os.path.dirname(filename):
+            os.makedirs(os.path.dirname(filename), exist_ok=True)
+        
+        fig.write_html(filename)
+        
+        if show_fig:
+            fig.show()
+        
+        return fig
 
     def make_movie(
             self,
@@ -493,6 +594,4 @@ class LatentSpaceVisualiser:
                 bbox_to_anchor=[1, 0]
             )
 
-        return ax 
-
-
+        return ax
