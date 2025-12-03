@@ -31,6 +31,9 @@ def parse_args():
     parser.add_argument('--downsample_method', type=str, nargs='+', default=['binary'],
                         choices=['binary', 'count'],
                         help='Downsampling method (can specify multiple values for grid search)')
+    parser.add_argument('--good_neurons_only', type=bool, nargs='+', default=[True],
+                        help='Whether to use only good neurons (can specify multiple values for grid search)')
+    
     parser.add_argument('--window', type=int, nargs='+', default=[20],
                         help='Window length for time delay embedding (can specify multiple values for grid search)')
     
@@ -97,10 +100,15 @@ def save_config(args, output_dir):
     print(f"Configuration saved to {config_path}")
 
 
-def load_data(data_path, downsample_fs, downsample_method):
+def load_data(data_path, downsample_fs, downsample_method, good_neurons_only):
     """Load and prepare dataset"""
     print("Loading dataset...")
-    dataset = BanditTaskNeuroPixelsDataset(data_path=data_path, downsample_fs=downsample_fs, downsample_method=downsample_method)
+    dataset = BanditTaskNeuroPixelsDataset(
+        data_path=data_path, 
+        downsample_fs=downsample_fs, 
+        downsample_method=downsample_method,
+        good_neurons_only=good_neurons_only
+    )
     x = dataset.x.T.toarray()
     b = dataset.b.toarray().flatten()
     b_labels = dataset.b_labels
@@ -314,6 +322,7 @@ def generate_param_combinations(args):
     param_grid = {
         'downsample_fs': args.downsample_fs,
         'downsample_method': args.downsample_method,
+        'good_neurons_only': args.good_neurons_only,
         'window': args.window,
         'latent_dim': args.latent_dim,
         'batch_size': args.batch_size,
@@ -373,7 +382,7 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
     
     # Load data
     step_start = time.time()
-    x, b, b_labels = load_data(args.data_path, args.downsample_fs, args.downsample_method)
+    x, b, b_labels = load_data(args.data_path, args.downsample_fs, args.downsample_method, args.good_neurons_only)
     print_step_time("Data loading", run_start_time, step_start)
     
     # Visualize raw data
@@ -459,6 +468,7 @@ def main():
     print(f"Parameters being searched:")
     print(f"  - downsample_fs: {args.downsample_fs}")
     print(f"  - downsample_method: {args.downsample_method}")
+    print(f"  - good_neurons_only: {args.good_neurons_only}")
     print(f"  - window: {args.window}")
     print(f"  - latent_dim: {args.latent_dim}")
     print(f"  - batch_size: {args.batch_size}")

@@ -10,7 +10,7 @@ import numpy as np
 from scipy import sparse
 
 class BanditTaskNeuroPixelsDataset:
-    def __init__(self, data_path, downsample_fs=None, downsample_method='binary'):
+    def __init__(self, data_path, downsample_fs=None, downsample_method='binary', good_neurons_only=True):
         """
         Initialize dataset with flexible spike representation options.
 
@@ -20,6 +20,7 @@ class BanditTaskNeuroPixelsDataset:
             downsample_method: Method for aggregating spikes during downsampling.
                              'binary': Use OR operation (any spike -> 1)
                              'count': Sum the number of spikes in each bin
+            good_neurons_only: If True, only include neurons labeled as 'good' in cluster_info.tsv (default: True)
             
         Attributes after loading:
             x: Neuronal time-series data (scipy.sparse.csr_matrix) of shape (num_neurons, num_timepoints). Do .toarray() to convert to dense.
@@ -32,6 +33,7 @@ class BanditTaskNeuroPixelsDataset:
         self.data_path = data_path
         self.downsample_fs = downsample_fs
         self.downsample_method = downsample_method
+        self.good_neurons_only = good_neurons_only
         self.x = None  # neuronal time-series data (scipy.sparse.csr_matrix)
         self.b = None  # behavioral time-series data (scipy.sparse.csr_matrix)
         self.b_labels_dict = None # behavioral lables as dict
@@ -411,7 +413,8 @@ class BanditTaskNeuroPixelsDataset:
         return continuous_array_neuronal
 
     def _load_cluster_info(self, data_path):
-        """Load cluster information and filter for good neurons"""
+        """Load cluster information and filter for good neurons if specified"""
         cluster_info = pd.read_csv(os.path.join(data_path, "cluster_info.tsv"), sep="\t")
-        cluster_info = cluster_info[cluster_info["group"] == "good"]
+        if self.good_neurons_only:
+            cluster_info = cluster_info[cluster_info["group"] == "good"]
         return cluster_info
