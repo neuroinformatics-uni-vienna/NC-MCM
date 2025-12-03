@@ -10,13 +10,16 @@ import numpy as np
 from scipy import sparse
 
 class BanditTaskNeuroPixelsDataset:
-    def __init__(self, data_path, downsample_fs=None):
+    def __init__(self, data_path, downsample_fs=None, downsample_method='binary'):
         """
         Initialize dataset with flexible spike representation options.
 
         Args:
             data_path: Path to the dataset directory
             downsample_fs: If provided, downsample the data to this sampling frequency (Hz).
+            downsample_method: Method for aggregating spikes during downsampling.
+                             'binary': Use OR operation (any spike -> 1)
+                             'count': Sum the number of spikes in each bin
             
         Attributes after loading:
             x: Neuronal time-series data (scipy.sparse.csr_matrix) of shape (num_neurons, num_timepoints). Do .toarray() to convert to dense.
@@ -27,6 +30,7 @@ class BanditTaskNeuroPixelsDataset:
         """
         self.data_path = data_path
         self.downsample_fs = downsample_fs
+        self.downsample_method = downsample_method
         self.x = None  # neuronal time-series data (scipy.sparse.csr_matrix)
         self.b = None  # behavioral time-series data (scipy.sparse.csr_matrix)
         self.b_labels_dict = None # behavioral lables as dict
@@ -153,8 +157,9 @@ class BanditTaskNeuroPixelsDataset:
 
     def _downsample_spike_data(self, spike_matrix, target_num_samples):
         """
-        Downsample spike data to a specific number of samples while maintaining binary rasterization.
-        If any spike occurs in a time bin, mark the bin as 1.
+        Downsample spike data to a specific number of samples.
+        Binary method: If any spike occurs in a time bin, mark the bin as 1.
+        Count method: Sum the number of spikes in each bin.
 
         Args:
             spike_matrix: scipy.sparse.csr_matrix or np.ndarray (n_neurons, n_timepoints)
@@ -178,26 +183,38 @@ class BanditTaskNeuroPixelsDataset:
     def _downsample_sparse(self, spike_matrix, bin_size, n_neurons, n_downsampled):
         """Downsample sparse spike matrix efficiently"""
         # Convert to COO format for easier manipulation
-        coo = spike_matrix.tocoo() # Get row (neuron) and col (time) indices
+        coo = spike_matrix.tocoo()
 
         # Bin the time indices
-        new_time_indices = (coo.col / bin_size).astype(int) # Map original time indices to new binned indices
+        new_time_indices = (coo.col / bin_size).astype(int)
 
         # Keep only valid bins
         valid_mask = new_time_indices < n_downsampled
         neuron_indices = coo.row[valid_mask]
         new_time_indices = new_time_indices[valid_mask]
 
-        # Create binary matrix (OR operation: if spike in bin, mark as 1)
-        # Remove duplicates by converting to set of (neuron, time) tuples
-        unique_spikes = np.unique(np.column_stack([neuron_indices, new_time_indices]), axis=0) # Get unique spikes
-
-        data = np.ones(len(unique_spikes), dtype=np.uint8) # Use uint8 to save memory
-        downsampled = sparse.csr_matrix(
-            (data, (unique_spikes[:, 0], unique_spikes[:, 1])),
-            shape=(n_neurons, n_downsampled),
-            dtype=np.uint8
-        )
+        if self.downsample_method == 'binary':
+            # Binary method: OR operation (if spike in bin, mark as 1)
+            unique_spikes = np.unique(np.column_stack([neuron_indices, new_time_indices]), axis=0)
+            data = np.ones(len(unique_spikes), dtype=np.uint8)
+            downsampled = sparse.csr_matrix(
+                (data, (unique_spikes[:, 0], unique_spikes[:, 1])),
+                shape=(n_neurons, n_downsampled),
+                dtype=np.uint8
+            )
+        elif self.downsample_method == 'count':
+            # Count method: sum spikes in each bin
+            # Count occurrences of each (neuron, time) pair
+            spike_coords = np.column_stack([neuron_indices, new_time_indices])
+            unique_coords, counts = np.unique(spike_coords, axis=0, return_counts=True)
+            
+            downsampled = sparse.csr_matrix(
+                (counts, (unique_coords[:, 0], unique_coords[:, 1])),
+                shape=(n_neurons, n_downsampled),
+                dtype=np.uint16  # Use uint16 to allow counts > 255
+            )
+        else:
+            raise ValueError(f"Invalid downsample_method: {self.downsample_method}. Must be 'binary' or 'count'.")
 
         return downsampled
 

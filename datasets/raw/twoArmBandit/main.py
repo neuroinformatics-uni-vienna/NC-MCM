@@ -26,8 +26,11 @@ def parse_args():
     parser.add_argument('--data_path', type=str, 
                         default='/home/kerim/Projects/Neural Algorithms/NC-MCM/datasets/raw/twoArmBandit/JPAS_0023_20230922',
                         help='Path to dataset directory')
-    parser.add_argument('--downsample_fs', type=int, nargs='+', default=[25],
+    parser.add_argument('--downsample_fs', type=int, nargs='+', default=[15],
                         help='Downsampling frequency (can specify multiple values for grid search)')
+    parser.add_argument('--downsample_method', type=str, nargs='+', default=['binary'],
+                        choices=['binary', 'count'],
+                        help='Downsampling method (can specify multiple values for grid search)')
     parser.add_argument('--window', type=int, nargs='+', default=[20],
                         help='Window length for time delay embedding (can specify multiple values for grid search)')
     
@@ -94,10 +97,10 @@ def save_config(args, output_dir):
     print(f"Configuration saved to {config_path}")
 
 
-def load_data(data_path, downsample_fs):
+def load_data(data_path, downsample_fs, downsample_method):
     """Load and prepare dataset"""
     print("Loading dataset...")
-    dataset = BanditTaskNeuroPixelsDataset(data_path=data_path, downsample_fs=downsample_fs)
+    dataset = BanditTaskNeuroPixelsDataset(data_path=data_path, downsample_fs=downsample_fs, downsample_method=downsample_method)
     x = dataset.x.T.toarray()
     b = dataset.b.toarray().flatten()
     b_labels = dataset.b_labels
@@ -309,6 +312,7 @@ def generate_param_combinations(args):
     # Parameters to grid search over
     param_grid = {
         'downsample_fs': args.downsample_fs,
+        'downsample_method': args.downsample_method,
         'window': args.window,
         'latent_dim': args.latent_dim,
         'batch_size': args.batch_size,
@@ -368,7 +372,7 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
     
     # Load data
     step_start = time.time()
-    x, b, b_labels = load_data(args.data_path, args.downsample_fs)
+    x, b, b_labels = load_data(args.data_path, args.downsample_fs, args.downsample_method)
     print_step_time("Data loading", run_start_time, step_start)
     
     # Visualize raw data
@@ -453,6 +457,7 @@ def main():
     print(f"Total parameter combinations: {total_runs}")
     print(f"Parameters being searched:")
     print(f"  - downsample_fs: {args.downsample_fs}")
+    print(f"  - downsample_method: {args.downsample_method}")
     print(f"  - window: {args.window}")
     print(f"  - latent_dim: {args.latent_dim}")
     print(f"  - batch_size: {args.batch_size}")
