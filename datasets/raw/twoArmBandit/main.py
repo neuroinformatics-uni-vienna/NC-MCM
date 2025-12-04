@@ -80,7 +80,17 @@ def create_grid_search_directory(base_dir):
 
 def create_run_directory(grid_dir, run_idx, params):
     """Create directory for a specific parameter combination"""
-    param_str = '_'.join([f"{k}={v}" for k, v in params.items()])
+    # Sanitize parameters for use in directory names
+    sanitized_params = {}
+    for k, v in params.items():
+        if k == 'data_path':
+            # Extract just the last directory name from the path
+            v = Path(v).name
+        # Replace problematic characters
+        v_str = str(v).replace('/', '_').replace('\\', '_').replace(':', '_')
+        sanitized_params[k] = v_str
+    
+    param_str = '_'.join([f"{k}={v}" for k, v in sanitized_params.items()])
     run_dir = grid_dir / f'run_{run_idx:03d}_{param_str}'
     run_dir.mkdir(parents=True, exist_ok=True)
     
