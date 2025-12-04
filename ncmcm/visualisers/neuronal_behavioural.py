@@ -9,6 +9,8 @@ from matplotlib.colors import ListedColormap
 import seaborn as sns
 import numpy as np
 import matplotlib as cm
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 
 def plotting_neuronal_behavioural(
@@ -108,5 +110,136 @@ def plotting_neuronal_behavioural(
         plt.show()
 
     return fig, axs
+
+
+def plotting_neuronal_behavioural_plotly(
+    x, 
+    b=None, 
+    b_names={}, 
+    s=None, 
+    s_names={}, 
+    r=None, 
+    r_names={}, 
+    show_fig=True, 
+    **kwargs
+):
+    """
+    Visualize simultaneously recorded neuronal activations and behavioral data using Plotly.
+
+    This function plots neuronal traces and optionally includes behavioral, 
+    stimulus, and response variables if provided.
+
+    Parameters:
+    - x: 2D numpy array of neuronal activation data, 
+        with shape (neurons, time).
+    - b: 1D numpy array of behavioral data (optional).
+    - b_names: Dictionary mapping behavior labels to their names (optional).
+    - s: 1D numpy array of stimulus data (optional).
+    - s_names: Dictionary mapping stimulus labels to their names (optional).
+    - r: 1D numpy array of response data (optional).
+    - r_names: Dictionary mapping response labels to their names (optional).
+    - show_fig: Boolean indicating whether to display the plot
+    - kwargs: Additional keyword arguments for customizing the neuronal 
+        activation plot (vmin, vmax, colorscale, etc.).
+
+    Returns:
+    - fig: The plotly figure object.
+
+    Example usage:
+    ```
+    # Basic usage with neuronal data and behavior
+    plotting_neuronal_behavioural_plotly(x, b=b, b_names={0: 'Rest', 1: 'Move'})
+
+    # Including stimulus and response data
+    plotting_neuronal_behavioural_plotly(
+        x,
+        b=b, b_names={0: 'Rest', 1: 'Move'},
+        s=s, s_names={0: 'No Stimulus', 1: 'Stimulus'},
+        r=r, r_names={0: 'No Response', 1: 'Response'},
+        vmin=0, vmax=1)
+    ```
+    """
+    num_plots = 1 + sum([1 if var is not None else 0 for var in [b, s, r]])
+    
+    fig = make_subplots(
+        rows=num_plots, 
+        cols=1,
+        subplot_titles=None,
+        vertical_spacing=0.1,
+        row_heights=[2] * num_plots,
+        shared_xaxes=True
+    )
+    
+    # Extract vmin, vmax, colorscale from kwargs
+    vmin = kwargs.pop('vmin', None)
+    vmax = kwargs.pop('vmax', None)
+    colorscale = kwargs.pop('colorscale', 'Viridis')
+    
+    # Plot neuronal activation
+    heatmap = go.Heatmap(
+        z=x.T,
+        colorscale=colorscale,
+        zmin=vmin,
+        zmax=vmax,
+        colorbar=dict(len=1/num_plots, y=1 - 0.5/num_plots)
+    )
+    fig.add_trace(heatmap, row=1, col=1)
+    fig.update_xaxes(title_text="time <i>t</i>", row=1, col=1)
+    fig.update_yaxes(title_text="Neuronal activation", row=1, col=1)
+
+    if isinstance(b_names, (list, np.ndarray)):
+        b_names = {i: str(name) for i, name in enumerate(b_names)}
+
+    if isinstance(s_names, (list, np.ndarray)):
+        s_names = {i: str(name) for i, name in enumerate(s_names)}
+
+    if isinstance(r_names, (list, np.ndarray)):
+        r_names = {i: str(name) for i, name in enumerate(r_names)}
+
+    def discrete_plot(row, data, names, y_label, palette):
+        colors = sns.color_palette(palette, len(names))
+        colors_rgb = [f'rgb({int(r*255)},{int(g*255)},{int(b*255)})' for r, g, b in colors]
+        
+        # Create custom colorscale
+        unique_vals = np.unique(data)
+        colorscale_list = [[i/(len(unique_vals)-1) if len(unique_vals) > 1 else 0, colors_rgb[int(val)]] 
+                          for i, val in enumerate(unique_vals)]
+        
+        heatmap = go.Heatmap(
+            z=[data],
+            colorscale=colorscale_list,
+            zmin=np.min(data) - 0.5,
+            zmax=np.max(data) + 0.5,
+            colorbar=dict(
+                len=1/num_plots,
+                y=1 - (row - 0.5)/num_plots,
+                tickvals=unique_vals,
+                ticktext=[names.get(int(v), str(v)) for v in unique_vals] if names else [str(v) for v in unique_vals]
+            ),
+            opacity=0.6 if row == 2 and b is not None else 1.0
+        )
+        fig.add_trace(heatmap, row=row, col=1)
+        fig.update_xaxes(title_text="time <i>t</i>", row=row, col=1)
+        fig.update_yaxes(title_text=y_label, row=row, col=1, showticklabels=False)
+
+    current_row = 2
+    if b is not None:
+        discrete_plot(current_row, b, b_names, "Behaviour", "deep")
+        current_row += 1
+    if s is not None:
+        discrete_plot(current_row, s, s_names, "Stimulus", "Set2")
+        current_row += 1
+    if r is not None:
+        discrete_plot(current_row, r, r_names, "Response", "Set3")
+
+    fig.update_layout(
+        height=num_plots * 200,
+        showlegend=False
+    )
+
+    if show_fig:
+        fig.show()
+
+    return fig
 
 
