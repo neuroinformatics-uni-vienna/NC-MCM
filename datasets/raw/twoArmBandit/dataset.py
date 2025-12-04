@@ -27,6 +27,10 @@ class BanditTaskNeuroPixelsDataset:
             b: Behavioral time-series data (scipy.sparse.csr_matrix) of shape (num_behaviors, num_timepoints). Do .toarray() to convert to dense.
             b_labels_dict: Behavioral labels as a dictionary
             b_continuous: Continuous behavioral data (np.ndarray) of shape (num_timepoints,) with running average of last 10 decisions (-1 for left, 1 for right)
+            trial_indices: Trial indices (np.ndarray) of shape (num_timepoints,) indicating which trial each timepoint belongs to (starting from 0, -1 for timepoints outside trials)
+            block_indices: Block indices (np.ndarray) of shape (num_timepoints,) indicating which block each timepoint belongs to (starting from 0, -1 for timepoints before first block)
+            block_labels: Block labels (np.ndarray) of shape (num_timepoints,) indicating the block name for each timepoint
+            behavioral_time: Behavioral time (np.ndarray) of shape (num_timepoints,) with the behavioral time in milliseconds at the start of each timepoint
             fs: Sampling frequency
         
         """
@@ -39,6 +43,10 @@ class BanditTaskNeuroPixelsDataset:
         self.b_labels_dict = None # behavioral lables as dict
         self.b_labels = None # behavioral labels as list
         self.b_continuous = None  # continuous behavioral data (running avg of last 10 decisions)
+        self.trial_indices = None  # the trial indices for each timepoint
+        self.block_indices = None  # the block indices for each timepoint
+        self.block_labels = None  # the block labels/names for each timepoint
+        self.behavioral_time = None  # behavioral time array (in ms)
         self.fs = None  # sampling frequency
         
         # load data and assign to attributes
@@ -98,6 +106,18 @@ class BanditTaskNeuroPixelsDataset:
         # Create continuous behavioral data (running average of last 10 decisions)
         self.b_continuous = self._create_continuous_behavioral_data(metrics, neuronal_length, translation_indices_neuronal_to_behavioral)
         
+        # Create trial indices for each timepoint
+        self.trial_indices = self._create_trial_indices(metrics, neuronal_length, translation_indices_neuronal_to_behavioral)
+        
+        # Create block indices for each timepoint
+        self.block_indices = self._create_block_indices(metrics, neuronal_length, translation_indices_neuronal_to_behavioral)
+        
+        # Create block labels for each timepoint
+        self.block_labels = self._create_block_labels(metrics, neuronal_length, translation_indices_neuronal_to_behavioral)
+        
+        # Create behavioral time array (start time of each timepoint in ms)
+        self.behavioral_time = self._create_behavioral_time_array(neuronal_length, translation_indices_neuronal_to_behavioral)
+        
         # Post processing: Trim waiting periods from start and end
         self._trim_waiting_periods(self.x, self.b, self.b_labels_dict)
         self._relabel_behavioral_states()
@@ -105,6 +125,10 @@ class BanditTaskNeuroPixelsDataset:
         # Final check to ensure lengths match
         assert self.x.shape[1] == self.b.shape[1], "Final neuronal and behavioral data length mismatch after processing."
         assert len(self.b_continuous) == self.b.shape[1], "Continuous behavioral data length mismatch after processing."
+        assert len(self.trial_indices) == self.b.shape[1], "Trial indices length mismatch after processing."
+        assert len(self.block_indices) == self.b.shape[1], "Block indices length mismatch after processing."
+        assert len(self.block_labels) == self.b.shape[1], "Block labels length mismatch after processing."
+        assert len(self.behavioral_time) == self.b.shape[1], "Behavioral time array length mismatch after processing."
         
         # Sort behavioral labels by their state id (dict keys) and store as list
         self.b_labels = [self.b_labels_dict[k] for k in sorted(self.b_labels_dict.keys())]
@@ -140,6 +164,10 @@ class BanditTaskNeuroPixelsDataset:
         self.x = x[:, first_non_waiting_idx:last_non_waiting_idx]
         self.b = b[:, first_non_waiting_idx:last_non_waiting_idx]
         self.b_continuous = self.b_continuous[first_non_waiting_idx:last_non_waiting_idx]
+        self.trial_indices = self.trial_indices[first_non_waiting_idx:last_non_waiting_idx]
+        self.block_indices = self.block_indices[first_non_waiting_idx:last_non_waiting_idx]
+        self.block_labels = self.block_labels[first_non_waiting_idx:last_non_waiting_idx]
+        self.behavioral_time = self.behavioral_time[first_non_waiting_idx:last_non_waiting_idx]
 
     def _downsample_translation_indices(self, translation_indices, target_num_samples):
         """
@@ -418,3 +446,182 @@ class BanditTaskNeuroPixelsDataset:
         if self.good_neurons_only:
             cluster_info = cluster_info[cluster_info["group"] == "good"]
         return cluster_info
+    
+    def _create_trial_indices(self, metrics, neuronal_length, translation_indices_neuronal_to_behavioral):
+        """
+        Create trial index array aligned with neuronal data.
+        Each timepoint is assigned the index of the trial it belongs to (starting from 0).
+        Timepoints outside of trials are assigned -1.
+
+        Args:
+            metrics: behavioral metrics from JSON
+            neuronal_length: number of samples in neuronal data (potentially downsampled)
+            translation_indices_neuronal_to_behavioral: mapping from neuronal time to behavioral time (potentially downsampled)
+
+        Returns:
+            np.ndarray of shape (neuronal_length,) with trial indices
+        """
+        trials = metrics['metrics']['trials']
+        
+        # Find the last timestamp in behavioral time (ms)
+        max_trial_time = max([t.get('t chosen', 0) for t in trials if 't chosen' in t], default=0)
+        last_timestamp_ms = int(max_trial_time)
+        
+        # Initialize trial index array in behavioral time (milliseconds)
+        # Use -1 to indicate timepoints not in any trial
+        trial_indices_ms = np.full(last_timestamp_ms + 1, -1, dtype=np.int32)
+        
+        # Sort trials by start time to process chronologically
+        sorted_trials = sorted(trials, key=lambda t: t.get('start', 0))
+        
+        # Assign trial indices to each time period
+        for trial_idx, trial in enumerate(sorted_trials):
+            start_time = trial.get('start')
+            end_time = trial.get('t chosen')
+            
+            if start_time is None or end_time is None:
+                continue
+            
+            # Assign this trial index to all timepoints in the trial
+            trial_indices_ms[start_time:end_time + 1] = trial_idx
+        
+        # Map neuronal time to trial indices using translation indices
+        trial_indices_neuronal = np.full(neuronal_length, -1, dtype=np.int32)
+        
+        for neuronal_idx in range(neuronal_length):
+            behavioral_ms = int(translation_indices_neuronal_to_behavioral[neuronal_idx])
+            behavioral_ms = min(behavioral_ms, last_timestamp_ms)
+            trial_indices_neuronal[neuronal_idx] = trial_indices_ms[behavioral_ms]
+        
+        return trial_indices_neuronal
+    
+    def _create_block_indices(self, metrics, neuronal_length, translation_indices_neuronal_to_behavioral):
+        """
+        Create block index array aligned with neuronal data.
+        Each timepoint is assigned the index of the block it belongs to (starting from 0).
+        Timepoints before the first block are assigned -1.
+
+        Args:
+            metrics: behavioral metrics from JSON
+            neuronal_length: number of samples in neuronal data (potentially downsampled)
+            translation_indices_neuronal_to_behavioral: mapping from neuronal time to behavioral time (potentially downsampled)
+
+        Returns:
+            np.ndarray of shape (neuronal_length,) with block indices
+        """
+        blocks = metrics['metrics']['blocks']
+        
+        # Find the last timestamp in behavioral time (ms)
+        # Use the last block's start time or last trial time as reference
+        trials = metrics['metrics']['trials']
+        max_trial_time = max([t.get('t chosen', 0) for t in trials if 't chosen' in t], default=0)
+        max_block_time = max([b.get('t', 0) for b in blocks], default=0)
+        last_timestamp_ms = int(max(max_trial_time, max_block_time))
+        
+        # Initialize block index array in behavioral time (milliseconds)
+        # Use -1 to indicate timepoints before any block
+        block_indices_ms = np.full(last_timestamp_ms + 1, -1, dtype=np.int32)
+        
+        # Sort blocks by start time to process chronologically
+        sorted_blocks = sorted(blocks, key=lambda b: b.get('t', 0))
+        
+        # Assign block indices to each time period
+        for block_idx, block in enumerate(sorted_blocks):
+            start_time = block.get('t')
+            
+            if start_time is None:
+                continue
+            
+            # Find the end time (start of next block or end of recording)
+            if block_idx < len(sorted_blocks) - 1:
+                end_time = sorted_blocks[block_idx + 1].get('t', last_timestamp_ms)
+            else:
+                end_time = last_timestamp_ms
+            
+            # Assign this block index to all timepoints in the block
+            block_indices_ms[start_time:end_time + 1] = block_idx
+        
+        # Map neuronal time to block indices using translation indices
+        block_indices_neuronal = np.full(neuronal_length, -1, dtype=np.int32)
+        
+        for neuronal_idx in range(neuronal_length):
+            behavioral_ms = int(translation_indices_neuronal_to_behavioral[neuronal_idx])
+            behavioral_ms = min(behavioral_ms, last_timestamp_ms)
+            block_indices_neuronal[neuronal_idx] = block_indices_ms[behavioral_ms]
+        
+        return block_indices_neuronal
+    
+    def _create_block_labels(self, metrics, neuronal_length, translation_indices_neuronal_to_behavioral):
+        """
+        Create block label array aligned with neuronal data.
+        Each timepoint is assigned the label/name of the block it belongs to.
+        Timepoints before the first block are assigned None.
+
+        Args:
+            metrics: behavioral metrics from JSON
+            neuronal_length: number of samples in neuronal data (potentially downsampled)
+            translation_indices_neuronal_to_behavioral: mapping from neuronal time to behavioral time (potentially downsampled)
+
+        Returns:
+            np.ndarray of shape (neuronal_length,) with block labels (strings)
+        """
+        blocks = metrics['metrics']['blocks']
+        
+        # Find the last timestamp in behavioral time (ms)
+        trials = metrics['metrics']['trials']
+        max_trial_time = max([t.get('t chosen', 0) for t in trials if 't chosen' in t], default=0)
+        max_block_time = max([b.get('t', 0) for b in blocks], default=0)
+        last_timestamp_ms = int(max(max_trial_time, max_block_time))
+        
+        # Initialize block label array in behavioral time (milliseconds)
+        # Use None to indicate timepoints before any block
+        block_labels_ms = np.full(last_timestamp_ms + 1, None, dtype=object)
+        
+        # Sort blocks by start time to process chronologically
+        sorted_blocks = sorted(blocks, key=lambda b: b.get('t', 0))
+        
+        # Assign block labels to each time period
+        for block_idx, block in enumerate(sorted_blocks):
+            start_time = block.get('t')
+            block_label = block.get('block')
+            
+            if start_time is None or block_label is None:
+                continue
+            
+            # Find the end time (start of next block or end of recording)
+            if block_idx < len(sorted_blocks) - 1:
+                end_time = sorted_blocks[block_idx + 1].get('t', last_timestamp_ms)
+            else:
+                end_time = last_timestamp_ms
+            
+            # Assign this block label to all timepoints in the block
+            block_labels_ms[start_time:end_time + 1] = block_label
+        
+        # Map neuronal time to block labels using translation indices
+        block_labels_neuronal = np.full(neuronal_length, None, dtype=object)
+        
+        for neuronal_idx in range(neuronal_length):
+            behavioral_ms = int(translation_indices_neuronal_to_behavioral[neuronal_idx])
+            behavioral_ms = min(behavioral_ms, last_timestamp_ms)
+            block_labels_neuronal[neuronal_idx] = block_labels_ms[behavioral_ms]
+        
+        return block_labels_neuronal
+    
+    def _create_behavioral_time_array(self, neuronal_length, translation_indices_neuronal_to_behavioral):
+        """
+        Create behavioral time array aligned with neuronal data.
+        Each timepoint is assigned its corresponding behavioral time in milliseconds (at the start of the timepoint).
+
+        Args:
+            neuronal_length: number of samples in neuronal data (potentially downsampled)
+            translation_indices_neuronal_to_behavioral: mapping from neuronal time to behavioral time (potentially downsampled)
+
+        Returns:
+            np.ndarray of shape (neuronal_length,) with behavioral times in milliseconds
+        """
+        behavioral_time = np.zeros(neuronal_length, dtype=np.float64)
+        
+        for neuronal_idx in range(neuronal_length):
+            behavioral_time[neuronal_idx] = translation_indices_neuronal_to_behavioral[neuronal_idx]
+        
+        return behavioral_time
