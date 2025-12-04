@@ -429,7 +429,15 @@ class BanditTaskNeuroPixelsDataset:
             
             # Apply this value to the entire trial period
             continuous_array_ms[start_time:end_time + 1] = running_avg
-        
+            
+        # After processing all trials, forward-fill to handle gaps
+        last_value = 0.0
+        for i in range(len(continuous_array_ms)):
+            if continuous_array_ms[i] != 0.0 or i == 0:
+                last_value = continuous_array_ms[i]
+            else:
+                continuous_array_ms[i] = last_value
+    
         # Map neuronal time to continuous behavioral data using translation indices
         continuous_array_neuronal = np.zeros(neuronal_length, dtype=np.float32)
         
