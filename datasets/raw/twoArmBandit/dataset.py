@@ -633,3 +633,257 @@ class BanditTaskNeuroPixelsDataset:
             behavioral_time[neuronal_idx] = translation_indices_neuronal_to_behavioral[neuronal_idx]
         
         return behavioral_time
+    
+    # ------------------ Additional methods can be added here ----------------- #
+    
+    def get_recording_length_mins(self):
+        """
+        Get the length of the recording in minutes.
+        
+        Returns:
+            float: Recording length in minutes
+        """
+        return self.x.shape[1] / self.fs / 60
+    
+    def get_behavior_state_segments(self, state=None):
+        """
+        Get all consecutive segment lengths for behavioral states.
+        
+        Args:
+            state: If provided, only return segments for this specific state.
+                   Can be an int (state id) or str (state name).
+                   If None, return segments for all states.
+        
+        Returns:
+            np.ndarray: Array of segment lengths (in time steps)
+        """
+        b_dense = self.b.toarray().flatten()
+        
+        # Convert state name to id if necessary
+        if isinstance(state, str):
+            state_id = next((k for k, v in self.b_labels_dict.items() if v == state), None)
+            if state_id is None:
+                raise ValueError(f"State '{state}' not found. Available states: {list(self.b_labels_dict.values())}")
+        else:
+            state_id = state
+        
+        # Find where the state changes
+        state_changes = np.where(np.diff(b_dense) != 0)[0] + 1
+        
+        # Add start and end indices
+        segment_boundaries = np.concatenate([[0], state_changes, [len(b_dense)]])
+        
+        # Calculate segment lengths and get corresponding states
+        segment_lengths = np.diff(segment_boundaries)
+        segment_states = b_dense[segment_boundaries[:-1]]  # State at start of each segment
+        
+        if state_id is not None:
+            # Filter for specific state
+            mask = segment_states == state_id
+            return segment_lengths[mask]
+        
+        return segment_lengths
+    
+    def get_behavior_state_mean_length(self, state=None):
+        """
+        Get the mean duration (in time steps) of behavioral state segments.
+        
+        Args:
+            state: If provided, only consider segments for this specific state.
+                   Can be an int (state id) or str (state name).
+        
+        Returns:
+            float: Mean segment length
+        """
+        segments = self.get_behavior_state_segments(state)
+        return float(np.mean(segments))
+    
+    def get_behavior_state_max_length(self, state=None):
+        """
+        Get the maximum duration (in time steps) of behavioral state segments.
+        
+        Args:
+            state: If provided, only consider segments for this specific state.
+                   Can be an int (state id) or str (state name).
+        
+        Returns:
+            int: Maximum segment length
+        """
+        segments = self.get_behavior_state_segments(state)
+        return int(np.max(segments))
+    
+    def get_behavior_state_min_length(self, state=None):
+        """
+        Get the minimum duration (in time steps) of behavioral state segments.
+        
+        Args:
+            state: If provided, only consider segments for this specific state.
+                   Can be an int (state id) or str (state name).
+        
+        Returns:
+            int: Minimum segment length
+        """
+        segments = self.get_behavior_state_segments(state)
+        return int(np.min(segments))
+    
+    def get_behavior_state_median_length(self, state=None):
+        """
+        Get the median duration (in time steps) of behavioral state segments.
+        
+        Args:
+            state: If provided, only consider segments for this specific state.
+                   Can be an int (state id) or str (state name).
+        
+        Returns:
+            float: Median segment length
+        """
+        segments = self.get_behavior_state_segments(state)
+        return float(np.median(segments))
+    
+    def get_behavior_state_std_length(self, state=None):
+        """
+        Get the standard deviation of behavioral state segment durations.
+        
+        Args:
+            state: If provided, only consider segments for this specific state.
+                   Can be an int (state id) or str (state name).
+        
+        Returns:
+            float: Standard deviation of segment lengths
+        """
+        segments = self.get_behavior_state_segments(state)
+        return float(np.std(segments))
+    
+    def get_behavior_state_percentile_length(self, percentile, state=None):
+        """
+        Get a specific percentile of behavioral state segment durations.
+        
+        Args:
+            percentile: The percentile to compute (0-100)
+            state: If provided, only consider segments for this specific state.
+                   Can be an int (state id) or str (state name).
+        
+        Returns:
+            float: The percentile value of segment lengths
+        """
+        segments = self.get_behavior_state_segments(state)
+        return float(np.percentile(segments, percentile))
+    
+    def get_behavior_state_length_statistics(self, state=None):
+        """
+        Get comprehensive statistics on behavioral state segment durations.
+        
+        Args:
+            state: If provided, only consider segments for this specific state.
+                   Can be an int (state id) or str (state name).
+        
+        Returns:
+            dict: Dictionary containing:
+                - 'state': The state name (or 'all' if state is None)
+                - 'count': Number of segments
+                - 'min': Minimum segment length
+                - 'max': Maximum segment length
+                - 'mean': Mean segment length
+                - 'median': Median segment length
+                - 'std': Standard deviation of segment lengths
+                - 'percentile_25': 25th percentile
+                - 'percentile_75': 75th percentile
+                - 'percentile_90': 90th percentile
+                - 'percentile_95': 95th percentile
+                - 'percentile_99': 99th percentile
+        """
+        segments = self.get_behavior_state_segments(state)
+        
+        # Determine state name for reporting
+        if state is None:
+            state_name = 'all'
+        elif isinstance(state, str):
+            state_name = state
+        else:
+            state_name = self.b_labels_dict.get(state, str(state))
+        
+        return {
+            'state': state_name,
+            'count': len(segments),
+            'min': int(np.min(segments)),
+            'max': int(np.max(segments)),
+            'mean': float(np.mean(segments)),
+            'median': float(np.median(segments)),
+            'std': float(np.std(segments)),
+            'percentile_25': float(np.percentile(segments, 25)),
+            'percentile_75': float(np.percentile(segments, 75)),
+            'percentile_90': float(np.percentile(segments, 90)),
+            'percentile_95': float(np.percentile(segments, 95)),
+            'percentile_99': float(np.percentile(segments, 99)),
+        }
+    
+    def get_all_behavior_states_length_statistics(self):
+        """
+        Get comprehensive statistics on segment durations for all behavioral states.
+        
+        Returns:
+            dict: Dictionary mapping state names to their statistics dictionaries
+        """
+        stats = {}
+        for state_id, state_name in self.b_labels_dict.items():
+            stats[state_name] = self.get_behavior_state_length_statistics(state_id)
+        return stats
+    
+    def plot_behavior_state_lengths_boxplot(self, show_fig=True, convert_to_seconds=False):
+        """
+        Create a Plotly boxplot showing the distribution of segment lengths for each behavioral state.
+        
+        Args:
+            show_fig: If True, display the figure. Default is True.
+            convert_to_seconds: If True, convert time steps to seconds using the sampling frequency.
+        
+        Returns:
+            plotly.graph_objects.Figure: The boxplot figure
+        """
+        import plotly.graph_objects as go
+        
+        b_dense = self.b.toarray().flatten()
+        
+        # Find where the state changes
+        state_changes = np.where(np.diff(b_dense) != 0)[0] + 1
+        segment_boundaries = np.concatenate([[0], state_changes, [len(b_dense)]])
+        segment_lengths = np.diff(segment_boundaries)
+        segment_states = b_dense[segment_boundaries[:-1]]
+        
+        # Convert to seconds if requested
+        if convert_to_seconds:
+            segment_lengths = segment_lengths / self.fs
+            y_label = "Segment Length (seconds)"
+        else:
+            y_label = "Segment Length (time steps)"
+        
+        # Create box plot data for each state
+        fig = go.Figure()
+        
+        for state_id in sorted(self.b_labels_dict.keys()):
+            state_name = self.b_labels_dict[state_id]
+            mask = segment_states == state_id
+            state_segments = segment_lengths[mask]
+            
+            fig.add_trace(go.Box(
+                y=state_segments,
+                name=state_name,
+                boxpoints='outliers',  # Show only outliers as points
+                jitter=0.3,
+                pointpos=-1.8
+            ))
+        
+        fig.update_layout(
+            title="Behavioral State Segment Length Distributions",
+            yaxis_title=y_label,
+            xaxis_title="Behavioral State",
+            showlegend=False,
+            height=500
+        )
+        
+        if show_fig:
+            fig.show()
+        
+        return fig
+    
+    
