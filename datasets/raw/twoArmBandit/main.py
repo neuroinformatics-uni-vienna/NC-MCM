@@ -28,7 +28,7 @@ def parse_args():
                         help='Path to dataset directory (can specify multiple paths for grid search)')
     parser.add_argument('--downsample_fs', type=int, nargs='+', default=[15],
                         help='Downsampling frequency (can specify multiple values for grid search)')
-    parser.add_argument('--downsample_method', type=str, nargs='+', default=['binary'],
+    parser.add_argument('--downsample_method', type=str, nargs='+', default=['count'],
                         choices=['binary', 'count'],
                         help='Downsampling method (can specify multiple values for grid search)')
     parser.add_argument('--good_neurons_only', type=str, nargs='+', default=['false'],
@@ -49,7 +49,7 @@ def parse_args():
                         help='Number of training epochs')
     parser.add_argument('--learning_rate', type=float, nargs='+', default=[0.001],
                         help='Learning rate (can specify multiple values for grid search)')
-    parser.add_argument('--gamma', type=float, nargs='+', default=[0.9],
+    parser.add_argument('--gamma', type=float, nargs='+', default=[0.8],
                         help='Weight for behavior loss (can specify multiple values for grid search)')
     parser.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu',
                         choices=['cpu', 'cuda'],
@@ -62,10 +62,13 @@ def parse_args():
     parser.add_argument('--recurrence_threshold', type=float, default=0.8,
                         help='Threshold for recurrence plot')
     
+    
     # Output parameters
     parser.add_argument('--output_dir', type=str, 
                         default='./results',
                         help='Base directory for output')
+    parser.add_argument('--no_gif', action='store_true',
+                        help='Disable GIF generation for rotating 3D plots')
     
     return parser.parse_args()
 
@@ -240,7 +243,7 @@ def visualize_neural_behavioral(x, b, b_labels, output_dir):
     print(f"Neural-behavioral plot saved to {plot_path}")
 
 
-def visualize_latent_space(y, b, b_labels, output_dir, vis_range, data_split='train'):
+def visualize_latent_space(y, b, b_labels, output_dir, vis_range, data_split='train', generate_gif=True):
     """Create all latent space visualizations"""
     print(f"Creating latent space visualizations for {data_split} data...")
     
@@ -270,21 +273,34 @@ def visualize_latent_space(y, b, b_labels, output_dir, vis_range, data_split='tr
         filename=str(output_dir / 'figures' / f'latent_time_series_{data_split}.png')
     )
     
-    # Phase space plot
-    print("  - Phase space dynamics...")
-    fig, ax = vis.plot_phase_space(
-        show_fig=False,
-        filename=str(output_dir / 'figures' / f'phase_space_dynamics_{data_split}.png')
-    )
-    plt.close(fig)
+    # Phase space plots from multiple perspectives
+    print("  - Phase space dynamics (multiple views)...")
+    phase_space_views = [
+        ((30, -60), 'default'),      # Standard 3D perspective
+        ((90, 0), 'top'),            # Top-down view (bird's eye)
+        ((0, 0), 'front'),           # Front view (XZ plane)
+        ((0, 90), 'side'),           # Side view (YZ plane)
+        ((30, 45), 'isometric'),     # Isometric-like diagonal view
+    ]
     
-    # Rotating 3D plot
-    print("  - Rotating 3D plot...")
-    fig, ax = vis.rotating_plot(
-        show_fig=False,
-        filename=str(output_dir / 'figures' / f'rotation_3d_{data_split}.gif')
-    )
-    plt.close(fig)
+    for (elev, azim), view_name in phase_space_views:
+        fig, ax = vis.plot_phase_space(
+            show_fig=False,
+            axis_view=(elev, azim),
+            filename=str(output_dir / 'figures' / f'phase_space_dynamics_{data_split}_{view_name}.png')
+        )
+        plt.close(fig)
+    
+    # Rotating 3D plot (GIF)
+    if generate_gif:
+        print("  - Rotating 3D plot...")
+        fig, ax = vis.rotating_plot(
+            show_fig=False,
+            filename=str(output_dir / 'figures' / f'rotation_3d_{data_split}.gif')
+        )
+        plt.close(fig)
+    else:
+        print("  - Skipping rotating 3D plot (GIF generation disabled)")
     
     # Interactive 3D plot
     print("  - Interactive 3D plot...")
@@ -439,7 +455,7 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
     
     # Visualize training latent space
     step_start = time.time()
-    visualize_latent_space(y_train, b_train, b_labels, output_dir, args.vis_samples, data_split='train')
+    visualize_latent_space(y_train, b_train, b_labels, output_dir, args.vis_samples, data_split='train', generate_gif=not args.no_gif)
     print_step_time("Training latent space visualization", run_start_time, step_start)
     
     # Training recurrence plot
@@ -455,7 +471,7 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
     
     # Visualize validation latent space
     step_start = time.time()
-    visualize_latent_space(y_test, b_test, b_labels, output_dir, args.vis_samples, data_split='validation')
+    visualize_latent_space(y_test, b_test, b_labels, output_dir, args.vis_samples, data_split='validation', generate_gif=not args.no_gif)
     print_step_time("Validation latent space visualization", run_start_time, step_start)
     
     # Validation recurrence plot
