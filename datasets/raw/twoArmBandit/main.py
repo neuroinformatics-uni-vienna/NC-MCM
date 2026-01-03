@@ -123,7 +123,8 @@ def load_data(data_path, downsample_fs, downsample_method, good_neurons_only):
         downsample_method=downsample_method,
         good_neurons_only=good_neurons_only
     )
-    x = dataset.x.T.toarray()
+    # Use float32 to reduce memory usage by 50%
+    x = dataset.x.T.toarray().astype(np.float32)
     b = dataset.b.toarray().flatten()
     b_labels = dataset.b_labels
     
@@ -378,27 +379,53 @@ def generate_param_combinations(args):
     return combinations
 
 
-def save_grid_search_summary(grid_dir, combinations, results):
-    """Save summary of all runs in the grid search"""
+def initialize_grid_search_summary(grid_dir, combinations):
+    """Initialize grid search summary JSON file"""
     summary = {
         'total_runs': len(combinations),
-        'timestamp': datetime.now().isoformat(),
+        'start_timestamp': datetime.now().isoformat(),
+        'last_updated': datetime.now().isoformat(),
+        'completed_runs': 0,
+        'failed_runs': 0,
         'runs': []
     }
-    
-    for i, (params, result) in enumerate(zip(combinations, results)):
-        run_info = {
-            'run_id': i,
-            'parameters': params,
-            'execution_time': result.get('execution_time', None),
-            'output_dir': str(result.get('output_dir', ''))
-        }
-        summary['runs'].append(run_info)
     
     summary_path = grid_dir / 'grid_search_summary.json'
     with open(summary_path, 'w') as f:
         json.dump(summary, f, indent=4)
-    print(f"\nGrid search summary saved to {summary_path}")
+    print(f"Grid search summary initialized at {summary_path}")
+    return summary_path
+
+
+def update_grid_search_summary(summary_path, run_idx, params, result):
+    """Update grid search summary with a completed run"""
+    # Load existing summary
+    with open(summary_path, 'r') as f:
+        summary = json.load(f)
+    
+    # Add run information
+    run_info = {
+        'run_id': run_idx,
+        'parameters': params,
+        'execution_time': result.get('execution_time', None),
+        'execution_time_seconds': result.get('execution_time_seconds', None),
+        'output_dir': str(result.get('output_dir', '')),
+        'status': 'failed' if 'error' in result else 'completed',
+        'error': result.get('error', None),
+        'completed_at': datetime.now().isoformat()
+    }
+    summary['runs'].append(run_info)
+    
+    # Update counters
+    summary['last_updated'] = datetime.now().isoformat()
+    summary['completed_runs'] = sum(1 for r in summary['runs'] if r['status'] == 'completed')
+    summary['failed_runs'] = sum(1 for r in summary['runs'] if r['status'] == 'failed')
+    
+    # Save updated summary
+    with open(summary_path, 'w') as f:
+        json.dump(summary, f, indent=4)
+    
+    print(f"Summary updated: {summary['completed_runs']}/{summary['total_runs']} completed, {summary['failed_runs']} failed")
 
 
 def run_single_experiment(args, params, output_dir, run_idx, total_runs):
@@ -521,11 +548,14 @@ def main():
     if total_runs > 1:
         grid_dir = create_grid_search_directory(args.output_dir)
         print(f"Grid search directory: {grid_dir}\n")
+        # Initialize summary JSON
+        summary_path = initialize_grid_search_summary(grid_dir, param_combinations)
     else:
         # Single run - use original structure
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         grid_dir = Path(args.output_dir) / f'run_{timestamp}'
         grid_dir.mkdir(parents=True, exist_ok=True)
+        summary_path = None
     
     # Run experiments for each parameter combination
     results = []
@@ -548,15 +578,16 @@ def main():
             print(f"Parameters: {params}")
             print(f"Error: {str(e)}")
             print(f"{'!'*80}\n")
-            results.append({
+            result = {
                 'output_dir': output_dir,
                 'execution_time': 'FAILED',
                 'error': str(e)
-            })
-    
-    # Save grid search summary
-    if total_runs > 1:
-        save_grid_search_summary(grid_dir, param_combinations, results)
+            }
+            results.append(result)
+        
+        # Update summary JSON after each run
+        if summary_path is not None:
+            update_grid_search_summary(summary_path, run_idx, params, result)
     
     # Print final summary
     total_time = time.time() - overall_start_time
@@ -570,6 +601,8 @@ def main():
     print(f"Failed: {total_runs - successful_runs}")
     print(f"Total execution time: {format_elapsed_time(total_time)}")
     print(f"All results saved to: {grid_dir}")
+    if summary_path is not None:
+        print(f"Summary JSON: {summary_path}")
     print(f"{'='*80}\n")
 
 
