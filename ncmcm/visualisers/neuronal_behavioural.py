@@ -1,14 +1,13 @@
 """
 @authors:
 Akshey Kumar
-Kerim Atak (small modification to allow plotting only neuronal data without behaviour)
+Kerim Atak
 """
 
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
 import seaborn as sns
 import numpy as np
-import matplotlib as cm
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
