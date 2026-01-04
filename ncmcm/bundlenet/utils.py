@@ -231,13 +231,44 @@ def timeseries_train_test_split(x_paired, b_1):
             return x_train, x_test, b_train_1, b_test_1
 
 
+class LazyBatchDataset(Dataset):
+    """
+    Wrapper dataset that combines a lazy windowed dataset with behavior labels
+    and handles conversion to tensors on-the-fly.
+    """
+    def __init__(self, x_dataset, b_labels, device):
+        """
+        Args:
+            x_dataset: LazyWindowedDataset, Subset, or similar Dataset
+            b_labels: numpy array of behavior labels
+            device: torch device to place tensors on
+        """
+        self.x_dataset = x_dataset
+        self.b_labels = b_labels
+        self.device = device
+        
+    def __len__(self):
+        return len(self.x_dataset)
+    
+    def __getitem__(self, idx):
+        """Return a single sample as tensors on the specified device"""
+        x = self.x_dataset[idx]
+        b = self.b_labels[idx]
+        
+        # Convert to tensors
+        x_tensor = torch.tensor(x, dtype=torch.float32, device=self.device)
+        b_tensor = torch.tensor(b, device=self.device)
+        
+        return x_tensor, b_tensor
+
+
 def torch_batch_prep(x_, b_, device, batch_size=100, shuffle=True):
     """
     Prepare datasets for PyTorch by creating batches.
 
     Parameters:
-        x_ : np.ndarray
-            Input data of shape (n_samples, ...).
+        x_ : np.ndarray or Dataset (e.g., LazyWindowedDataset, Subset)
+            Input data of shape (n_samples, ...) or a PyTorch Dataset.
         b_ : np.ndarray
             Target data of shape (n_samples, ...).
         device : torch.device
@@ -256,10 +287,18 @@ def torch_batch_prep(x_, b_, device, batch_size=100, shuffle=True):
 
     The function returns the prepared batch dataloader, which will be used for training the PyTorch model.
     """
-    tensor_x = torch.tensor(x_, dtype=torch.float, device=device)
-    tensor_b = torch.tensor(b_, device=device)
-    dataset = TensorDataset(tensor_x, tensor_b)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
+    # Check if x_ is a Dataset (lazy or Subset)
+    if isinstance(x_, Dataset):
+        # Use lazy batch dataset to avoid materializing all data at once
+        dataset = LazyBatchDataset(x_, b_, device)
+        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
+    else:
+        # Original behavior for numpy arrays
+        tensor_x = torch.tensor(x_, dtype=torch.float, device=device)
+        tensor_b = torch.tensor(b_, device=device)
+        dataset = TensorDataset(tensor_x, tensor_b)
+        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
+    
     return dataloader
 
 
