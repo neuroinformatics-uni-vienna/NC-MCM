@@ -290,9 +290,9 @@ def visualize_latent_space(y, b, b_labels, output_dir, vis_range, data_split='tr
     
     # Time series plot
     print("  - Latent time series...")
-    vis.plot_latent_timeseries(
+    vis.plot_latent_timeseries_plotly(
         show_fig=False,
-        filename=str(output_dir / 'figures' / f'latent_time_series_{data_split}.png')
+        filename=str(output_dir / 'figures' / f'latent_time_series_{data_split}.html')
     )
     
     # Phase space plots from multiple perspectives
