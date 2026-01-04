@@ -14,7 +14,7 @@ import itertools
 from dataset import BanditTaskNeuroPixelsDataset
 from ncmcm.bundlenet.bundlenet import BunDLeNet, train_model, project_into_latent_space, project_into_latent_space_lazy
 from ncmcm.bundlenet.utils import prep_data, timeseries_train_test_split, prep_data_lazy, timeseries_train_test_split_lazy
-from ncmcm.visualisers.neuronal_behavioural import plotting_neuronal_behavioural
+from ncmcm.visualisers.neuronal_behavioural import plotting_neuronal_behavioural_plotly
 from ncmcm.visualisers.latent_space import LatentSpaceVisualiser
 from sklearn.preprocessing import LabelEncoder
 
@@ -257,22 +257,10 @@ def plot_training_loss(loss_array, test_loss_array, output_dir):
 def visualize_neural_behavioral(x, b, b_labels, output_dir):
     """Visualize neural activity and behavioral choices"""
     print("Plotting neural-behavioral data...")
-    result = plotting_neuronal_behavioural(x, b, b_names=b_labels)
+    fig = plotting_neuronal_behavioural_plotly(x, b, b_names=b_labels, show_fig=False)
     
-    plot_path = output_dir / 'figures' / 'neural_behavioral_overview.png'
-    
-    # Handle different return types (fig, tuple, or None)
-    if isinstance(result, tuple):
-        fig = result[0]
-        if fig is not None:
-            fig.savefig(plot_path, dpi=300, bbox_inches='tight')
-            plt.close(fig)
-    elif result is not None:
-        result.savefig(plot_path, dpi=300, bbox_inches='tight')
-        plt.close(result)
-    else:
-        plt.savefig(plot_path, dpi=300, bbox_inches='tight')
-        plt.close()
+    plot_path = output_dir / 'figures' / 'neural_behavioral_overview.html'
+    fig.write_html(str(plot_path))
     
     print(f"Neural-behavioral plot saved to {plot_path}")
 
