@@ -10,7 +10,27 @@ import numpy as np
 from scipy import sparse
 
 class BanditTaskNeuroPixelsDataset:
-    def __init__(self, data_path, downsample_fs=None, downsample_method='binary', good_neurons_only=True):
+    # Common state transition combinations
+    HOLD_TO_CHOOSING_TRANSITIONS = {
+        ("hold", "choosing left"): "hold --> choosing left",
+        ("hold", "choosing right"): "hold --> choosing right"
+    }
+    
+    # Default color map for behavioral state visualization
+    # Maps state names to color strings (compatible with Plotly)
+    DEFAULT_COLOR_MAP = {
+        "waiting": "#ffffff",           # White - waiting period
+        "intertrial": "#95a5a6",        # Gray - between trials
+        "hold": "#f39d12",              # Orange/Gold - preparatory hold state
+        "choosing left": "#e74c3c",     # Red - left choice
+        "choosing right": "#3498db",    # Blue - right choice
+        "reward": "#2ecc71",            # Green - positive outcome
+        "no reward": "#000000",         # Black - negative outcome
+        "hold --> choosing left": "#e74c3c",   # Red - transition to left
+        "hold --> choosing right": "#3498db",  # Blue - transition to right
+    }
+    
+    def __init__(self, data_path, downsample_fs=None, downsample_method='binary', good_neurons_only=True, state_transitions=None):
         """
         Initialize dataset with flexible spike representation options.
 
@@ -21,11 +41,15 @@ class BanditTaskNeuroPixelsDataset:
                              'binary': Use OR operation (any spike -> 1)
                              'count': Sum the number of spikes in each bin
             good_neurons_only: If True, only include neurons labeled as 'good' in cluster_info.tsv (default: True)
+            state_transitions: Dict mapping state transition tuples to combined state names.
+                             Example: {("hold", "choosing left"): "hold --> choosing left",
+                                      ("hold", "choosing right"): "hold --> choosing right"}
+                             When consecutive states match a transition, they are merged into one combined state.
             
         Attributes after loading:
             x: Neuronal time-series data (scipy.sparse.csr_matrix) of shape (num_neurons, num_timepoints). Do .toarray() to convert to dense.
             b: Behavioral time-series data (scipy.sparse.csr_matrix) of shape (num_behaviors, num_timepoints). Do .toarray() to convert to dense.
-            b_labels_dict: Behavioral labels as a dictionary
+            b_labels_dict: Behavioral labels as a dictionary, mapping state IDs to state names.
             b_continuous: Continuous behavioral data (np.ndarray) of shape (num_timepoints,) with running average of last 10 decisions (-1 for left, 1 for right)
             trial_indices: Trial indices (np.ndarray) of shape (num_timepoints,) indicating which trial each timepoint belongs to (starting from 0, -1 for timepoints outside trials)
             block_indices: Block indices (np.ndarray) of shape (num_timepoints,) indicating which block each timepoint belongs to (starting from 0, -1 for timepoints before first block)
@@ -38,9 +62,10 @@ class BanditTaskNeuroPixelsDataset:
         self.downsample_fs = downsample_fs
         self.downsample_method = downsample_method
         self.good_neurons_only = good_neurons_only
+        self.state_transitions = state_transitions if state_transitions is not None else {}
         self.x = None  # neuronal time-series data (scipy.sparse.csr_matrix)
         self.b = None  # behavioral time-series data (scipy.sparse.csr_matrix)
-        self.b_labels_dict = None # behavioral lables as dict
+        self.b_labels_dict = None # behavioral lables as dict, mapping state id to state name
         self.b_labels = None # behavioral labels as list
         self.b_continuous = None  # continuous behavioral data (running avg of last 10 decisions)
         self.trial_indices = None  # the trial indices for each timepoint
@@ -120,6 +145,11 @@ class BanditTaskNeuroPixelsDataset:
         
         # Post processing: Trim waiting periods from start and end
         self._trim_waiting_periods(self.x, self.b, self.b_labels_dict)
+        
+        # Apply state transitions if specified
+        if self.state_transitions:
+            self._apply_state_transitions()
+        
         self._relabel_behavioral_states()
         
         # Final check to ensure lengths match
@@ -132,6 +162,71 @@ class BanditTaskNeuroPixelsDataset:
         
         # Sort behavioral labels by their state id (dict keys) and store as list
         self.b_labels = [self.b_labels_dict[k] for k in sorted(self.b_labels_dict.keys())]
+    
+    def _apply_state_transitions(self):
+        """
+        Apply state transitions to merge consecutive states into combined states.
+        This modifies self.b and self.b_labels_dict in place.
+        """
+        b_dense = self.b.toarray().flatten()
+        
+        # Create reverse mapping from state name to state id
+        state_name_to_id = {name: state_id for state_id, name in self.b_labels_dict.items()}
+        
+        # Find the next available state id for new combined states
+        next_state_id = max(self.b_labels_dict.keys()) + 1
+        
+        # Create a mapping for transition tuples (state_id1, state_id2) -> combined_state_id
+        transition_id_mapping = {}
+        combined_state_labels = {}
+        
+        for (state1_name, state2_name), combined_name in self.state_transitions.items():
+            if state1_name in state_name_to_id and state2_name in state_name_to_id:
+                state1_id = state_name_to_id[state1_name]
+                state2_id = state_name_to_id[state2_name]
+                
+                # Check if we already have a combined state for this transition
+                transition_key = (state1_id, state2_id)
+                if transition_key not in transition_id_mapping:
+                    combined_state_id = next_state_id
+                    transition_id_mapping[transition_key] = combined_state_id
+                    combined_state_labels[combined_state_id] = combined_name
+                    next_state_id += 1
+        
+        # Process the state array to identify and merge transitions
+        new_state_array = b_dense.copy()
+        i = 0
+        while i < len(b_dense) - 1:
+            current_state = b_dense[i]
+            next_state = b_dense[i + 1]
+            transition_key = (current_state, next_state)
+            
+            if transition_key in transition_id_mapping:
+                # Found a transition to merge
+                combined_state_id = transition_id_mapping[transition_key]
+                
+                # Find the extent of current_state followed by next_state
+                # Start of current_state segment
+                start_idx = i
+                while start_idx > 0 and b_dense[start_idx - 1] == current_state:
+                    start_idx -= 1
+                
+                # End of next_state segment
+                end_idx = i + 1
+                while end_idx < len(b_dense) - 1 and b_dense[end_idx + 1] == next_state:
+                    end_idx += 1
+                
+                # Mark this entire segment as the combined state
+                new_state_array[start_idx:end_idx + 1] = combined_state_id
+                
+                # Skip past this merged segment
+                i = end_idx + 1
+            else:
+                i += 1
+        
+        # Update the behavioral state array and labels
+        self.b = sparse.csr_matrix(new_state_array, shape=(1, len(new_state_array)))
+        self.b_labels_dict.update(combined_state_labels)
         
     def _relabel_behavioral_states(self):        
         # relabel states to start from 0 in case some states are missing
@@ -636,6 +731,38 @@ class BanditTaskNeuroPixelsDataset:
     
     # ------------------ Additional methods can be added here ----------------- #
     
+    def get_color_map_for_plotting(self):
+        """
+        Get a color map suitable for plotting functions that maps state IDs to colors.
+        
+        This method converts the DEFAULT_COLOR_MAP (which maps state names to colors)
+        into a dictionary mapping state IDs to colors using the current dataset's
+        b_labels_dict.
+        
+        Returns:
+            dict: Dictionary mapping state IDs (int) to color strings (hex codes).
+                  Example: {0: '#ffffff', 1: '#e74c3c', 2: '#3498db'}
+        
+        Example:
+            >>> dataset = BanditTaskNeuroPixelsDataset(data_path)
+            >>> color_map = dataset.get_color_map_for_plotting()
+            >>> from ncmcm.visualisers import behavioural_discrete
+            >>> fig = behavioural_discrete.plot_behavior_state_frequencies_barchart(
+            ...     dataset.b, dataset.b_labels_dict, color_map=color_map
+            ... )
+        """
+        color_map = {}
+        for state_id, state_name in self.b_labels_dict.items():
+            if state_name in self.DEFAULT_COLOR_MAP:
+                color_map[state_id] = self.DEFAULT_COLOR_MAP[state_name]
+            else:
+                # Fallback to a default color if state name not in DEFAULT_COLOR_MAP
+                import plotly.express as px
+                colors = px.colors.qualitative.Plotly
+                color_map[state_id] = colors[state_id % len(colors)]
+        
+        return color_map
+    
     def get_recording_length_mins(self):
         """
         Get the length of the recording in minutes.
@@ -644,4 +771,5 @@ class BanditTaskNeuroPixelsDataset:
             float: Recording length in minutes
         """
         return self.x.shape[1] / self.fs / 60
+    
     
