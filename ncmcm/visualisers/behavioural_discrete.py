@@ -102,7 +102,7 @@ def plot_behavior_state_lengths_boxplot(
         
         fig.add_trace(go.Box(
             y=state_segments,
-            name=state_name,
+            name=f"{state_name} (n={len(state_segments)})",
             marker_color=color_map.get(state_id),
             boxpoints='outliers',  # Show only outliers as points
             jitter=0.3,
@@ -301,7 +301,7 @@ def get_all_behavior_states_length_statistics(behavior_data, state_labels_dict):
     return stats
 
 
-def plot_behavior_state_frequencies_barchart(
+def plot_behavior_state_sample_frequencies_barchart(
     behavior_data,
     state_labels_dict,
     show_fig=True,
