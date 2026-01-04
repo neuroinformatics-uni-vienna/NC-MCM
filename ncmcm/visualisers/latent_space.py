@@ -115,6 +115,136 @@ class LatentSpaceVisualiser:
         if show_fig:
             plt.show()
 
+    def plot_latent_timeseries_plotly(
+        self, 
+        show_fig=True, 
+        filename='figures/latent_time_series.html'
+    ):
+        """
+        Plot time series of dynamics in latent space using Plotly.
+
+        This function generates an interactive plot showing the time series 
+        of neuronal dynamics in latent space, with discrete behavior states 
+        represented by a colored heatmap background and latent variables 
+        plotted over time.
+
+        Parameters:
+        -----------
+        show_fig : bool, optional
+            If True, the plot will be displayed interactively. 
+            Default is True.
+        
+        filename : str, optional
+            The path and filename where the plot will be saved as HTML. 
+            Default is 'figures/latent_time_series.html'.
+
+        Returns:
+        --------
+        fig : plotly.graph_objects.Figure
+        """
+        import plotly.graph_objects as go
+        
+        # Create figure
+        fig = go.Figure()
+        
+        # Create custom colorscale for behavioral states with discrete colors
+        unique_vals = np.unique(self.b)
+        colors_rgb = [f'rgb({int(c[0]*255)},{int(c[1]*255)},{int(c[2]*255)})' 
+                      for c in self.colors]
+        
+        # Create discrete colorscale by defining sharp boundaries
+        colorscale_list = []
+        n_colors = len(unique_vals)
+        for i, val in enumerate(unique_vals):
+            color = colors_rgb[int(val)]
+            if n_colors == 1:
+                colorscale_list = [[0, color], [1, color]]
+            else:
+                # Define lower and upper bounds for this discrete color
+                lower_bound = i / n_colors
+                upper_bound = (i + 1) / n_colors
+                
+                # Add both bounds with the same color for sharp transition
+                if i == 0:
+                    colorscale_list.append([0, color])
+                else:
+                    colorscale_list.append([lower_bound, color])
+                
+                if i == n_colors - 1:
+                    colorscale_list.append([1, color])
+                else:
+                    colorscale_list.append([upper_bound, color])
+        
+        # Add behavioral state heatmap as background
+        fig.add_trace(go.Heatmap(
+            z=[self.b],
+            x=np.arange(len(self.b)),
+            y=[0],
+            colorscale=colorscale_list,
+            zmin=np.min(self.b) - 0.5,
+            zmax=np.max(self.b) + 0.5,
+            colorbar=dict(
+                tickvals=unique_vals,
+                ticktext=[self.b_names[int(v)] for v in unique_vals],
+                len=0.5,
+                y=0.5
+            ),
+            opacity=0.6,
+            showscale=True,
+            hoverinfo='skip'
+        ))
+        
+        # Normalize latent variables
+        y_normalized = self.y / np.max(np.abs(self.y)) / 3
+        
+        # Add latent variable traces
+        for i in range(self.y.shape[1]):
+            fig.add_trace(go.Scatter(
+                x=np.arange(len(y_normalized)),
+                y=y_normalized[:, i],
+                mode='lines',
+                name=f'Latent {i+1}',
+                line=dict(width=2),
+                yaxis='y2'
+            ))
+        
+        # Update layout with dual y-axes
+        fig.update_layout(
+            width=1400,
+            height=400,
+            xaxis=dict(
+                title='time <i>t</i>',
+                range=[0, self.y.shape[0]]
+            ),
+            yaxis=dict(
+                visible=False,
+                range=[-0.5, 0.5]
+            ),
+            yaxis2=dict(
+                overlaying='y',
+                side='left',
+                range=[-0.5, 0.5],
+                showgrid=True
+            ),
+            showlegend=True,
+            legend=dict(
+                x=1.05,
+                y=1,
+                xanchor='left',
+                yanchor='top'
+            )
+        )
+        
+        if os.path.dirname(filename):
+            os.makedirs(os.path.dirname(filename), exist_ok=True)
+        
+        fig.write_html(filename)
+        
+        if show_fig:
+            fig.show()
+        
+        return fig
+
     def plot_phase_space(
         self, 
         show_fig=True, 
