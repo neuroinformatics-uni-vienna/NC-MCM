@@ -59,8 +59,8 @@ def parse_args():
     parser.add_argument('--vis_samples', type=int, nargs=2, default=None,
                         metavar=('START', 'END'),
                         help='Range of samples to use for visualization (start end). If not specified, uses full range.')
-    parser.add_argument('--recurrence_threshold', type=float, default=0.8,
-                        help='Threshold for recurrence plot')
+    parser.add_argument('--recurrence_threshold', type=float, default=None,
+                        help='Threshold for recurrence plot. If not specified, recurrence plots will not be generated.')
     
     
     # Output parameters
@@ -508,9 +508,10 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
     print_step_time("Training latent space visualization", run_start_time, step_start)
     
     # Training recurrence plot
-    step_start = time.time()
-    plot_recurrence(y_train, output_dir, args.recurrence_threshold, args.vis_samples, data_split='train')
-    print_step_time("Training recurrence plot generation", run_start_time, step_start)
+    if args.recurrence_threshold is not None:
+        step_start = time.time()
+        plot_recurrence(y_train, output_dir, args.recurrence_threshold, args.vis_samples, data_split='train')
+        print_step_time("Training recurrence plot generation", run_start_time, step_start)
     
     # Project validation data into latent space
     step_start = time.time()
@@ -524,9 +525,10 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
     print_step_time("Validation latent space visualization", run_start_time, step_start)
     
     # Validation recurrence plot
-    step_start = time.time()
-    plot_recurrence(y_test, output_dir, args.recurrence_threshold, args.vis_samples, data_split='validation')
-    print_step_time("Validation recurrence plot generation", run_start_time, step_start)
+    if args.recurrence_threshold is not None:
+        step_start = time.time()
+        plot_recurrence(y_test, output_dir, args.recurrence_threshold, args.vis_samples, data_split='validation')
+        print_step_time("Validation recurrence plot generation", run_start_time, step_start)
     
     total_time = time.time() - run_start_time
     print(f"\n{'='*80}")
