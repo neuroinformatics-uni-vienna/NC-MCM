@@ -275,3 +275,49 @@ def project_into_latent_space(x_, model):
         y0_ = model.tau(torch.from_numpy(x_[:, 0]).float().to(device)).cpu().numpy()
 
     return y0_
+
+
+def project_into_latent_space_lazy(x_dataset, model, batch_size=100):
+    """
+    Memory-efficient inference using BunDLe Net with lazy datasets.
+    
+    Returns IDENTICAL output to project_into_latent_space(), but processes
+    data in batches to avoid materializing the entire dataset in memory.
+    Each data point maps to exactly one latent space point.
+
+    Args:
+        x_dataset: PyTorch Dataset (e.g., LazyWindowedDataset or Subset).
+                   Each item should have shape (2, win-1, n_neurons).
+        model: Instance of the BunDLeNet class.
+        batch_size (int, optional): Internal batch size for processing. 
+                   Only affects memory usage during inference, not the output.
+                   Default is 100.
+        
+    Returns:
+        numpy.ndarray: Model predictions of shape (n_samples, latent_dim).
+                      IDENTICAL to output of project_into_latent_space(x_, model).
+    """
+    from torch.utils.data import DataLoader
+    
+    device = next(model.parameters()).device
+    model.eval()
+    
+    # Create DataLoader for batch processing (batch_size only affects memory, not output)
+    dataloader = DataLoader(x_dataset, batch_size=batch_size, shuffle=False)
+    
+    latent_projections = []
+    
+    with torch.no_grad():
+        for batch in dataloader:
+            # batch has shape (batch_size, 2, win-1, n_neurons)
+            # Extract current timestep: batch[:, 0] -> (batch_size, win-1, n_neurons)
+            x_current = batch[:, 0].float().to(device)
+            
+            # Project to latent space
+            y_batch = model.tau(x_current).cpu().numpy()
+            latent_projections.append(y_batch)
+    
+    # Concatenate all batches
+    y0_ = np.concatenate(latent_projections, axis=0)
+    
+    return y0_

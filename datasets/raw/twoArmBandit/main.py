@@ -12,8 +12,8 @@ import time
 import itertools
 
 from dataset import BanditTaskNeuroPixelsDataset
-from ncmcm.bundlenet.bundlenet import BunDLeNet, train_model, project_into_latent_space
-from ncmcm.bundlenet.utils import prep_data, timeseries_train_test_split
+from ncmcm.bundlenet.bundlenet import BunDLeNet, train_model, project_into_latent_space, project_into_latent_space_lazy
+from ncmcm.bundlenet.utils import prep_data, timeseries_train_test_split, prep_data_lazy, timeseries_train_test_split_lazy
 from ncmcm.visualisers.neuronal_behavioural import plotting_neuronal_behavioural
 from ncmcm.visualisers.latent_space import LatentSpaceVisualiser
 from sklearn.preprocessing import LabelEncoder
@@ -69,6 +69,10 @@ def parse_args():
                         help='Base directory for output')
     parser.add_argument('--no_gif', action='store_true',
                         help='Disable GIF generation for rotating 3D plots')
+    
+    # Memory optimization
+    parser.add_argument('--lazy_loading', action='store_true',
+                        help='Use lazy loading for memory-efficient data preparation')
     
     return parser.parse_args()
 
@@ -134,7 +138,7 @@ def load_data(data_path, downsample_fs, downsample_method, good_neurons_only):
     return x, b, b_labels
 
 
-def preprocess_data(x, b, window):
+def preprocess_data(x, b, window, lazy_loading=False):
     """Preprocess data for BunDLeNet"""
     print("Preprocessing data...")
     
@@ -143,15 +147,33 @@ def preprocess_data(x, b, window):
     b = label_encoder.fit_transform(b)
     
     # Prepare data with time delay embedding
-    x_, b_ = prep_data(x, b, win=window)
-    print(f"Prepared data shapes - x_: {x_.shape}, b_: {b_.shape}")
+    if lazy_loading:
+        print("Using lazy loading (memory-efficient)...")
+        x_, b_ = prep_data_lazy(x, b, win=window)
+        print(f"Lazy dataset created - shape: {x_.shape}, b_: {b_.shape}")
+    else:
+        x_, b_ = prep_data(x, b, win=window)
+        print(f"Prepared data shapes - x_: {x_.shape}, b_: {b_.shape}")
     
     # Train/test split
-    x_train, x_test, b_train, b_test = timeseries_train_test_split(x_, b_)
-    print(f"Train shapes - x: {x_train.shape}, b: {b_train.shape}")
-    print(f"Test shapes - x: {x_test.shape}, b: {b_test.shape}")
+    if lazy_loading:
+        x_train, x_test, b_train, b_test = timeseries_train_test_split_lazy(x_, b_)
+    else:
+        x_train, x_test, b_train, b_test = timeseries_train_test_split(x_, b_)
+    
+    print(f"Train shapes - x: {x_train.shape if hasattr(x_train, 'shape') else len(x_train)}, b: {b_train.shape}")
+    print(f"Test shapes - x: {x_test.shape if hasattr(x_test, 'shape') else len(x_test)}, b: {b_test.shape}")
     
     return x_, b_, x_train, x_test, b_train, b_test
+
+
+def project_latent_space(x_data, model, lazy_loading=False):
+    """Project data into latent space using appropriate method"""
+    if lazy_loading:
+        print("Using lazy projection (memory-efficient)...")
+        return project_into_latent_space_lazy(x_data, model)
+    else:
+        return project_into_latent_space(x_data, model)
 
 
 def train_bundlenet(x_train, b_train, x_test, b_test, x_shape, args, output_dir):
@@ -459,7 +481,7 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
     
     # Preprocess data
     step_start = time.time()
-    x_, b_, x_train, x_test, b_train, b_test = preprocess_data(x, b, args.window)
+    x_, b_, x_train, x_test, b_train, b_test = preprocess_data(x, b, args.window, lazy_loading=args.lazy_loading)
     print_step_time("Data preprocessing", run_start_time, step_start)
     
     # Train model
@@ -477,7 +499,7 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
     # Project training data into latent space
     step_start = time.time()
     print("Projecting training data into latent space...")
-    y_train = project_into_latent_space(x_train, model)
+    y_train = project_latent_space(x_train, model, lazy_loading=args.lazy_loading)
     print_step_time("Training latent space projection", run_start_time, step_start)
     
     # Visualize training latent space
@@ -493,7 +515,7 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
     # Project validation data into latent space
     step_start = time.time()
     print("Projecting validation data into latent space...")
-    y_test = project_into_latent_space(x_test, model)
+    y_test = project_latent_space(x_test, model, lazy_loading=args.lazy_loading)
     print_step_time("Validation latent space projection", run_start_time, step_start)
     
     # Visualize validation latent space

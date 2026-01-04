@@ -7,10 +7,102 @@ Vittorio Boarini
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, TensorDataset, Dataset
 from sklearn.model_selection import KFold
-from scipy import signal
 
+
+class LazyWindowedDataset(Dataset):
+    """
+    Memory-efficient Dataset that generates windowed samples on-the-fly.
+    Instead of materializing all windows in memory,
+    this creates windows only when requested during training.
+    
+    Behaves like a numpy array for compatibility with existing code.
+    """
+    def __init__(self, x, b, win=15):
+        """
+        Args:
+            x: Raw data (T, N) where T=timesteps, N=neurons
+            b: Behavior labels (T,)
+            win: Window size (will be adjusted to win-1 in output, matching prep_data behavior)
+        """
+        self.x = x
+        self.b = b
+        self.win = win + 1  # Add 1 for the next timestep
+        self.num_samples = len(x) - self.win + 1
+        self._n_neurons = x.shape[1]
+        
+    def __len__(self):
+        return self.num_samples
+    
+    @property
+    def shape(self):
+        """Return shape as if this were a materialized numpy array"""
+        return (self.num_samples, 2, self.win - 1, self._n_neurons)
+    
+    def __getitem__(self, idx):
+        """
+        Returns a paired window matching prep_data output format.
+        Supports integer indexing and array/list indexing.
+        """
+        if isinstance(idx, (int, np.integer)):
+            # Single index - return one sample
+            if idx < 0:
+                idx = self.num_samples + idx
+            if idx < 0 or idx >= self.num_samples:
+                raise IndexError(f"Index {idx} out of bounds for dataset with {self.num_samples} samples")
+            
+            # Extract window
+            window = self.x[idx:idx + self.win]  # (win, n_neurons)
+            
+            # Split into current and next
+            x_current = window[:-1]  # (win-1, n_neurons)
+            x_next = window[1:]      # (win-1, n_neurons)
+            
+            # Stack them
+            x_paired = np.stack([x_current, x_next], axis=0)  # (2, win-1, n_neurons)
+            
+            return x_paired.astype(np.float32)
+        
+        elif isinstance(idx, (list, np.ndarray)):
+            # Array indexing - return multiple samples
+            return np.array([self[i] for i in idx])
+        
+        elif isinstance(idx, slice):
+            # Slice indexing
+            indices = range(*idx.indices(self.num_samples))
+            return np.array([self[i] for i in indices])
+        
+        else:
+            raise TypeError(f"Invalid index type: {type(idx)}")
+    
+    def __array__(self):
+        """Support numpy array conversion (materializes all data - use sparingly!)"""
+        return np.array([self[i] for i in range(self.num_samples)])
+
+
+def prep_data_lazy(x, b, win=15):
+    """
+    MEMORY-EFFICIENT version of prep_data that returns the same structure as prep_data,
+    but uses a lazy Dataset for x_paired instead of materializing all windows in memory.
+    
+    Returns:
+        x_paired : LazyWindowedDataset
+            Lazy dataset of paired neuronal traces. Behaves like shape (m, 2, win, n) array
+            but generates windows on-demand. Supports indexing like numpy arrays.
+        b_1 : np.ndarray
+            Behavioral traces corresponding to the next time step, of shape (m,).
+    
+    This is a drop-in replacement for prep_data() that reduces memory drastically.
+    """
+    # Create lazy dataset for x_paired
+    x_paired = LazyWindowedDataset(x, b, win=win)
+    
+    # Extract behavior labels (lightweight, just a view/slice)
+    win_adjusted = win + 1
+    b_1 = b[win_adjusted - 1:]
+    
+    return x_paired, b_1
 
 
 def prep_data(x, b, win=15):
@@ -54,6 +146,52 @@ def prep_data(x, b, win=15):
     x_paired = np.transpose(x_paired, axes=(1, 0, 2, 3))
 
     return x_paired, b_1
+
+
+def timeseries_train_test_split_lazy(x_paired, b_1):
+    """
+    MEMORY-EFFICIENT version of timeseries_train_test_split that works with LazyWindowedDataset.
+    
+    This is a drop-in replacement for timeseries_train_test_split() with the same signature.
+    
+    Parameters:
+        x_paired : LazyWindowedDataset
+            Lazy dataset of paired neuronal traces from prep_data_lazy()
+        b_1 : np.ndarray
+            Behavioral traces corresponding to the next time step, of shape (m,)
+    
+    Returns:
+        x_train : Subset or LazyWindowedDataset
+            Training set of paired neuronal traces (lazy)
+        x_test : Subset or LazyWindowedDataset
+            Test set of paired neuronal traces (lazy)
+        b_train_1 : np.ndarray
+            Behavioral traces for training set
+        b_test_1 : np.ndarray
+            Behavioral traces for test set
+    """
+    from torch.utils.data import Subset
+    
+    total_samples = len(x_paired)
+    indices = np.arange(total_samples)
+    
+    # Use KFold logic to match original behavior
+    kf = KFold(n_splits=7, shuffle=False)
+    for i, (train_index, test_index) in enumerate(kf.split(indices)):
+        if i == 4:  # Use fold 4 like original implementation
+            x_train = Subset(x_paired, train_index)
+            x_test = Subset(x_paired, test_index)
+            b_train_1 = b_1[train_index]
+            b_test_1 = b_1[test_index]
+            return x_train, x_test, b_train_1, b_test_1
+    
+    # Fallback (shouldn't reach here)
+    split_idx = int(total_samples * 6/7)
+    x_train = Subset(x_paired, indices[:split_idx])
+    x_test = Subset(x_paired, indices[split_idx:])
+    b_train_1 = b_1[:split_idx]
+    b_test_1 = b_1[split_idx:]
+    return x_train, x_test, b_train_1, b_test_1
 
 
 def timeseries_train_test_split(x_paired, b_1):
