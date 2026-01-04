@@ -142,11 +142,12 @@ def load_data(data_path, downsample_fs, downsample_method, good_neurons_only, ap
     x = dataset.x.T.toarray().astype(np.float32)
     b = dataset.b.toarray().flatten()
     b_labels = dataset.b_labels
+    b_colors = dataset.get_color_map_for_plotting()
     
     print(f"Data shapes - x: {x.shape}, b: {b.shape}")
     print(f"Behavior labels: {b_labels}")
     
-    return x, b, b_labels
+    return x, b, b_labels, b_colors
 
 
 def preprocess_data(x, b, window, lazy_loading=False):
@@ -254,10 +255,10 @@ def plot_training_loss(loss_array, test_loss_array, output_dir):
     print(f"Training loss plot saved to {plot_path}")
 
 
-def visualize_neural_behavioral(x, b, b_labels, output_dir):
+def visualize_neural_behavioral(x, b, b_labels, b_colors, output_dir):
     """Visualize neural activity and behavioral choices"""
     print("Plotting neural-behavioral data...")
-    fig = plotting_neuronal_behavioural_plotly(x, b, b_names=b_labels, show_fig=False)
+    fig = plotting_neuronal_behavioural_plotly(x, b, b_names=b_labels, b_colors=b_colors, show_fig=False)
     
     plot_path = output_dir / 'figures' / 'neural_behavioral_overview.html'
     fig.write_html(str(plot_path))
@@ -471,12 +472,12 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
     
     # Load data
     step_start = time.time()
-    x, b, b_labels = load_data(args.data_path, args.downsample_fs, args.downsample_method, args.good_neurons_only, args.apply_hold_transitions)
+    x, b, b_labels, b_colors = load_data(args.data_path, args.downsample_fs, args.downsample_method, args.good_neurons_only, args.apply_hold_transitions)
     print_step_time("Data loading", run_start_time, step_start)
     
     # Visualize raw data
     step_start = time.time()
-    visualize_neural_behavioral(x, b, b_labels, output_dir)
+    visualize_neural_behavioral(x, b, b_labels, b_colors, output_dir)
     print_step_time("Neural-behavioral visualization", run_start_time, step_start)
     
     # Preprocess data
