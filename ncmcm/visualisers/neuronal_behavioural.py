@@ -16,6 +16,7 @@ def plotting_neuronal_behavioural(
     x, 
     b=None, 
     b_names={}, 
+    b_colors=None,
     s=None, 
     s_names={}, 
     r=None, 
@@ -34,6 +35,8 @@ def plotting_neuronal_behavioural(
         with shape (neurons, time).
     - b: 1D numpy array of behavioral data (optional).
     - b_names: Dictionary mapping behavior labels to their names (optional).
+    - b_colors: Dictionary mapping behavior state IDs to hex color codes (optional).
+                 e.g., {0: '#ffffff', 1: '#e74c3c'}. If None, uses default palette.
     - s: 1D numpy array of stimulus data (optional).
     - s_names: Dictionary mapping stimulus labels to their names (optional).
     - r: 1D numpy array of response data (optional).
@@ -58,6 +61,10 @@ def plotting_neuronal_behavioural(
         s=s, s_names={0: 'No Stimulus', 1: 'Stimulus'},
         r=r, r_names={0: 'No Response', 1: 'Response'},
         vmin=0, vmax=1)
+    
+    # Using custom colors from dataset
+    color_map = dataset.get_color_map_for_plotting()
+    plotting_neuronal_behavioural(x, b=b, b_names=b_names, b_colors=color_map)
     ```
     """
     num_plots = 1 + sum([1 if x is not None else 0 for x in [b, s, r]])
@@ -79,9 +86,15 @@ def plotting_neuronal_behavioural(
         r_names = {i: str(name) for i, name in enumerate(r_names)}
 
 
-    def discrete_plot(ax, b, b_names, y_label, cmap, alpha=1.0):
-        colors = sns.color_palette(cmap, len(b_names))
-        cmap = ListedColormap(colors)
+    def discrete_plot(ax, b, b_names, y_label, cmap, alpha=1.0, custom_colors=None):
+        if custom_colors is not None:
+            # Use custom colors: convert dict {state_id: hex_color} to ordered list
+            unique_states = sorted(np.unique(b))
+            colors = [custom_colors.get(int(state), '#000000') for state in unique_states]
+            cmap = ListedColormap(colors)
+        else:
+            colors = sns.color_palette(cmap, len(b_names))
+            cmap = ListedColormap(colors)
         im1 = ax.imshow(
             [b], 
             cmap=cmap, 
@@ -99,7 +112,7 @@ def plotting_neuronal_behavioural(
         ax.set_yticks([])
 
     if b is not None:
-        discrete_plot(axs[1], b, b_names, y_label="Behaviour", cmap=sns.color_palette("deep", as_cmap=True), alpha=0.6)
+        discrete_plot(axs[1], b, b_names, y_label="Behaviour", cmap=sns.color_palette("deep", as_cmap=True), alpha=0.6, custom_colors=b_colors)
     if s is not None:
         discrete_plot(axs[2], s, s_names, y_label="Stimulus", cmap='Set2')
     if r is not None:
@@ -115,6 +128,7 @@ def plotting_neuronal_behavioural_plotly(
     x, 
     b=None, 
     b_names={}, 
+    b_colors=None,
     s=None, 
     s_names={}, 
     r=None, 
@@ -133,6 +147,8 @@ def plotting_neuronal_behavioural_plotly(
         with shape (neurons, time).
     - b: 1D numpy array of behavioral data (optional).
     - b_names: Dictionary mapping behavior labels to their names (optional).
+    - b_colors: Dictionary mapping behavior state IDs to hex color codes (optional).
+                 e.g., {0: '#ffffff', 1: '#e74c3c'}. If None, uses default palette.
     - s: 1D numpy array of stimulus data (optional).
     - s_names: Dictionary mapping stimulus labels to their names (optional).
     - r: 1D numpy array of response data (optional).
@@ -156,6 +172,10 @@ def plotting_neuronal_behavioural_plotly(
         s=s, s_names={0: 'No Stimulus', 1: 'Stimulus'},
         r=r, r_names={0: 'No Response', 1: 'Response'},
         vmin=0, vmax=1)
+    
+    # Using custom colors from dataset
+    color_map = dataset.get_color_map_for_plotting()
+    plotting_neuronal_behavioural_plotly(x, b=b, b_names=b_names, b_colors=color_map)
     ```
     """
     num_plots = 1 + sum([1 if var is not None else 0 for var in [b, s, r]])
@@ -195,14 +215,19 @@ def plotting_neuronal_behavioural_plotly(
     if isinstance(r_names, (list, np.ndarray)):
         r_names = {i: str(name) for i, name in enumerate(r_names)}
 
-    def discrete_plot(row, data, names, y_label, palette):
-        colors = sns.color_palette(palette, len(names))
-        colors_rgb = [f'rgb({int(r*255)},{int(g*255)},{int(b*255)})' for r, g, b in colors]
+    def discrete_plot(row, data, names, y_label, palette, custom_colors=None):
+        unique_vals = np.unique(data)
+        
+        if custom_colors is not None:
+            # Use custom colors: convert dict {state_id: hex_color} to RGB list
+            colors_rgb = [custom_colors.get(int(val), '#000000') for val in unique_vals]
+        else:
+            colors = sns.color_palette(palette, len(names))
+            colors_rgb = [f'rgb({int(r*255)},{int(g*255)},{int(b*255)})' for r, g, b in colors]
         
         # Create custom colorscale
-        unique_vals = np.unique(data)
-        colorscale_list = [[i/(len(unique_vals)-1) if len(unique_vals) > 1 else 0, colors_rgb[int(val)]] 
-                          for i, val in enumerate(unique_vals)]
+        colorscale_list = [[i/(len(unique_vals)-1) if len(unique_vals) > 1 else 0, colors_rgb[i]] 
+                          for i in range(len(unique_vals))]
         
         heatmap = go.Heatmap(
             z=[data],
@@ -223,7 +248,7 @@ def plotting_neuronal_behavioural_plotly(
 
     current_row = 2
     if b is not None:
-        discrete_plot(current_row, b, b_names, "Behaviour", "deep")
+        discrete_plot(current_row, b, b_names, "Behaviour", "deep", custom_colors=b_colors)
         current_row += 1
     if s is not None:
         discrete_plot(current_row, s, s_names, "Stimulus", "Set2")
