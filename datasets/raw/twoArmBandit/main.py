@@ -36,7 +36,7 @@ def parse_args():
                         help='Use only good neurons: true or false (can specify multiple for grid search, e.g., true false)')
     parser.add_argument('--apply_hold_transitions', type=str, nargs='+', default=['false'],
                         choices=['true', 'false'],
-                        help='Apply HOLD_TO_CHOOSING_TRANSITIONS to merge hold->choosing states (can specify multiple for grid search)')
+                        help='Apply HOLD_TO_CHOOSING_TRANSITIONS: true or false (can specify multiple for grid search)')
     
     parser.add_argument('--window', type=int, nargs='+', default=[20],
                         help='Window length for time delay embedding (can specify multiple values for grid search)')
