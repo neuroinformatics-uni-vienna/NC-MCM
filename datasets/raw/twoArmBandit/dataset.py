@@ -55,6 +55,7 @@ class BanditTaskNeuroPixelsDataset:
             downsample_method: Method for aggregating spikes during downsampling.
                              'binary': Use OR operation (any spike -> 1)
                              'count': Sum the number of spikes in each bin
+                             'rate': Firing rate in Hz (spikes per second)
             good_neurons_only: If True, only include neurons labeled as 'good' in cluster_info.tsv (default: True)
             state_transitions: Dict mapping state transition tuples to combined state names.
                              Example: {("hold", "choosing left"): "hold --> choosing left",
@@ -307,6 +308,7 @@ class BanditTaskNeuroPixelsDataset:
         Downsample spike data to a specific number of samples.
         Binary method: If any spike occurs in a time bin, mark the bin as 1.
         Count method: Sum the number of spikes in each bin.
+        Rate method: Firing rate in Hz (spikes per second).
 
         Args:
             spike_matrix: scipy.sparse.csr_matrix or np.ndarray (n_neurons, n_timepoints)
@@ -360,8 +362,25 @@ class BanditTaskNeuroPixelsDataset:
                 shape=(n_neurons, n_downsampled),
                 dtype=np.uint16  # Use uint16 to allow counts > 255
             )
+        elif self.downsample_method == 'rate':
+            # Rate method: firing rate in Hz (spikes per second)
+            # Count occurrences of each (neuron, time) pair
+            spike_coords = np.column_stack([neuron_indices, new_time_indices])
+            unique_coords, counts = np.unique(spike_coords, axis=0, return_counts=True)
+            
+            # Convert counts to firing rate in Hz
+            # bin_size is in original samples, self.fs is original sampling frequency
+            # bin_duration_seconds = bin_size / self.fs
+            # rate = counts / bin_duration_seconds = counts * self.fs / bin_size
+            rates = (counts * self.fs / bin_size).astype(np.float32)
+            
+            downsampled = sparse.csr_matrix(
+                (rates, (unique_coords[:, 0], unique_coords[:, 1])),
+                shape=(n_neurons, n_downsampled),
+                dtype=np.float32
+            )
         else:
-            raise ValueError(f"Invalid downsample_method: {self.downsample_method}. Must be 'binary' or 'count'.")
+            raise ValueError(f"Invalid downsample_method: {self.downsample_method}. Must be 'binary', 'count', or 'rate'.")
 
         return downsampled
 
