@@ -45,7 +45,7 @@ class BanditTaskNeuroPixelsDataset:
     }
       
     
-    def __init__(self, data_path, downsample_fs=None, downsample_method='binary', good_neurons_only=True, state_transitions=None):
+    def __init__(self, data_path, downsample_fs=None, downsample_method='binary', good_neurons_only=True, state_transitions=None, gaussian_sigma_ms=25.0):
         """
         Initialize dataset with flexible spike representation options.
 
@@ -57,11 +57,14 @@ class BanditTaskNeuroPixelsDataset:
                              'count': Sum the number of spikes in each bin
                              'rate': Firing rate in Hz (spikes per second)
                              'mean': Average of binary values (spike proportion, 0-1)
+                             'gaussian': Gaussian kernel smoothing (firing rate in Hz)
             good_neurons_only: If True, only include neurons labeled as 'good' in cluster_info.tsv (default: True)
             state_transitions: Dict mapping state transition tuples to combined state names.
                              Example: {("hold", "choosing left"): "hold --> choosing left",
                                       ("hold", "choosing right"): "hold --> choosing right"}
                              When consecutive states match a transition, they are merged into one combined state.
+            gaussian_sigma_ms: Standard deviation of Gaussian kernel in milliseconds (default: 25.0).
+                             Only used when downsample_method='gaussian'.
             
         Attributes after loading:
             x: Neuronal time-series data (scipy.sparse.csr_matrix) of shape (num_neurons, num_timepoints). Do .toarray() to convert to dense.
@@ -80,6 +83,7 @@ class BanditTaskNeuroPixelsDataset:
         self.downsample_method = downsample_method
         self.good_neurons_only = good_neurons_only
         self.state_transitions = state_transitions if state_transitions is not None else {}
+        self.gaussian_sigma_ms = gaussian_sigma_ms
         self.x = None  # neuronal time-series data (scipy.sparse.csr_matrix)
         self.b = None  # behavioral time-series data (scipy.sparse.csr_matrix)
         self.b_labels_dict = None # behavioral lables as dict, mapping state id to state name
@@ -396,8 +400,83 @@ class BanditTaskNeuroPixelsDataset:
                 shape=(n_neurons, n_downsampled),
                 dtype=np.float32
             )
+        elif self.downsample_method == 'gaussian':
+            # Gaussian smoothing: convolve with Gaussian kernel and sample
+            # This produces a smooth firing rate estimate in Hz
+            
+            # Convert sigma from milliseconds to original sample units
+            sigma_samples = (self.gaussian_sigma_ms / 1000.0) * self.fs
+            
+            # Truncate kernel at ±3σ (covers 99.7% of Gaussian mass)
+            kernel_radius = int(np.ceil(3 * sigma_samples))  # in original samples
+            kernel_radius_bins = int(np.ceil(kernel_radius / bin_size))  # in downsampled bins
+            
+            # Precompute Gaussian kernel values for efficiency
+            # Only compute for offsets that will be used
+            kernel_offsets = np.arange(-kernel_radius, kernel_radius + 1)
+            kernel_values = np.exp(-0.5 * (kernel_offsets / sigma_samples) ** 2)
+            kernel_values /= (sigma_samples * np.sqrt(2 * np.pi))  # Normalize
+            
+            # Dictionary to accumulate Gaussian contributions: {(neuron, time): value}
+            contributions = {}
+            
+            # Get original spike times and neurons from valid mask
+            original_spike_times = coo.col[valid_mask]
+            original_neurons = neuron_indices
+            
+            # For each spike, add Gaussian kernel contributions to nearby bins
+            for spike_idx in range(len(original_spike_times)):
+                spike_time = original_spike_times[spike_idx]
+                neuron_id = original_neurons[spike_idx]
+                
+                # Determine range of bins affected by this spike (in bin units)
+                spike_bin = new_time_indices[spike_idx]
+                min_bin_time = max(0, spike_bin - kernel_radius_bins)
+                max_bin_time = min(n_downsampled - 1, spike_bin + kernel_radius_bins)
+                
+                # Add contributions to affected bins
+                for bin_time in range(min_bin_time, max_bin_time + 1):
+                    # Calculate offset from spike to bin center (in original samples)
+                    bin_center_original = (bin_time + 0.5) * bin_size
+                    offset_samples = bin_center_original - spike_time
+                    
+                    # Find closest kernel offset
+                    offset_idx = int(np.round(offset_samples))
+                    
+                    # Check if within kernel radius (in original samples)
+                    if abs(offset_idx) <= kernel_radius:
+                        kernel_idx = offset_idx + kernel_radius
+                        kernel_value = kernel_values[kernel_idx]
+                        
+                        key = (neuron_id, bin_time)
+                        if key in contributions:
+                            contributions[key] += kernel_value
+                        else:
+                            contributions[key] = kernel_value
+            
+            # Convert contributions dictionary to sparse matrix
+            if contributions:
+                keys = list(contributions.keys())
+                neuron_ids = np.array([k[0] for k in keys])
+                time_bins = np.array([k[1] for k in keys])
+                values = np.array([contributions[k] for k in keys], dtype=np.float32)
+                
+                # Convert to firing rate in Hz (kernel already normalized, multiply by fs)
+                values = values * self.fs
+                
+                downsampled = sparse.csr_matrix(
+                    (values, (neuron_ids, time_bins)),
+                    shape=(n_neurons, n_downsampled),
+                    dtype=np.float32
+                )
+            else:
+                # No spikes, return empty sparse matrix
+                downsampled = sparse.csr_matrix(
+                    (n_neurons, n_downsampled),
+                    dtype=np.float32
+                )
         else:
-            raise ValueError(f"Invalid downsample_method: {self.downsample_method}. Must be 'binary', 'count', 'rate', or 'mean'.")
+            raise ValueError(f"Invalid downsample_method: {self.downsample_method}. Must be 'binary', 'count', 'rate', 'mean', or 'gaussian'.")
 
         return downsampled
 
