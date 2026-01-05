@@ -149,14 +149,15 @@ class LatentSpaceVisualiser:
         
         # Create custom colorscale for behavioral states with discrete colors
         unique_vals = np.unique(self.b)
-        colors_rgb = [f'rgb({int(c[0]*255)},{int(c[1]*255)},{int(c[2]*255)})' 
-                      for c in self.colors]
         
         # Create discrete colorscale by defining sharp boundaries
         colorscale_list = []
         n_colors = len(unique_vals)
         for i, val in enumerate(unique_vals):
-            color = colors_rgb[int(val)]
+            # Get color from color_dict using the actual state ID
+            color_tuple = self.color_dict[int(val)]
+            color = f'rgb({int(color_tuple[0]*255)},{int(color_tuple[1]*255)},{int(color_tuple[2]*255)})'
+            
             if n_colors == 1:
                 colorscale_list = [[0, color], [1, color]]
             else:
@@ -401,7 +402,6 @@ class LatentSpaceVisualiser:
             plt.show()
 
         return fig, ax
-
 
     def plot_interactive_3d(
         self, 
