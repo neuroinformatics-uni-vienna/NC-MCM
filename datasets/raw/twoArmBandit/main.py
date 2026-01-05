@@ -143,11 +143,12 @@ def load_data(data_path, downsample_fs, downsample_method, good_neurons_only, ap
     b = dataset.b.toarray().flatten()
     b_labels = dataset.b_labels
     b_colors = dataset.get_color_map_for_plotting()
+    b_colors_rgb = dataset.get_rgb_colors_for_visualizer()
     
     print(f"Data shapes - x: {x.shape}, b: {b.shape}")
     print(f"Behavior labels: {b_labels}")
     
-    return x, b, b_labels, b_colors
+    return x, b, b_labels, b_colors, b_colors_rgb
 
 
 def preprocess_data(x, b, window, lazy_loading=False):
@@ -266,7 +267,7 @@ def visualize_neural_behavioral(x, b, b_labels, b_colors, output_dir):
     print(f"Neural-behavioral plot saved to {plot_path}")
 
 
-def visualize_latent_space(y, b, b_labels, output_dir, vis_range, data_split='train', generate_gif=True):
+def visualize_latent_space(y, b, b_labels, output_dir, vis_range, data_split='train', generate_gif=True, colors=None):
     """Create all latent space visualizations"""
     print(f"Creating latent space visualizations for {data_split} data...")
     
@@ -287,7 +288,7 @@ def visualize_latent_space(y, b, b_labels, output_dir, vis_range, data_split='tr
     np.save(output_dir / 'data' / f'latent_trajectories_{data_split}.npy', y)
     np.save(output_dir / 'data' / f'behavior_labels_{data_split}.npy', b)
     
-    vis = LatentSpaceVisualiser(y_vis, b_vis, b_labels, show_points=True)
+    vis = LatentSpaceVisualiser(y_vis, b_vis, b_labels, show_points=True, colors=colors)
     
     # Time series plot
     print("  - Latent time series...")
@@ -472,7 +473,7 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
     
     # Load data
     step_start = time.time()
-    x, b, b_labels, b_colors = load_data(args.data_path, args.downsample_fs, args.downsample_method, args.good_neurons_only, args.apply_hold_transitions)
+    x, b, b_labels, b_colors, b_colors_rgb = load_data(args.data_path, args.downsample_fs, args.downsample_method, args.good_neurons_only, args.apply_hold_transitions)
     print_step_time("Data loading", run_start_time, step_start)
     
     # Visualize raw data
@@ -505,7 +506,7 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
     
     # Visualize training latent space
     step_start = time.time()
-    visualize_latent_space(y_train, b_train, b_labels, output_dir, args.vis_samples, data_split='train', generate_gif=not args.no_gif)
+    visualize_latent_space(y_train, b_train, b_labels, output_dir, args.vis_samples, data_split='train', generate_gif=not args.no_gif, colors=b_colors_rgb)
     print_step_time("Training latent space visualization", run_start_time, step_start)
     
     # Training recurrence plot
@@ -522,7 +523,7 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
     
     # Visualize validation latent space
     step_start = time.time()
-    visualize_latent_space(y_test, b_test, b_labels, output_dir, args.vis_samples, data_split='validation', generate_gif=not args.no_gif)
+    visualize_latent_space(y_test, b_test, b_labels, output_dir, args.vis_samples, data_split='validation', generate_gif=not args.no_gif, colors=b_colors_rgb)
     print_step_time("Validation latent space visualization", run_start_time, step_start)
     
     # Validation recurrence plot
