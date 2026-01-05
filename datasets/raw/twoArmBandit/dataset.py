@@ -16,6 +16,20 @@ class BanditTaskNeuroPixelsDataset:
         ("hold", "choosing right"): "hold --> choosing right"
     }
     
+    # Default valid state transition map for the bandit task
+    # Maps each state to a list of valid next states
+    DEFAULT_TRANSITION_MAP = {
+        "intertrial": ["hold", "hold --> choosing left", "hold --> choosing right"],
+        "hold": ["choosing left", "choosing right"],  # intertrial for aborted trials
+        "choosing left": ["reward", "no reward"],
+        "choosing right": ["reward", "no reward"],
+        "reward": ["intertrial"],
+        "no reward": ["intertrial"],
+        # Combined states (when using HOLD_TO_CHOOSING_TRANSITIONS)
+        "hold --> choosing left": ["reward", "no reward"],
+        "hold --> choosing right": ["reward", "no reward"],
+    }
+    
     # Default color map for behavioral state visualization
     # Maps state names to color strings (compatible with Plotly)
     DEFAULT_COLOR_MAP = {
@@ -29,6 +43,7 @@ class BanditTaskNeuroPixelsDataset:
         "hold --> choosing left": "#e74c3c",   # Red - transition to left
         "hold --> choosing right": "#3498db",  # Blue - transition to right
     }
+      
     
     def __init__(self, data_path, downsample_fs=None, downsample_method='binary', good_neurons_only=True, state_transitions=None):
         """
@@ -810,5 +825,98 @@ class BanditTaskNeuroPixelsDataset:
             float: Recording length in minutes
         """
         return self.x.shape[1] / self.fs / 60
+    
+    def check_state_transitions(self, transition_map=None):
+        """
+        Check if state transitions in the behavioral data follow a valid transition map.
+        
+        Args:
+            transition_map: Dictionary mapping state names to lists of valid next states.
+                          Example: {"hold": ["choosing left", "choosing right"],
+                                   "choosing left": ["reward", "no reward"],
+                                   "choosing right": ["reward", "no reward"]}
+                          If None, returns all observed transitions without validation.
+        
+        Returns:
+            dict: Dictionary with:
+                - 'valid': bool, True if all transitions are valid (or if no map provided)
+                - 'observed_transitions': dict mapping (from_state, to_state) tuples to counts
+                - 'invalid_transitions': list of dicts with 'from', 'to', 'count', 'indices'
+                                        for each invalid transition (empty if no map provided)
+        
+        Example:
+            >>> dataset = BanditTaskNeuroPixelsDataset(data_path)
+            >>> transition_map = {
+            ...     "hold": ["choosing left", "choosing right"],
+            ...     "choosing left": ["reward", "no reward"],
+            ...     "choosing right": ["reward", "no reward"],
+            ...     "reward": ["intertrial"],
+            ...     "no reward": ["intertrial"],
+            ...     "intertrial": ["hold", "waiting"],
+            ... }
+            >>> result = dataset.check_state_transitions(transition_map)
+            >>> if not result['valid']:
+            ...     print(f"Found {len(result['invalid_transitions'])} invalid transition types")
+        """
+        b_dense = self.b.toarray().flatten()
+        
+        # Find all transitions (where state changes)
+        state_changes = np.where(np.diff(b_dense) != 0)[0]
+        
+        # Count observed transitions
+        observed_transitions = {}
+        transition_indices = {}  # Store indices for each transition type
+        
+        for idx in state_changes:
+            from_state_id = b_dense[idx]
+            to_state_id = b_dense[idx + 1]
+            from_state = self.b_labels_dict[from_state_id]
+            to_state = self.b_labels_dict[to_state_id]
+            
+            key = (from_state, to_state)
+            observed_transitions[key] = observed_transitions.get(key, 0) + 1
+            
+            if key not in transition_indices:
+                transition_indices[key] = []
+            transition_indices[key].append(idx)
+        
+        # If no transition map provided, just return observed transitions
+        if transition_map is None:
+            return {
+                'valid': True,
+                'observed_transitions': observed_transitions,
+                'invalid_transitions': []
+            }
+        
+        # Validate transitions against the map
+        invalid_transitions = []
+        
+        for (from_state, to_state), count in observed_transitions.items():
+            # Check if the from_state has defined transitions
+            if from_state in transition_map:
+                valid_next_states = transition_map[from_state]
+                if to_state not in valid_next_states:
+                    invalid_transitions.append({
+                        'from': from_state,
+                        'to': to_state,
+                        'count': count,
+                        'indices': transition_indices[(from_state, to_state)]
+                    })
+            else:
+                # State not in map - could be considered invalid or just undefined
+                # Here we treat undefined source states as potentially invalid
+                invalid_transitions.append({
+                    'from': from_state,
+                    'to': to_state,
+                    'count': count,
+                    'indices': transition_indices[(from_state, to_state)],
+                    'reason': 'source state not in transition map'
+                })
+        
+        return {
+            'valid': len(invalid_transitions) == 0,
+            'observed_transitions': observed_transitions,
+            'invalid_transitions': invalid_transitions
+        }
     
     
