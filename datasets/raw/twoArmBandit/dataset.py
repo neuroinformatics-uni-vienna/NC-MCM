@@ -763,6 +763,45 @@ class BanditTaskNeuroPixelsDataset:
         
         return color_map
     
+    def get_rgb_colors_for_visualizer(self):
+        """
+        Get RGB colors suitable for LatentSpaceVisualiser.
+        
+        This method converts the DEFAULT_COLOR_MAP (which maps state names to hex colors)
+        into a list of RGB tuples ordered by state IDs. RGB values are normalized to [0, 1].
+        
+        Returns:
+            list: List of RGB tuples with values in [0, 1].
+                  Example: [(1.0, 1.0, 1.0), (0.91, 0.61, 0.07), (0.21, 0.60, 0.86)]
+        
+        Example:
+            >>> dataset = BanditTaskNeuroPixelsDataset(data_path)
+            >>> colors = dataset.get_rgb_colors_for_visualizer()
+            >>> from ncmcm.visualisers.latent_space import LatentSpaceVisualiser
+            >>> vis = LatentSpaceVisualiser(y, b, dataset.b_labels_dict, colors=colors)
+        """
+        import matplotlib.colors as mcolors
+        
+        rgb_colors = []
+        # Sort by state ID to maintain consistent ordering
+        for state_id in sorted(self.b_labels_dict.keys()):
+            state_name = self.b_labels_dict[state_id]
+            
+            if state_name in self.DEFAULT_COLOR_MAP:
+                hex_color = self.DEFAULT_COLOR_MAP[state_name]
+                # Convert hex to RGB in [0, 1] range
+                rgb = mcolors.to_rgb(hex_color)
+                rgb_colors.append(rgb)
+            else:
+                # Fallback to plotly colors if state name not in DEFAULT_COLOR_MAP
+                import plotly.express as px
+                colors = px.colors.qualitative.Plotly
+                hex_color = colors[state_id % len(colors)]
+                rgb = mcolors.to_rgb(hex_color)
+                rgb_colors.append(rgb)
+        
+        return rgb_colors
+    
     def get_recording_length_mins(self):
         """
         Get the length of the recording in minutes.
