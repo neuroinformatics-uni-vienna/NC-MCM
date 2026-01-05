@@ -203,7 +203,7 @@ def plotting_neuronal_behavioural_plotly(
         colorbar=dict(len=1/num_plots, y=1 - 0.5/num_plots)
     )
     fig.add_trace(heatmap, row=1, col=1)
-    fig.update_xaxes(title_text="time <i>t</i>", row=1, col=1)
+    fig.update_xaxes(title_text="", row=1, col=1)
     fig.update_yaxes(title_text="Neuronal activation", row=1, col=1)
 
     if isinstance(b_names, (list, np.ndarray)):
@@ -225,9 +225,14 @@ def plotting_neuronal_behavioural_plotly(
             colors = sns.color_palette(palette, len(names))
             colors_rgb = [f'rgb({int(r*255)},{int(g*255)},{int(b*255)})' for r, g, b in colors]
         
-        # Create custom colorscale
-        colorscale_list = [[i/(len(unique_vals)-1) if len(unique_vals) > 1 else 0, colors_rgb[i]] 
-                          for i in range(len(unique_vals))]
+        # Create discrete colorscale with sharp boundaries between colors
+        colorscale_list = []
+        n_colors = len(unique_vals)
+        for i in range(n_colors):
+            lower_bound = i / n_colors
+            upper_bound = (i + 1) / n_colors
+            colorscale_list.append([lower_bound, colors_rgb[i]])
+            colorscale_list.append([upper_bound, colors_rgb[i]])
         
         heatmap = go.Heatmap(
             z=[data],
