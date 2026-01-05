@@ -56,6 +56,7 @@ class BanditTaskNeuroPixelsDataset:
                              'binary': Use OR operation (any spike -> 1)
                              'count': Sum the number of spikes in each bin
                              'rate': Firing rate in Hz (spikes per second)
+                             'mean': Average of binary values (spike proportion, 0-1)
             good_neurons_only: If True, only include neurons labeled as 'good' in cluster_info.tsv (default: True)
             state_transitions: Dict mapping state transition tuples to combined state names.
                              Example: {("hold", "choosing left"): "hold --> choosing left",
@@ -309,6 +310,7 @@ class BanditTaskNeuroPixelsDataset:
         Binary method: If any spike occurs in a time bin, mark the bin as 1.
         Count method: Sum the number of spikes in each bin.
         Rate method: Firing rate in Hz (spikes per second).
+        Mean method: Average of binary values (spike proportion, 0-1).
 
         Args:
             spike_matrix: scipy.sparse.csr_matrix or np.ndarray (n_neurons, n_timepoints)
@@ -379,8 +381,23 @@ class BanditTaskNeuroPixelsDataset:
                 shape=(n_neurons, n_downsampled),
                 dtype=np.float32
             )
+        elif self.downsample_method == 'mean':
+            # Mean method: average of binary values (spike proportion per bin)
+            # Count occurrences of each (neuron, time) pair
+            spike_coords = np.column_stack([neuron_indices, new_time_indices])
+            unique_coords, counts = np.unique(spike_coords, axis=0, return_counts=True)
+            
+            # Convert counts to mean (proportion of bin samples with spikes)
+            # mean = counts / bin_size (values between 0 and 1)
+            means = (counts / bin_size).astype(np.float32)
+            
+            downsampled = sparse.csr_matrix(
+                (means, (unique_coords[:, 0], unique_coords[:, 1])),
+                shape=(n_neurons, n_downsampled),
+                dtype=np.float32
+            )
         else:
-            raise ValueError(f"Invalid downsample_method: {self.downsample_method}. Must be 'binary', 'count', or 'rate'.")
+            raise ValueError(f"Invalid downsample_method: {self.downsample_method}. Must be 'binary', 'count', 'rate', or 'mean'.")
 
         return downsampled
 
