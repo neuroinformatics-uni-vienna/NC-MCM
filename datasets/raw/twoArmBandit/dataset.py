@@ -39,7 +39,7 @@ class BanditTaskNeuroPixelsDataset:
         "choosing left": "#e74c3c",     # Red - left choice
         "choosing right": "#3498db",    # Blue - right choice
         "reward": "#2ecc71",            # Green - positive outcome
-        "no reward": "#000000",         # Black - negative outcome
+        "no reward": "#6b8e7f",         # Greyish lifeless green - negative outcome
         "hold --> choosing left": "#e74c3c",   # Red - transition to left
         "hold --> choosing right": "#3498db",  # Blue - transition to right
     }
