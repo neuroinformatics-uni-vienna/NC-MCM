@@ -35,8 +35,7 @@ class BanditTaskNeuroPixelsDataset:
     # Default color map for behavioral state visualization
     # Maps state names to color strings (compatible with Plotly)
     DEFAULT_COLOR_MAP = {
-        "waiting": "#ffffff",           # White - waiting period
-        "intertrial": "#95a5a6",        # Gray - between trials
+        "intertrial": "#c7c7c7",        # Light gray (more white-like) - between trials
         "hold": "#f39d12",              # Orange/Gold - preparatory hold state
         "choosing left": "#e74c3c",     # Red - left choice
         "choosing right": "#3498db",    # Blue - right choice
