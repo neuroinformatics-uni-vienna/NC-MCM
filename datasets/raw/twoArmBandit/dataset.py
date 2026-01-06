@@ -8,6 +8,8 @@ import pandas as pd
 import os
 import numpy as np
 from scipy import sparse
+from scipy.ndimage import gaussian_filter1d
+from scipy.signal import resample
 
 class BanditTaskNeuroPixelsDataset:
     # Common state transition combinations
@@ -67,15 +69,22 @@ class BanditTaskNeuroPixelsDataset:
                              Only used when downsample_method='gaussian'.
             
         Attributes after loading:
+            data_path: Path to the dataset directory
+            downsample_fs: Target sampling frequency for downsampling (Hz), or None if no downsampling
+            downsample_method: Method used for spike aggregation ('binary', 'count', 'rate', 'mean', or 'gaussian')
+            good_neurons_only: Whether only 'good' neurons are included
+            state_transitions: Dictionary of state transition combinations
+            gaussian_sigma_ms: Standard deviation of Gaussian kernel in milliseconds
             x: Neuronal time-series data (scipy.sparse.csr_matrix) of shape (num_neurons, num_timepoints). Do .toarray() to convert to dense.
             b: Behavioral time-series data (scipy.sparse.csr_matrix) of shape (num_behaviors, num_timepoints). Do .toarray() to convert to dense.
             b_labels_dict: Behavioral labels as a dictionary, mapping state IDs to state names.
+            b_labels: Behavioral labels as a list, ordered by state ID.
             b_continuous: Continuous behavioral data (np.ndarray) of shape (num_timepoints,) with running average of last 10 decisions (-1 for left, 1 for right)
             trial_indices: Trial indices (np.ndarray) of shape (num_timepoints,) indicating which trial each timepoint belongs to (starting from 0, -1 for timepoints outside trials)
             block_indices: Block indices (np.ndarray) of shape (num_timepoints,) indicating which block each timepoint belongs to (starting from 0, -1 for timepoints before first block)
             block_labels: Block labels (np.ndarray) of shape (num_timepoints,) indicating the block name for each timepoint
             behavioral_time: Behavioral time (np.ndarray) of shape (num_timepoints,) with the behavioral time in milliseconds at the start of each timepoint
-            fs: Sampling frequency
+            fs: Sampling frequency (Hz) after any downsampling
         
         """
         self.data_path = data_path
@@ -103,7 +112,6 @@ class BanditTaskNeuroPixelsDataset:
         print(f"Neuronal data shape: {self.x.shape}, Behavioral data shape: {self.b.shape}, Sampling frequency: {self.fs} Hz")
         print(f"Behavioral labels: {self.b_labels_dict}")
         
-
     def load_data(self):
         # Load parameters
         with open(os.path.join(self.data_path, "params.py"), "r") as f:
@@ -132,9 +140,10 @@ class BanditTaskNeuroPixelsDataset:
 
         # Downsample neuronal data if requested
         if self.downsample_fs is not None:
-            original_samples = self.x.shape[1]
+            original_samples_count = self.x.shape[1]
             # Calculate target number of samples based on desired sampling frequency
-            target_num_samples = int(original_samples * self.downsample_fs / self.fs)
+            target_num_samples = int(original_samples_count * self.downsample_fs / self.fs)
+            self.downsample_fs = target_num_samples * self.fs / original_samples_count  # Adjusted downsample_fs due to rounding 
             self.x = self._downsample_spike_data(self.x, target_num_samples)
             # Update sampling frequency to the new target
             self.fs = self.downsample_fs
@@ -329,32 +338,58 @@ class BanditTaskNeuroPixelsDataset:
             raise ValueError(f"Target number of samples ({target_num_samples}) must be lower than original number of samples ({n_samples}) for downsampling")
 
         # Calculate bin size (how many original samples per new sample)
-        bin_size = n_samples / target_num_samples
+        bin_size_samples = n_samples / target_num_samples
 
-        downsampled = self._downsample_sparse(spike_matrix, bin_size, n_neurons, target_num_samples)
+        downsampled = self._downsample_sparse(spike_matrix, bin_size_samples, n_neurons, target_num_samples)
 
         return downsampled
 
-    def _downsample_sparse(self, spike_matrix, bin_size, n_neurons, n_downsampled):
-        """Downsample sparse spike matrix efficiently"""
-        # Convert to COO format for easier manipulation
-        coo = spike_matrix.tocoo()
+    def _downsample_sparse(self, spike_matrix, bin_size_samples, num_neurons, n_downsampled):
+        """Downsample a sparse spike matrix using multiple aggregation schemes.
 
+        Converts the input spike matrix to COO so each non-zero entry is represented
+        by its row (`coo.row` -> neuron index), column (`coo.col` -> original time
+        sample), and value (`coo.data`). Time columns are binned by dividing by
+        `bin_size_samples` to obtain `new_time_indices`, filtered to bins
+        `[0, n_downsampled)`, and then aggregated according to
+        `self.downsample_method`:
+
+        - binary: OR within each (neuron, bin), output dtype uint8
+        - count: sum of spikes per bin, output dtype uint16
+        - rate: firing rate Hz = counts * fs / bin_size_samples, output float32
+        - mean: spike proportion per bin = counts / bin_size_samples, output float32
+        - gaussian: sparse Gaussian smoothing (kernel truncated at +-3*sigma),
+          output float32 firing rates
+
+        Args:
+            spike_matrix: scipy.sparse.csr_matrix with shape (num_neurons, n_samples).
+            bin_size_samples: float bin width in original samples.
+            num_neurons: int number of neurons (rows) in the output.
+            n_downsampled: int number of time bins in the output.
+
+        Returns:
+            scipy.sparse.csr_matrix of shape (num_neurons, n_downsampled) with dtype
+            depending on the chosen method (see above).
+        """
+        # Convert to COO format for easier manipulation
+        # coo.row: neuron indices, coo.col: time indices, coo.data: spike counts (1s) https://scipy-lectures.org/advanced/scipy_sparse/coo_matrix.html
+        coo = spike_matrix.tocoo() 
+        
         # Bin the time indices
-        new_time_indices = (coo.col / bin_size).astype(int)
+        new_time_indices = (coo.col / bin_size_samples).astype(int) # e.g. 0,1,16,2,10 --> 0,0,7,1,5 for bin_size=2
 
         # Keep only valid bins
-        valid_mask = new_time_indices < n_downsampled
-        neuron_indices = coo.row[valid_mask]
-        new_time_indices = new_time_indices[valid_mask]
+        valid_mask = new_time_indices < n_downsampled # 0,0,7,1,5 --> True,True,False,True,True if n_downsampled=6
+        new_time_indices = new_time_indices[valid_mask] # 0,0,7,1,5 --> 0,0,1,5 (7 is dropped as its bin is out of range)
+        neuron_indices = coo.row[valid_mask] # n0,n0,n8,n3,n10 --> n0,n0,n3,n10 (n8 is dropped as its bin is out of range)
 
         if self.downsample_method == 'binary':
             # Binary method: OR operation (if spike in bin, mark as 1)
-            unique_spikes = np.unique(np.column_stack([neuron_indices, new_time_indices]), axis=0)
+            unique_spikes = np.unique(np.column_stack([neuron_indices, new_time_indices]), axis=0) # n0,n0,n3,n10; 0,0,1,5 --> n0,0; n3,1; n10,5 (duplicate n0,0 removed)
             data = np.ones(len(unique_spikes), dtype=np.uint8)
             downsampled = sparse.csr_matrix(
-                (data, (unique_spikes[:, 0], unique_spikes[:, 1])),
-                shape=(n_neurons, n_downsampled),
+                (data, (unique_spikes[:, 0], unique_spikes[:, 1])), 
+                shape=(num_neurons, n_downsampled),
                 dtype=np.uint8
             )
         elif self.downsample_method == 'count':
@@ -365,7 +400,7 @@ class BanditTaskNeuroPixelsDataset:
             
             downsampled = sparse.csr_matrix(
                 (counts, (unique_coords[:, 0], unique_coords[:, 1])),
-                shape=(n_neurons, n_downsampled),
+                shape=(num_neurons, n_downsampled),
                 dtype=np.uint16  # Use uint16 to allow counts > 255
             )
         elif self.downsample_method == 'rate':
@@ -378,11 +413,11 @@ class BanditTaskNeuroPixelsDataset:
             # bin_size is in original samples, self.fs is original sampling frequency
             # bin_duration_seconds = bin_size / self.fs
             # rate = counts / bin_duration_seconds = counts * self.fs / bin_size
-            rates = (counts * self.fs / bin_size).astype(np.float32)
+            rates = (counts / (bin_size_samples / self.fs)).astype(np.float32)
             
             downsampled = sparse.csr_matrix(
                 (rates, (unique_coords[:, 0], unique_coords[:, 1])),
-                shape=(n_neurons, n_downsampled),
+                shape=(num_neurons, n_downsampled),
                 dtype=np.float32
             )
         elif self.downsample_method == 'mean':
@@ -393,62 +428,64 @@ class BanditTaskNeuroPixelsDataset:
             
             # Convert counts to mean (proportion of bin samples with spikes)
             # mean = counts / bin_size (values between 0 and 1)
-            means = (counts / bin_size).astype(np.float32)
+            means = (counts / bin_size_samples).astype(np.float32)
             
             downsampled = sparse.csr_matrix(
                 (means, (unique_coords[:, 0], unique_coords[:, 1])),
-                shape=(n_neurons, n_downsampled),
+                shape=(num_neurons, n_downsampled),
                 dtype=np.float32
             )
         elif self.downsample_method == 'gaussian':
-            # Gaussian smoothing: convolve with Gaussian kernel and sample
-            # This produces a smooth firing rate estimate in Hz
+            # Gaussian smoothing with direct sparse computation
+            # Apply Gaussian kernel to each spike and accumulate to downsampled bins
+            # Avoids materializing any dense arrays
             
             # Convert sigma from milliseconds to original sample units
-            sigma_samples = (self.gaussian_sigma_ms / 1000.0) * self.fs
+            gaussian_sigma_samples = (self.gaussian_sigma_ms / 1000.0) * self.fs
             
-            # Truncate kernel at ±3σ (covers 99.7% of Gaussian mass)
-            kernel_radius = int(np.ceil(3 * sigma_samples))  # in original samples
-            kernel_radius_bins = int(np.ceil(kernel_radius / bin_size))  # in downsampled bins
+            # Precompute Gaussian kernel truncation radius (±3σ covers 99.7%)
+            kernel_radius_samples = int(np.ceil(3 * gaussian_sigma_samples))
             
-            # Precompute Gaussian kernel values for efficiency
-            # Only compute for offsets that will be used
-            kernel_offsets = np.arange(-kernel_radius, kernel_radius + 1)
-            kernel_values = np.exp(-0.5 * (kernel_offsets / sigma_samples) ** 2)
-            kernel_values /= (sigma_samples * np.sqrt(2 * np.pi))  # Normalize
+            # Precompute normalization constant for Gaussian kernel
+            # The Gaussian PDF: (1 / (sigma * sqrt(2π))) * exp(-0.5 * (x/sigma)^2)
+            gaussian_norm = 1.0 / (gaussian_sigma_samples * np.sqrt(2 * np.pi))
             
-            # Dictionary to accumulate Gaussian contributions: {(neuron, time): value}
+            # Dictionary to accumulate Gaussian contributions: {(neuron, time_bin): value}
             contributions = {}
             
-            # Get original spike times and neurons from valid mask
-            original_spike_times = coo.col[valid_mask]
-            original_neurons = neuron_indices
+            # Get spike times (in original sample coordinates) and neuron IDs (already filtered by valid_mask)
+            spike_times_orig = coo.col[valid_mask]
+            spike_neuron_ids = neuron_indices
             
-            # For each spike, add Gaussian kernel contributions to nearby bins
-            for spike_idx in range(len(original_spike_times)):
-                spike_time = original_spike_times[spike_idx]
-                neuron_id = original_neurons[spike_idx]
+            # For each spike, add Gaussian kernel contributions to nearby downsampled bins
+            for spike_idx in range(len(spike_times_orig)):
+                spike_time_orig = spike_times_orig[spike_idx]  # Original sample coordinate
+                neuron_id = spike_neuron_ids[spike_idx]
                 
-                # Determine range of bins affected by this spike (in bin units)
-                spike_bin = new_time_indices[spike_idx]
-                min_bin_time = max(0, spike_bin - kernel_radius_bins)
-                max_bin_time = min(n_downsampled - 1, spike_bin + kernel_radius_bins)
+                # Determine range of downsampled bins affected by this spike
+                # Find min/max time coordinates (in original samples) within ±3σ of spike
+                min_time_orig = max(0, spike_time_orig - kernel_radius_samples)
+                max_time_orig = min(spike_matrix.shape[1] - 1, spike_time_orig + kernel_radius_samples)
                 
-                # Add contributions to affected bins
-                for bin_time in range(min_bin_time, max_bin_time + 1):
-                    # Calculate offset from spike to bin center (in original samples)
-                    bin_center_original = (bin_time + 0.5) * bin_size
-                    offset_samples = bin_center_original - spike_time
+                # Convert original sample coordinates to downsampled bin indices
+                min_bin_down = int(min_time_orig / bin_size_samples)
+                max_bin_down = min(n_downsampled - 1, int(max_time_orig / bin_size_samples))
+                
+                # Add Gaussian contributions to affected downsampled bins
+                for bin_idx_down in range(min_bin_down, max_bin_down + 1):
+                    # Calculate bin center in original sample coordinates
+                    bin_center_orig = (bin_idx_down + 0.5) * bin_size_samples
                     
-                    # Find closest kernel offset
-                    offset_idx = int(np.round(offset_samples))
+                    # Distance from spike to bin center (in original samples)
+                    distance_orig = bin_center_orig - spike_time_orig
                     
-                    # Check if within kernel radius (in original samples)
-                    if abs(offset_idx) <= kernel_radius:
-                        kernel_idx = offset_idx + kernel_radius
-                        kernel_value = kernel_values[kernel_idx]
+                    # Only add contribution if within kernel radius
+                    if abs(distance_orig) <= kernel_radius_samples:
+                        # Compute Gaussian kernel value
+                        kernel_value = gaussian_norm * np.exp(-0.5 * (distance_orig / gaussian_sigma_samples) ** 2)
                         
-                        key = (neuron_id, bin_time)
+                        # Accumulate contribution (will convert to firing rate at the end)
+                        key = (neuron_id, bin_idx_down)
                         if key in contributions:
                             contributions[key] += kernel_value
                         else:
@@ -457,22 +494,22 @@ class BanditTaskNeuroPixelsDataset:
             # Convert contributions dictionary to sparse matrix
             if contributions:
                 keys = list(contributions.keys())
-                neuron_ids = np.array([k[0] for k in keys])
-                time_bins = np.array([k[1] for k in keys])
+                neuron_ids = np.array([k[0] for k in keys], dtype=np.int32)
+                time_bins = np.array([k[1] for k in keys], dtype=np.int32)
                 values = np.array([contributions[k] for k in keys], dtype=np.float32)
                 
-                # Convert to firing rate in Hz (kernel already normalized, multiply by fs)
+                # Convert to firing rate in Hz (multiply by sampling frequency)
                 values = values * self.fs
                 
                 downsampled = sparse.csr_matrix(
                     (values, (neuron_ids, time_bins)),
-                    shape=(n_neurons, n_downsampled),
+                    shape=(num_neurons, n_downsampled),
                     dtype=np.float32
                 )
             else:
                 # No spikes, return empty sparse matrix
                 downsampled = sparse.csr_matrix(
-                    (n_neurons, n_downsampled),
+                    (num_neurons, n_downsampled),
                     dtype=np.float32
                 )
         else:
@@ -482,17 +519,28 @@ class BanditTaskNeuroPixelsDataset:
 
     def _create_sparse_neuronal_data_matrix(self, spike_times, spike_clusters, cluster_info):
         """
-        Create sparse CSR spike matrix (n_neurons, max_time) using scipy.sparse.csr_matrix.
-        Rows follow cluster_info['cluster_id']; columns are integer time bins.
-        Entries are uint8 counts (1 indicates spike). spike_times must be ints.
+        Create a sparse binary matrix representing neuronal spike data.
+        
+        Constructs a sparse CSR matrix where rows represent neurons and columns represent
+        time bins. Each cell contains 1 if the neuron fired at that time, 0 otherwise.
+        
+        Args:
+            spike_times: Array of spike times in milliseconds (integer values)
+            spike_clusters: Array of cluster IDs corresponding to each spike
+            cluster_info: Dictionary containing 'cluster_id' mapping neurons to cluster IDs
+            
+        Returns:
+            scipy.sparse.csr_matrix: Binary spike matrix of shape (num_neurons, num_time_bins)
+                with dtype uint8, where 1 indicates a spike occurred
         """
-        n_neurons = len(cluster_info)
-        max_time = int(np.max(spike_times)) + 1
+        num_neurons = len(cluster_info) # number of neurons to include
+        num_time_bins = int(np.max(spike_times)) + 1 # max time bin (assuming spike_times are in integer ms)
                 
         # Prepare data for sparse matrix construction
-        neuron_indices = []
-        time_indices = []
+        neuron_indices = [] # row indices
+        time_indices = [] # column indices
         
+        # Map cluster IDs to neuron indices
         neuron_id_to_index = {neuron_id: idx for idx, neuron_id in enumerate(cluster_info['cluster_id'])}
         
         for spike_time, cluster_id in zip(spike_times, spike_clusters):
@@ -504,7 +552,7 @@ class BanditTaskNeuroPixelsDataset:
         data = np.ones(len(neuron_indices), dtype=np.uint8)  # Use uint8 to save memory
         sparse_matrix = sparse.csr_matrix(
             (data, (neuron_indices, time_indices)), 
-            shape=(n_neurons, max_time), 
+            shape=(num_neurons, num_time_bins), 
             dtype=np.uint8
         )
         
@@ -1033,5 +1081,4 @@ class BanditTaskNeuroPixelsDataset:
             'observed_transitions': observed_transitions,
             'invalid_transitions': invalid_transitions
         }
-    
     
