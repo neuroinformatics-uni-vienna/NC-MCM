@@ -113,6 +113,20 @@ class BanditTaskNeuroPixelsDataset:
         print(f"Behavioral labels: {self.b_labels_dict}")
         
     def load_data(self):
+        """
+        Load and process all neuronal and behavioral data from the dataset directory.
+        
+        This method orchestrates the complete data loading pipeline:
+        1. Loads spike times, cluster info, and behavioral metrics
+        2. Creates sparse neuronal data matrix
+        3. Downsamples data if requested
+        4. Creates behavioral state, continuous, trial, and block arrays
+        5. Trims waiting periods from start/end
+        6. Applies state transitions if specified
+        7. Relabels states to ensure continuous indexing from 0
+        
+        All loaded data is stored in instance attributes (x, b, b_labels_dict, etc.).
+        """
         # Load parameters
         with open(os.path.join(self.data_path, "params.py"), "r") as f:
             params_content = f.read()
@@ -258,7 +272,14 @@ class BanditTaskNeuroPixelsDataset:
         self.b = sparse.csr_matrix(new_state_array, shape=(1, len(new_state_array)))
         self.b_labels_dict.update(combined_state_labels)
         
-    def _relabel_behavioral_states(self):        
+    def _relabel_behavioral_states(self):
+        """
+        Relabel behavioral states to have continuous IDs starting from 0.
+        
+        This method ensures that state IDs are sequential (0, 1, 2, ...) even if
+        some intermediate states were removed during processing (e.g., state transitions
+        or filtering). Updates both self.b and self.b_labels_dict in place.
+        """
         # relabel states to start from 0 in case some states are missing
         b_dense = self.b.toarray().flatten()
         unique_states = np.unique(b_dense)
@@ -276,6 +297,18 @@ class BanditTaskNeuroPixelsDataset:
         self.b_labels_dict = relabeled_state_labels
 
     def _trim_waiting_periods(self, x, b, b_labels_dict):
+        """
+        Remove waiting periods from the start and end of the recording.
+        
+        Trims all timepoints in the 'waiting' state from both the beginning and end
+        of the data arrays. Updates self.x, self.b, self.b_continuous, self.trial_indices,
+        self.block_indices, self.block_labels, and self.behavioral_time in place.
+        
+        Args:
+            x: Neuronal data sparse matrix
+            b: Behavioral state sparse matrix
+            b_labels_dict: Dictionary mapping state IDs to state names
+        """
         waiting_state_id = next((k for k, v in b_labels_dict.items() if v == 'waiting'), None)
         
         # Extract dense array from sparse matrix for comparison
@@ -324,6 +357,7 @@ class BanditTaskNeuroPixelsDataset:
         Count method: Sum the number of spikes in each bin.
         Rate method: Firing rate in Hz (spikes per second).
         Mean method: Average of binary values (spike proportion, 0-1).
+        Gaussian method: Gaussian kernel smoothing (firing rate in Hz).
 
         Args:
             spike_matrix: scipy.sparse.csr_matrix or np.ndarray (n_neurons, n_timepoints)
@@ -527,7 +561,7 @@ class BanditTaskNeuroPixelsDataset:
         Args:
             spike_times: Array of spike times in milliseconds (integer values)
             spike_clusters: Array of cluster IDs corresponding to each spike
-            cluster_info: Dictionary containing 'cluster_id' mapping neurons to cluster IDs
+            cluster_info: pandas DataFrame with 'cluster_id' column mapping neurons to cluster IDs
             
         Returns:
             scipy.sparse.csr_matrix: Binary spike matrix of shape (num_neurons, num_time_bins)
@@ -568,6 +602,11 @@ class BanditTaskNeuroPixelsDataset:
             metrics: behavioral metrics from JSON
             neuronal_length: number of samples in neuronal data (potentially downsampled)
             translation_indices_neuronal_to_behavioral: mapping from neuronal time to behavioral time (potentially downsampled)
+        
+        Returns:
+            tuple: (state_array_sparse, state_labels) where:
+                - state_array_sparse: scipy.sparse.csr_matrix of shape (1, neuronal_length)
+                - state_labels: dict mapping state IDs (int) to state names (str)
         """
         trials = metrics['metrics']['trials']
         states = metrics['metrics']['states']
@@ -722,7 +761,16 @@ class BanditTaskNeuroPixelsDataset:
         return continuous_array_neuronal
 
     def _load_cluster_info(self, data_path):
-        """Load cluster information and filter for good neurons if specified"""
+        """
+        Load cluster information from TSV file and optionally filter for good neurons.
+        
+        Args:
+            data_path: Path to the dataset directory containing cluster_info.tsv
+        
+        Returns:
+            pandas.DataFrame: Cluster information with 'cluster_id' and 'group' columns,
+                            filtered to only 'good' neurons if self.good_neurons_only is True
+        """
         cluster_info = pd.read_csv(os.path.join(data_path, "cluster_info.tsv"), sep="\t")
         if self.good_neurons_only:
             cluster_info = cluster_info[cluster_info["group"] == "good"]
