@@ -1,6 +1,5 @@
 import torch
 import numpy as np
-import os
 import argparse
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend
@@ -29,7 +28,7 @@ def parse_args():
     parser.add_argument('--downsample_fs', type=int, nargs='+', default=[15],
                         help='Downsampling frequency (can specify multiple values for grid search)')
     parser.add_argument('--downsample_method', type=str, nargs='+', default=['count'],
-                        choices=['binary', 'count'],
+                        choices=['binary', 'count', 'rate', 'mean', 'gaussian'],
                         help='Downsampling method (can specify multiple values for grid search)')
     parser.add_argument('--good_neurons_only', type=str, nargs='+', default=['false'],
                         choices=['true', 'false'],
