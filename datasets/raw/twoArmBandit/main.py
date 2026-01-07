@@ -36,8 +36,11 @@ def parse_args():
     parser.add_argument('--apply_hold_transitions', type=str, nargs='+', default=['false'],
                         choices=['true', 'false'],
                         help='Apply HOLD_TO_CHOOSING_TRANSITIONS: true or false (can specify multiple for grid search)')
+    parser.add_argument('--normalize_method', type=str, nargs='+', default=['None'],
+                        choices=['None', 'minmax', 'minmax_global'],
+                        help='Normalization method: None, minmax (per-neuron), or minmax_global (can specify multiple for grid search)')
     
-    parser.add_argument('--window', type=int, nargs='+', default=[20],
+    parser.add_argument('--window', type=int, nargs='+', default=[50],
                         help='Window length for time delay embedding (can specify multiple values for grid search)')
     
     # Model parameters
@@ -45,11 +48,11 @@ def parse_args():
                         help='Dimensionality of latent space (can specify multiple values for grid search)')
     
     # Training parameters
-    parser.add_argument('--batch_size', type=int, nargs='+', default=[100],
+    parser.add_argument('--batch_size', type=int, nargs='+', default=[50],
                         help='Batch size for training (can specify multiple values for grid search)')
     parser.add_argument('--n_epochs', type=int, default=500,
                         help='Number of training epochs')
-    parser.add_argument('--learning_rate', type=float, nargs='+', default=[0.001],
+    parser.add_argument('--learning_rate', type=float, nargs='+', default=[0.0001],
                         help='Learning rate (can specify multiple values for grid search)')
     parser.add_argument('--gamma', type=float, nargs='+', default=[0.8],
                         help='Weight for behavior loss (can specify multiple values for grid search)')
@@ -120,7 +123,7 @@ def save_config(args, output_dir):
     print(f"Configuration saved to {config_path}")
 
 
-def load_data(data_path, downsample_fs, downsample_method, good_neurons_only, apply_hold_transitions=False):
+def load_data(data_path, downsample_fs, downsample_method, good_neurons_only, apply_hold_transitions=False, normalize_method='none'):
     """Load and prepare dataset"""
     print("Loading dataset...")
     
@@ -130,12 +133,18 @@ def load_data(data_path, downsample_fs, downsample_method, good_neurons_only, ap
         state_transitions = BanditTaskNeuroPixelsDataset.HOLD_TO_CHOOSING_TRANSITIONS
         print(f"  Applying HOLD_TO_CHOOSING_TRANSITIONS: {state_transitions}")
     
+    # Convert 'None' string to None for normalize_method
+    norm_method = None if normalize_method == 'None' else normalize_method
+    if norm_method is not None:
+        print(f"  Applying normalization: {norm_method}")
+    
     dataset = BanditTaskNeuroPixelsDataset(
         data_path=data_path, 
         downsample_fs=downsample_fs, 
         downsample_method=downsample_method,
         good_neurons_only=good_neurons_only,
-        state_transitions=state_transitions
+        state_transitions=state_transitions,
+        normalize_method=norm_method
     )
     # Use float32 to reduce memory usage by 50%
     x = dataset.x.T.toarray().astype(np.float32)
@@ -387,6 +396,7 @@ def generate_param_combinations(args):
         'downsample_method': args.downsample_method,
         'good_neurons_only': [x.lower() == 'true' for x in args.good_neurons_only],
         'apply_hold_transitions': [x.lower() == 'true' for x in args.apply_hold_transitions],
+        'normalize_method': args.normalize_method,
         'window': args.window,
         'latent_dim': args.latent_dim,
         'batch_size': args.batch_size,
@@ -472,7 +482,7 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
     
     # Load data
     step_start = time.time()
-    x, b, b_labels, b_colors, b_colors_rgb = load_data(args.data_path, args.downsample_fs, args.downsample_method, args.good_neurons_only, args.apply_hold_transitions)
+    x, b, b_labels, b_colors, b_colors_rgb = load_data(args.data_path, args.downsample_fs, args.downsample_method, args.good_neurons_only, args.apply_hold_transitions, args.normalize_method)
     print_step_time("Data loading", run_start_time, step_start)
     
     # Visualize raw data
@@ -563,6 +573,7 @@ def main():
     print(f"  - downsample_method: {args.downsample_method}")
     print(f"  - good_neurons_only: {args.good_neurons_only}")
     print(f"  - apply_hold_transitions: {args.apply_hold_transitions}")
+    print(f"  - normalize_method: {args.normalize_method}")
     print(f"  - window: {args.window}")
     print(f"  - latent_dim: {args.latent_dim}")
     print(f"  - batch_size: {args.batch_size}")

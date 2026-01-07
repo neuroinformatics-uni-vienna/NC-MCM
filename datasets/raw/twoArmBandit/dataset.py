@@ -46,7 +46,7 @@ class BanditTaskNeuroPixelsDataset:
     }
       
     
-    def __init__(self, data_path, downsample_fs=None, downsample_method='binary', good_neurons_only=True, state_transitions=None, gaussian_sigma_ms=25.0):
+    def __init__(self, data_path, downsample_fs=None, downsample_method='binary', good_neurons_only=True, state_transitions=None, gaussian_sigma_ms=25.0, normalize_method=None):
         """
         Initialize dataset with flexible spike representation options.
 
@@ -66,6 +66,11 @@ class BanditTaskNeuroPixelsDataset:
                              When consecutive states match a transition, they are merged into one combined state.
             gaussian_sigma_ms: Standard deviation of Gaussian kernel in milliseconds (default: 25.0).
                              Only used when downsample_method='gaussian'.
+            normalize_method: Method for normalizing neuronal data (default: None).
+                             None: No normalization
+                             'None': No normalization
+                             'minmax': Min-max scaling to [0, 1] per neuron (each neuron scaled independently)
+                             'minmax_global': Min-max scaling to [0, 1] using global min/max across all neurons
             
         Attributes after loading:
             data_path: Path to the dataset directory
@@ -74,6 +79,7 @@ class BanditTaskNeuroPixelsDataset:
             good_neurons_only: Whether only 'good' neurons are included
             state_transitions: Dictionary of state transition combinations
             gaussian_sigma_ms: Standard deviation of Gaussian kernel in milliseconds
+            normalize_method: Method used for neuronal data normalization
             x: Neuronal time-series data (scipy.sparse.csr_matrix) of shape (num_neurons, num_timepoints). Do .toarray() to convert to dense.
             b: Behavioral time-series data (scipy.sparse.csr_matrix) of shape (num_behaviors, num_timepoints). Do .toarray() to convert to dense.
             b_labels_dict: Behavioral labels as a dictionary, mapping state IDs to state names.
@@ -92,6 +98,7 @@ class BanditTaskNeuroPixelsDataset:
         self.good_neurons_only = good_neurons_only
         self.state_transitions = state_transitions if state_transitions is not None else {}
         self.gaussian_sigma_ms = gaussian_sigma_ms
+        self.normalize_method = normalize_method
         self.x = None  # neuronal time-series data (scipy.sparse.csr_matrix)
         self.b = None  # behavioral time-series data (scipy.sparse.csr_matrix)
         self.b_labels_dict = None # behavioral lables as dict, mapping state id to state name
@@ -188,6 +195,9 @@ class BanditTaskNeuroPixelsDataset:
         
         # Post processing: Trim waiting periods from start and end
         self._trim_waiting_periods(self.x, self.b, self.b_labels_dict)
+        
+        # Apply normalization if specified
+        self._normalize_neuronal_data()
         
         # Apply state transitions if specified
         if self.state_transitions:
@@ -325,6 +335,66 @@ class BanditTaskNeuroPixelsDataset:
         self.block_indices = self.block_indices[first_non_waiting_idx:last_non_waiting_idx]
         self.block_labels = self.block_labels[first_non_waiting_idx:last_non_waiting_idx]
         self.behavioral_time = self.behavioral_time[first_non_waiting_idx:last_non_waiting_idx]
+
+    def _normalize_neuronal_data(self):
+        """
+        Normalize neuronal data according to the specified normalization method.
+
+        Methods:
+            - None or 'None': No normalization
+            - 'minmax': Per-neuron scaling. Each neuron's activity is scaled to [0, 1]
+                       via division by that neuron's max (assumes baseline 0).
+            - 'minmax_global': Global scaling. All neurons scaled to [0, 1] using the
+                              global maximum across all neurons and time bins.
+
+        Notes:
+            - Both methods keep the matrix sparse by scaling nonzeros only.
+            - 'minmax' results in each neuron having different scaling factors.
+            - 'minmax_global' uses a single scaling factor for all neurons.
+        """
+        if self.normalize_method is None or self.normalize_method == 'None':
+            return
+
+        if self.x is None:
+            return
+
+        method = self.normalize_method.lower()
+        if method not in ("minmax", "minmax_global"):
+            raise ValueError(f"Invalid normalize_method: {self.normalize_method}. Use None, 'minmax', or 'minmax_global'.")
+
+        # Ensure CSR for efficient row ops
+        x_csr = self.x.tocsr()
+
+        if method == "minmax":
+            # Per-neuron min-max scaling
+            # Row-wise max (includes zeros). Convert to dense first to avoid sparse type issues.
+            row_max = x_csr.max(axis=1)
+            # Some SciPy versions return a sparse matrix here (e.g., coo_matrix).
+            # Convert to ndarray safely, then flatten.
+            if hasattr(row_max, "toarray"):
+                row_max = row_max.toarray()
+            row_max = np.asarray(row_max).ravel().astype(np.float32)
+            # If a row has all zeros, keep zeros
+            with np.errstate(divide='ignore'):
+                inv = np.where(row_max > 0, 1.0 / row_max, 0.0).astype(np.float32)
+            # Scale rows: diag(inv) @ X
+            self.x = sparse.diags(inv, offsets=0, dtype=np.float32) @ x_csr.astype(np.float32)
+        
+        elif method == "minmax_global":
+            # Global min-max scaling using the same scaler for all neurons
+            # Find global max across all neurons and timepoints
+            global_max = x_csr.max()
+            # Convert to scalar if needed
+            if hasattr(global_max, "toarray"):
+                global_max = global_max.toarray().item()
+            global_max = float(global_max)
+            
+            # Scale all values by global max (assumes baseline 0)
+            if global_max > 0:
+                self.x = x_csr.astype(np.float32) / global_max
+            else:
+                # All zeros, keep as is
+                self.x = x_csr.astype(np.float32)
 
     def _downsample_translation_indices(self, translation_indices, target_num_samples):
         """
