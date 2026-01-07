@@ -410,6 +410,13 @@ def get_gpu_memory_info():
         return None, None
 
 
+def get_system_memory_info():
+    """Get available system RAM in bytes"""
+    import psutil
+    mem = psutil.virtual_memory()
+    return mem.total, mem.available
+
+
 def estimate_actual_memory_requirements(x_shape, window, batch_size):
     """
     Calculate actual memory requirements based on real data dimensions.
@@ -457,7 +464,7 @@ def estimate_actual_memory_requirements(x_shape, window, batch_size):
 
 def check_memory_risk_with_actual_data(x, window, batch_size, safety_margin=0.85):
     """
-    Check if there's enough GPU memory based on actual data dimensions.
+    Check if there's enough GPU and system memory based on actual data dimensions.
     
     Args:
         x: Actual data array
@@ -470,54 +477,82 @@ def check_memory_risk_with_actual_data(x, window, batch_size, safety_margin=0.85
         memory_info: Dictionary with memory statistics
     """
     total_gpu_mem, free_gpu_mem = get_gpu_memory_info()
-    
-    if total_gpu_mem is None or free_gpu_mem is None:
-        # No GPU or couldn't get memory info - use CPU or conservative heuristic
-        print("  ⚠ Could not determine GPU memory, using conservative approach")
-        return False, None
+    total_sys_mem, free_sys_mem = get_system_memory_info()
     
     # Calculate actual memory requirements
     mem_req = estimate_actual_memory_requirements(x.shape, window, batch_size)
     
-    # Available memory with safety margin
-    usable_memory = free_gpu_mem * safety_margin
+    # Check GPU memory if available
+    gpu_ok = True
+    if total_gpu_mem is not None and free_gpu_mem is not None:
+        usable_gpu_memory = free_gpu_mem * safety_margin
+        gpu_ok = mem_req['estimated_peak_bytes'] <= usable_gpu_memory
     
-    # Decision: use lazy loading if peak memory exceeds usable memory
-    use_lazy = mem_req['estimated_peak_bytes'] > usable_memory
+    # Check system RAM - this is critical!
+    # With lazy loading OFF, we need to fit the entire dataset in RAM
+    usable_sys_memory = free_sys_mem * safety_margin
+    sys_ram_ok = mem_req['full_dataset_bytes'] <= usable_sys_memory
+    
+    # Decision: use lazy loading if either GPU or RAM is insufficient
+    use_lazy = not (gpu_ok and sys_ram_ok)
+    
+    # Determine the limiting factor
+    if not sys_ram_ok:
+        limiting_factor = 'System RAM'
+    elif not gpu_ok:
+        limiting_factor = 'GPU Memory'
+    else:
+        limiting_factor = 'None'
     
     # Prepare info dictionary
     memory_info = {
-        'gpu_total_gb': total_gpu_mem / (1024**3),
-        'gpu_free_gb': free_gpu_mem / (1024**3),
-        'gpu_usable_gb': usable_memory / (1024**3),
+        'gpu_total_gb': total_gpu_mem / (1024**3) if total_gpu_mem else None,
+        'gpu_free_gb': free_gpu_mem / (1024**3) if free_gpu_mem else None,
+        'gpu_usable_gb': (free_gpu_mem * safety_margin) / (1024**3) if free_gpu_mem else None,
+        'sys_total_gb': total_sys_mem / (1024**3),
+        'sys_free_gb': free_sys_mem / (1024**3),
+        'sys_usable_gb': usable_sys_memory / (1024**3),
         'data_shape': x.shape,
         'full_dataset_gb': mem_req['full_dataset_gb'],
         'batch_data_gb': mem_req['batch_data_gb'],
         'estimated_peak_gb': mem_req['estimated_peak_gb'],
         'will_fit': not use_lazy,
-        'safety_margin': safety_margin
+        'safety_margin': safety_margin,
+        'limiting_factor': limiting_factor,
+        'gpu_sufficient': gpu_ok,
+        'ram_sufficient': sys_ram_ok
     }
     
     # Print detailed info
     print(f"\n  {'='*70}")
     print(f"  MEMORY ANALYSIS")
     print(f"  {'='*70}")
-    print(f"  GPU Total Memory:      {memory_info['gpu_total_gb']:.2f} GB")
-    print(f"  GPU Free Memory:       {memory_info['gpu_free_gb']:.2f} GB")
-    print(f"  GPU Usable Memory:     {memory_info['gpu_usable_gb']:.2f} GB (with {safety_margin*100:.0f}% margin)")
+    if total_gpu_mem:
+        print(f"  GPU Total Memory:      {memory_info['gpu_total_gb']:.2f} GB")
+        print(f"  GPU Free Memory:       {memory_info['gpu_free_gb']:.2f} GB")
+        print(f"  GPU Usable Memory:     {memory_info['gpu_usable_gb']:.2f} GB (with {safety_margin*100:.0f}% margin)")
+    print(f"  System RAM Total:      {memory_info['sys_total_gb']:.2f} GB")
+    print(f"  System RAM Free:       {memory_info['sys_free_gb']:.2f} GB")
+    print(f"  System RAM Usable:     {memory_info['sys_usable_gb']:.2f} GB (with {safety_margin*100:.0f}% margin)")
     print(f"  {'─'*70}")
     print(f"  Data Shape:            {x.shape}")
-    print(f"  Full Dataset Size:     {memory_info['full_dataset_gb']:.2f} GB")
+    print(f"  Full Dataset Size:     {memory_info['full_dataset_gb']:.2f} GB (will be loaded to RAM)")
     print(f"  Batch Size:            {batch_size}")
     print(f"  Single Batch Data:     {memory_info['batch_data_gb']:.3f} GB")
-    print(f"  Estimated Peak Usage:  {memory_info['estimated_peak_gb']:.2f} GB (training)")
+    print(f"  Estimated Peak Usage:  {memory_info['estimated_peak_gb']:.2f} GB (training on GPU)")
     print(f"  {'─'*70}")
     if use_lazy:
         print(f"  ⚠ INSUFFICIENT MEMORY - Will use LAZY LOADING")
-        print(f"  Need {memory_info['estimated_peak_gb']:.2f} GB, have {memory_info['gpu_usable_gb']:.2f} GB")
+        print(f"  Limiting Factor: {limiting_factor}")
+        if not sys_ram_ok:
+            print(f"  RAM: Need {memory_info['full_dataset_gb']:.2f} GB for dataset, have {memory_info['sys_usable_gb']:.2f} GB")
+        if not gpu_ok and total_gpu_mem:
+            print(f"  GPU: Need {memory_info['estimated_peak_gb']:.2f} GB for training, have {memory_info['gpu_usable_gb']:.2f} GB")
     else:
         print(f"  ✓ SUFFICIENT MEMORY - Will use standard loading")
-        print(f"  Need {memory_info['estimated_peak_gb']:.2f} GB, have {memory_info['gpu_usable_gb']:.2f} GB")
+        print(f"  RAM: Need {memory_info['full_dataset_gb']:.2f} GB, have {memory_info['sys_usable_gb']:.2f} GB")
+        if total_gpu_mem:
+            print(f"  GPU: Need {memory_info['estimated_peak_gb']:.2f} GB, have {memory_info['gpu_usable_gb']:.2f} GB")
     print(f"  {'='*70}\n")
     
     return use_lazy, memory_info
