@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import time
 import itertools
+import gc
 
 from dataset import BanditTaskNeuroPixelsDataset
 from ncmcm.bundlenet.bundlenet import BunDLeNet, train_model, project_into_latent_space, project_into_latent_space_lazy
@@ -125,16 +126,19 @@ def save_config(args, output_dir):
 
 def load_data(data_path, downsample_fs, downsample_method, good_neurons_only, apply_hold_transitions=False, normalize_method='none'):
     """Load and prepare dataset"""
-    print("Loading dataset...")
-    
     # Determine state_transitions parameter
     state_transitions = None
     if apply_hold_transitions:
         state_transitions = BanditTaskNeuroPixelsDataset.HOLD_TO_CHOOSING_TRANSITIONS
-        print(f"  Applying HOLD_TO_CHOOSING_TRANSITIONS: {state_transitions}")
     
     # Convert 'None' string to None for normalize_method
     norm_method = None if normalize_method == 'None' else normalize_method
+    
+    print("Loading dataset...")
+    
+    if state_transitions is not None:
+        print(f"  Applying HOLD_TO_CHOOSING_TRANSITIONS: {state_transitions}")
+    
     if norm_method is not None:
         print(f"  Applying normalization: {norm_method}")
     
@@ -152,6 +156,10 @@ def load_data(data_path, downsample_fs, downsample_method, good_neurons_only, ap
     b_labels = dataset.b_labels
     b_colors = dataset.get_color_map_for_plotting()
     b_colors_rgb = dataset.get_rgb_colors_for_visualizer()
+    
+    # Free memory from dataset object (contains large sparse matrices)
+    del dataset
+    gc.collect()
     
     print(f"Data shapes - x: {x.shape}, b: {b.shape}")
     print(f"Behavior labels: {b_labels}")
@@ -524,12 +532,18 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
     x_, b_, x_train, x_test, b_train, b_test = preprocess_data(x, b, args.window, lazy_loading=args.lazy_loading)
     print_step_time("Data preprocessing", run_start_time, step_start)
     
+    # Free memory from original arrays (preprocessed versions are now used)
+    del x, b
+    
     # Train model
     step_start = time.time()
     model, loss_array, test_loss_array = train_bundlenet(
         x_train, b_train, x_test, b_test, x_.shape, args, output_dir
     )
     print_step_time("Model training", run_start_time, step_start)
+    
+    # Free memory from full preprocessed data (only using train/test splits now)
+    del x_, b_
     
     # Plot training loss
     step_start = time.time()
@@ -553,6 +567,10 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
         plot_recurrence(y_train, output_dir, args.recurrence_threshold, args.vis_samples, data_split='train')
         print_step_time("Training recurrence plot generation", run_start_time, step_start)
     
+    # Free memory from training data (no longer needed)
+    del y_train, x_train, b_train
+    gc.collect()
+    
     # Project validation data into latent space
     step_start = time.time()
     print("Projecting validation data into latent space...")
@@ -569,6 +587,12 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
         step_start = time.time()
         plot_recurrence(y_test, output_dir, args.recurrence_threshold, args.vis_samples, data_split='validation')
         print_step_time("Validation recurrence plot generation", run_start_time, step_start)
+    
+    # Free memory from validation data (all processing complete)
+    del y_test, x_test, b_test
+    # Free memory from model and color mappings (no longer needed)
+    del model, loss_array, test_loss_array, b_colors, b_colors_rgb
+    gc.collect()
     
     total_time = time.time() - run_start_time
     print(f"\n{'='*80}")
