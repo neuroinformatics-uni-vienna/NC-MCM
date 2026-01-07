@@ -387,177 +387,6 @@ def print_step_time(step_name, start_time, step_start_time):
     print(f"  Total elapsed time: {format_elapsed_time(total_elapsed)}\n")
 
 
-def get_gpu_memory_info():
-    """Get available GPU memory in bytes"""
-    if not torch.cuda.is_available():
-        return None, None
-    
-    try:
-        # Get current device
-        device = torch.cuda.current_device()
-        # Total memory
-        total_memory = torch.cuda.get_device_properties(device).total_memory
-        # Currently allocated memory
-        allocated_memory = torch.cuda.memory_allocated(device)
-        # Reserved memory (cached)
-        reserved_memory = torch.cuda.memory_reserved(device)
-        # Free memory (approximate)
-        free_memory = total_memory - reserved_memory
-        
-        return total_memory, free_memory
-    except Exception as e:
-        print(f"Warning: Could not get GPU memory info: {e}")
-        return None, None
-
-
-def get_system_memory_info():
-    """Get available system RAM in bytes"""
-    import psutil
-    mem = psutil.virtual_memory()
-    return mem.total, mem.available
-
-
-def estimate_actual_memory_requirements(x_shape, window, batch_size):
-    """
-    Calculate actual memory requirements based on real data dimensions.
-    
-    Args:
-        x_shape: Shape of the input data (n_samples, n_features)
-        window: Window size for time delay embedding
-        batch_size: Batch size for training
-    
-    Returns:
-        estimated_memory_bytes: Estimated peak memory usage in bytes
-    """
-    n_samples, n_features = x_shape
-    
-    # After prep_data with time delay embedding:
-    # Shape will be: (n_samples - window, 2, window, n_features)
-    n_prepared_samples = n_samples - window
-    
-    # Memory for the full prepared dataset (float32 = 4 bytes)
-    full_dataset_bytes = n_prepared_samples * 2 * window * n_features * 4
-    
-    # Memory for a single batch on GPU
-    batch_data_bytes = batch_size * 2 * window * n_features * 4
-    
-    # During training, we need memory for:
-    # 1. Batch data (input)
-    # 2. Model parameters (relatively small, ~few MB)
-    # 3. Activations during forward pass (~2-3x batch size)
-    # 4. Gradients during backward pass (~2-3x batch size)
-    # 5. Optimizer state (Adam keeps momentum, ~2x parameters)
-    # 
-    # Conservative estimate: 6-8x the batch data size for peak usage
-    training_multiplier = 8
-    peak_memory_bytes = batch_data_bytes * training_multiplier
-    
-    return {
-        'full_dataset_bytes': full_dataset_bytes,
-        'batch_data_bytes': batch_data_bytes,
-        'estimated_peak_bytes': peak_memory_bytes,
-        'full_dataset_gb': full_dataset_bytes / (1024**3),
-        'batch_data_gb': batch_data_bytes / (1024**3),
-        'estimated_peak_gb': peak_memory_bytes / (1024**3)
-    }
-
-
-def check_memory_risk_with_actual_data(x, window, batch_size, safety_margin=0.85):
-    """
-    Check if there's enough GPU and system memory based on actual data dimensions.
-    
-    Args:
-        x: Actual data array
-        window: Window size
-        batch_size: Batch size
-        safety_margin: Use only this fraction of available memory (default 85%)
-    
-    Returns:
-        use_lazy: Whether to use lazy loading
-        memory_info: Dictionary with memory statistics
-    """
-    total_gpu_mem, free_gpu_mem = get_gpu_memory_info()
-    total_sys_mem, free_sys_mem = get_system_memory_info()
-    
-    # Calculate actual memory requirements
-    mem_req = estimate_actual_memory_requirements(x.shape, window, batch_size)
-    
-    # Check GPU memory if available
-    gpu_ok = True
-    if total_gpu_mem is not None and free_gpu_mem is not None:
-        usable_gpu_memory = free_gpu_mem * safety_margin
-        gpu_ok = mem_req['estimated_peak_bytes'] <= usable_gpu_memory
-    
-    # Check system RAM - this is critical!
-    # With lazy loading OFF, we need to fit the entire dataset in RAM
-    usable_sys_memory = free_sys_mem * safety_margin
-    sys_ram_ok = mem_req['full_dataset_bytes'] <= usable_sys_memory
-    
-    # Decision: use lazy loading if either GPU or RAM is insufficient
-    use_lazy = not (gpu_ok and sys_ram_ok)
-    
-    # Determine the limiting factor
-    if not sys_ram_ok:
-        limiting_factor = 'System RAM'
-    elif not gpu_ok:
-        limiting_factor = 'GPU Memory'
-    else:
-        limiting_factor = 'None'
-    
-    # Prepare info dictionary
-    memory_info = {
-        'gpu_total_gb': total_gpu_mem / (1024**3) if total_gpu_mem else None,
-        'gpu_free_gb': free_gpu_mem / (1024**3) if free_gpu_mem else None,
-        'gpu_usable_gb': (free_gpu_mem * safety_margin) / (1024**3) if free_gpu_mem else None,
-        'sys_total_gb': total_sys_mem / (1024**3),
-        'sys_free_gb': free_sys_mem / (1024**3),
-        'sys_usable_gb': usable_sys_memory / (1024**3),
-        'data_shape': x.shape,
-        'full_dataset_gb': mem_req['full_dataset_gb'],
-        'batch_data_gb': mem_req['batch_data_gb'],
-        'estimated_peak_gb': mem_req['estimated_peak_gb'],
-        'will_fit': not use_lazy,
-        'safety_margin': safety_margin,
-        'limiting_factor': limiting_factor,
-        'gpu_sufficient': gpu_ok,
-        'ram_sufficient': sys_ram_ok
-    }
-    
-    # Print detailed info
-    print(f"\n  {'='*70}")
-    print(f"  MEMORY ANALYSIS")
-    print(f"  {'='*70}")
-    if total_gpu_mem:
-        print(f"  GPU Total Memory:      {memory_info['gpu_total_gb']:.2f} GB")
-        print(f"  GPU Free Memory:       {memory_info['gpu_free_gb']:.2f} GB")
-        print(f"  GPU Usable Memory:     {memory_info['gpu_usable_gb']:.2f} GB (with {safety_margin*100:.0f}% margin)")
-    print(f"  System RAM Total:      {memory_info['sys_total_gb']:.2f} GB")
-    print(f"  System RAM Free:       {memory_info['sys_free_gb']:.2f} GB")
-    print(f"  System RAM Usable:     {memory_info['sys_usable_gb']:.2f} GB (with {safety_margin*100:.0f}% margin)")
-    print(f"  {'─'*70}")
-    print(f"  Data Shape:            {x.shape}")
-    print(f"  Full Dataset Size:     {memory_info['full_dataset_gb']:.2f} GB (will be loaded to RAM)")
-    print(f"  Batch Size:            {batch_size}")
-    print(f"  Single Batch Data:     {memory_info['batch_data_gb']:.3f} GB")
-    print(f"  Estimated Peak Usage:  {memory_info['estimated_peak_gb']:.2f} GB (training on GPU)")
-    print(f"  {'─'*70}")
-    if use_lazy:
-        print(f"  ⚠ INSUFFICIENT MEMORY - Will use LAZY LOADING")
-        print(f"  Limiting Factor: {limiting_factor}")
-        if not sys_ram_ok:
-            print(f"  RAM: Need {memory_info['full_dataset_gb']:.2f} GB for dataset, have {memory_info['sys_usable_gb']:.2f} GB")
-        if not gpu_ok and total_gpu_mem:
-            print(f"  GPU: Need {memory_info['estimated_peak_gb']:.2f} GB for training, have {memory_info['gpu_usable_gb']:.2f} GB")
-    else:
-        print(f"  ✓ SUFFICIENT MEMORY - Will use standard loading")
-        print(f"  RAM: Need {memory_info['full_dataset_gb']:.2f} GB, have {memory_info['sys_usable_gb']:.2f} GB")
-        if total_gpu_mem:
-            print(f"  GPU: Need {memory_info['estimated_peak_gb']:.2f} GB, have {memory_info['gpu_usable_gb']:.2f} GB")
-    print(f"  {'='*70}\n")
-    
-    return use_lazy, memory_info
-
-
 def generate_param_combinations(args):
     """Generate all parameter combinations for grid search"""
     # Parameters to grid search over
@@ -616,8 +445,6 @@ def update_grid_search_summary(summary_path, run_idx, params, result):
         'output_dir': str(result.get('output_dir', '')),
         'status': 'failed' if 'error' in result else 'completed',
         'error': result.get('error', None),
-        'lazy_loading_retry': result.get('lazy_loading_retry', False),
-        'lazy_loading_preemptive': result.get('lazy_loading_preemptive', False),
         'completed_at': datetime.now().isoformat()
     }
     # Attach metrics if available
@@ -686,20 +513,6 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
     step_start = time.time()
     x, b, b_labels, b_colors, b_colors_rgb = load_data(args.data_path, args.downsample_fs, args.downsample_method, args.good_neurons_only, args.apply_hold_transitions, args.normalize_method)
     print_step_time("Data loading", run_start_time, step_start)
-    
-    # Check actual memory requirements and decide on lazy loading
-    # Only override if not already set by user or preemptive check
-    if not hasattr(args, '_lazy_preemptive') and not args.lazy_loading:
-        use_lazy, memory_info = check_memory_risk_with_actual_data(x, args.window, args.batch_size)
-        if use_lazy:
-            print("  Enabling lazy loading based on actual memory analysis")
-            args._lazy_preemptive = True
-            args.lazy_loading = True
-            # Save memory info to config
-            if memory_info:
-                memory_info_path = output_dir / 'memory_analysis.json'
-                with open(memory_info_path, 'w') as f:
-                    json.dump(memory_info, f, indent=4)
     
     # Visualize raw data
     step_start = time.time()
@@ -779,9 +592,7 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
         'output_dir': output_dir,
         'execution_time': format_elapsed_time(total_time),
         'execution_time_seconds': total_time,
-        'metrics': metrics,
-        'lazy_loading_preemptive': getattr(args, '_lazy_preemptive', False),
-        'lazy_loading_retry': getattr(args, '_lazy_retry', False)
+        'metrics': metrics
     }
 
 
@@ -836,90 +647,23 @@ def main():
             (output_dir / 'model').mkdir(exist_ok=True)
             (output_dir / 'data').mkdir(exist_ok=True)
         
-        # Note: Actual memory check happens after data loading in run_single_experiment
-        # This allows us to make decisions based on real data dimensions and GPU state
-        
         try:
             result = run_single_experiment(args, params, output_dir, run_idx, total_runs)
             results.append(result)
-            
-            # Reset lazy loading flags after successful run
-            if hasattr(args, '_lazy_preemptive'):
-                args.lazy_loading = False
-                delattr(args, '_lazy_preemptive')
         except Exception as e:
             error_msg = str(e)
-            # Check if it's a CUDA out of memory error
-            is_cuda_oom = 'CUDA out of memory' in error_msg or 'out of memory' in error_msg.lower()
-            
             print(f"\n{'!'*80}")
             print(f"ERROR in run {run_idx + 1}/{total_runs}")
             print(f"Parameters: {params}")
             print(f"Error: {error_msg}")
             print(f"{'!'*80}\n")
             
-            # Retry with lazy loading if CUDA OOM and not already using lazy loading
-            if is_cuda_oom and not params.get('lazy_loading', args.lazy_loading):
-                print(f"\n{'='*80}")
-                print(f"RETRYING RUN {run_idx + 1}/{total_runs} WITH LAZY LOADING")
-                print(f"{'='*80}\n")
-                
-                # Free GPU memory
-                import gc
-                gc.collect()
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                
-                # Wait a moment for memory to clear
-                time.sleep(2)
-                
-                try:
-                    # Mark that we're doing a lazy retry
-                    args._lazy_retry = True
-                    # Override lazy_loading for this retry
-                    original_lazy = args.lazy_loading
-                    args.lazy_loading = True
-                    
-                    result = run_single_experiment(args, params, output_dir, run_idx, total_runs)
-                    results.append(result)
-                    
-                    print(f"\n{'='*80}")
-                    print(f"LAZY LOADING RETRY SUCCESSFUL!")
-                    print(f"{'='*80}\n")
-                    
-                    # Restore original lazy_loading setting
-                    args.lazy_loading = original_lazy
-                    delattr(args, '_lazy_retry')
-                    
-                except Exception as retry_e:
-                    print(f"\n{'!'*80}")
-                    print(f"LAZY LOADING RETRY ALSO FAILED")
-                    print(f"Error: {str(retry_e)}")
-                    print(f"{'!'*80}\n")
-                    result = {
-                        'output_dir': output_dir,
-                        'execution_time': 'FAILED',
-                        'error': f"Original: {error_msg}; Lazy retry: {str(retry_e)}",
-                        'lazy_loading_retry': True
-                    }
-                    results.append(result)
-                    
-                    # Restore original lazy_loading setting
-                    args.lazy_loading = original_lazy
-                    if hasattr(args, '_lazy_retry'):
-                        delattr(args, '_lazy_retry')
-            else:
-                result = {
-                    'output_dir': output_dir,
-                    'execution_time': 'FAILED',
-                    'error': error_msg
-                }
-                results.append(result)
-        
-        # Reset preemptive lazy loading flag if it was set and we had an error
-        if hasattr(args, '_lazy_preemptive'):
-            args.lazy_loading = False
-            delattr(args, '_lazy_preemptive')
+            result = {
+                'output_dir': output_dir,
+                'execution_time': 'FAILED',
+                'error': error_msg
+            }
+            results.append(result)
         
         # Update summary JSON after each run
         if summary_path is not None:
