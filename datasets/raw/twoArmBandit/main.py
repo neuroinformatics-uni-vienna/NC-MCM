@@ -447,6 +447,9 @@ def update_grid_search_summary(summary_path, run_idx, params, result):
         'error': result.get('error', None),
         'completed_at': datetime.now().isoformat()
     }
+    # Attach metrics if available
+    if 'metrics' in result and isinstance(result['metrics'], dict):
+        run_info['metrics'] = result['metrics']
     summary['runs'].append(run_info)
     
     # Update counters
@@ -454,6 +457,32 @@ def update_grid_search_summary(summary_path, run_idx, params, result):
     summary['completed_runs'] = sum(1 for r in summary['runs'] if r['status'] == 'completed')
     summary['failed_runs'] = sum(1 for r in summary['runs'] if r['status'] == 'failed')
     
+    # Compute best runs based on validation (test) losses if metrics exist
+    def _best_by_key(key_name):
+        candidates = [r for r in summary['runs'] if r.get('metrics') and r['status'] == 'completed']
+        if not candidates:
+            return None
+        # Ensure key exists in metrics
+        candidates = [r for r in candidates if key_name in r['metrics']]
+        if not candidates:
+            return None
+        best_run = min(candidates, key=lambda r: r['metrics'][key_name])
+        return {
+            'run_id': best_run['run_id'],
+            'loss': best_run['metrics'][key_name],
+            'epoch': best_run['metrics'].get(key_name.replace('loss', 'epoch'), None),
+            'parameters': best_run['parameters'],
+            'output_dir': best_run['output_dir']
+        }
+
+    best_markov = _best_by_key('best_markovian_loss')
+    best_behavior = _best_by_key('best_behavior_loss')
+
+    if best_markov is not None:
+        summary['best_markovian_run'] = best_markov
+    if best_behavior is not None:
+        summary['best_behavior_run'] = best_behavior
+
     # Save updated summary
     with open(summary_path, 'w') as f:
         json.dump(summary, f, indent=4)
@@ -548,10 +577,22 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
     print(f"Results saved to: {output_dir}")
     print(f"{'='*80}\n")
     
+    # Collect validation metrics for summary (best across epochs)
+    try:
+        metrics = {
+            'best_markovian_loss': float(np.min(test_loss_array[:, 0])),
+            'best_markovian_epoch': int(np.argmin(test_loss_array[:, 0])),
+            'best_behavior_loss': float(np.min(test_loss_array[:, 1])),
+            'best_behavior_epoch': int(np.argmin(test_loss_array[:, 1]))
+        }
+    except Exception:
+        metrics = {}
+
     return {
         'output_dir': output_dir,
         'execution_time': format_elapsed_time(total_time),
-        'execution_time_seconds': total_time
+        'execution_time_seconds': total_time,
+        'metrics': metrics
     }
 
 
