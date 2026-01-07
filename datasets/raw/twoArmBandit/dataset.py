@@ -157,6 +157,9 @@ class BanditTaskNeuroPixelsDataset:
 
         # Create neuronal data representation based on chosen method
         self.x = self._create_sparse_neuronal_data_matrix(spike_times_in_neuronal_time, spike_clusters, cluster_info)
+        
+        # Free memory from large spike arrays no longer needed
+        del spike_times_in_neuronal_time, spike_clusters, cluster_info, spike_times_in_behavioral_time
 
         # Downsample neuronal data if requested
         if self.downsample_fs is not None:
@@ -192,6 +195,9 @@ class BanditTaskNeuroPixelsDataset:
         
         # Create behavioral time array (start time of each timepoint in ms)
         self.behavioral_time = self._create_behavioral_time_array(neuronal_length, translation_indices_neuronal_to_behavioral)
+        
+        # Free memory from large temporary arrays no longer needed
+        del translation_indices_neuronal_to_behavioral, metrics
         
         # Post processing: Trim waiting periods from start and end
         self._trim_waiting_periods(self.x, self.b, self.b_labels_dict)
@@ -281,6 +287,9 @@ class BanditTaskNeuroPixelsDataset:
         self.b = sparse.csr_matrix(new_state_array, shape=(1, len(new_state_array)))
         self.b_labels_dict.update(combined_state_labels)
         
+        # Free memory from dense copies
+        del b_dense, new_state_array
+        
     def _relabel_behavioral_states(self):
         """
         Relabel behavioral states to have continuous IDs starting from 0.
@@ -304,6 +313,9 @@ class BanditTaskNeuroPixelsDataset:
 
         self.b = sparse.csr_matrix(relabeled_state_array, shape=(1, len(relabeled_state_array)))
         self.b_labels_dict = relabeled_state_labels
+        
+        # Free memory from dense copies
+        del b_dense, relabeled_state_array
 
     def _trim_waiting_periods(self, x, b, b_labels_dict):
         """
@@ -327,6 +339,9 @@ class BanditTaskNeuroPixelsDataset:
         first_non_waiting_idx = np.argmax(b_dense != waiting_state_id)
         # last non-waiting state to the end
         last_non_waiting_idx = len(b_dense) - np.argmax(b_dense[::-1] != waiting_state_id)
+        
+        # Free memory from dense copy
+        del b_dense
         
         self.x = x[:, first_non_waiting_idx:last_non_waiting_idx]
         self.b = b[:, first_non_waiting_idx:last_non_waiting_idx]
