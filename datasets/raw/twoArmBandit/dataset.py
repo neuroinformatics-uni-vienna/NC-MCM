@@ -8,10 +8,13 @@ import pandas as pd
 import os
 import numpy as np
 from scipy import sparse
-from scipy.ndimage import gaussian_filter1d
-from scipy.signal import resample
+import pickle
+import hashlib
 
 class BanditTaskNeuroPixelsDataset:
+    # Cache directory name
+    CACHE_DIR = "BanditTaskNeuroPixelsDataset"
+    
     # Common state transition combinations
     HOLD_TO_CHOOSING_TRANSITIONS = {
         ("hold", "choosing left"): "hold --> choosing left",
@@ -99,6 +102,8 @@ class BanditTaskNeuroPixelsDataset:
         self.state_transitions = state_transitions if state_transitions is not None else {}
         self.gaussian_sigma_ms = gaussian_sigma_ms
         self.normalize_method = normalize_method
+        # Store original parameters for cache key (before any adjustments)
+        self._original_downsample_fs = downsample_fs
         self.x = None  # neuronal time-series data (scipy.sparse.csr_matrix)
         self.b = None  # behavioral time-series data (scipy.sparse.csr_matrix)
         self.b_labels_dict = None # behavioral lables as dict, mapping state id to state name
@@ -110,13 +115,16 @@ class BanditTaskNeuroPixelsDataset:
         self.behavioral_time = None  # behavioral time array (in ms)
         self.fs = None  # sampling frequency
         
-        # load data and assign to attributes
-        self.load_data()
-        
-        # Print information about the loaded dataset
-        print(f"Loaded BanditTaskNeuroPixelsDataset from {data_path}")
-        print(f"Neuronal data shape: {self.x.shape}, Behavioral data shape: {self.b.shape}, Sampling frequency: {self.fs} Hz")
-        print(f"Behavioral labels: {self.b_labels_dict}")
+        # Try to load from cache, otherwise process data and save to cache
+        if not self._load_from_cache():
+            # load data and assign to attributes
+            self.load_data()
+            # Save to cache for future use
+            self._save_to_cache()
+            # Print information about the loaded dataset
+            print(f"Loaded BanditTaskNeuroPixelsDataset from {data_path}")
+            print(f"Neuronal data shape: {self.x.shape}, Behavioral data shape: {self.b.shape}, Sampling frequency: {self.fs} Hz")
+            print(f"Behavioral labels: {self.b_labels_dict}")
         
     def load_data(self):
         """
@@ -1111,6 +1119,152 @@ class BanditTaskNeuroPixelsDataset:
                 rgb_colors.append(rgb)
         
         return rgb_colors
+    
+    def _get_cache_filename(self):
+        """
+        Generate a unique cache filename based on dataset parameters.
+        
+        Returns:
+            str: Filename for caching this dataset configuration
+        """
+        # Create a dictionary of parameters that affect the processed data
+        # Use original downsample_fs (before adjustment) for consistent cache key
+        params = {
+            'downsample_fs': self._original_downsample_fs,
+            'downsample_method': self.downsample_method,
+            'good_neurons_only': self.good_neurons_only,
+            'state_transitions': str(sorted(self.state_transitions.items())) if self.state_transitions else 'None',
+            'gaussian_sigma_ms': self.gaussian_sigma_ms,
+            'normalize_method': self.normalize_method
+        }
+        
+        # Create a string representation of parameters
+        param_str = '_'.join([f"{k}={v}" for k, v in sorted(params.items())])
+        
+        # Create a hash of the parameter string to keep filename manageable
+        param_hash = hashlib.md5(param_str.encode()).hexdigest()[:8]
+        
+        # Create readable filename with key parameters and hash
+        filename_parts = [
+            f"fs{self._original_downsample_fs}" if self._original_downsample_fs else "fsNone",
+            self.downsample_method,
+            "good" if self.good_neurons_only else "all",
+            f"norm{self.normalize_method}" if self.normalize_method else "normNone",
+            param_hash
+        ]
+        
+        filename = '_'.join(filename_parts) + '.pkl'
+        return filename
+    
+    def _get_cache_dir(self):
+        """
+        Get or create the cache directory path.
+        
+        Returns:
+            str: Path to cache directory
+        """
+        cache_dir = os.path.join(self.data_path, self.CACHE_DIR)
+        os.makedirs(cache_dir, exist_ok=True)
+        return cache_dir
+    
+    def _save_to_cache(self):
+        """
+        Save the processed dataset to cache file.
+        """
+        try:
+            cache_dir = self._get_cache_dir()
+            cache_filename = self._get_cache_filename()
+            cache_path = os.path.join(cache_dir, cache_filename)
+            
+            # Prepare data dictionary to cache
+            cache_data = {
+                'x': self.x,
+                'b': self.b,
+                'b_labels_dict': self.b_labels_dict,
+                'b_labels': self.b_labels,
+                'b_continuous': self.b_continuous,
+                'trial_indices': self.trial_indices,
+                'block_indices': self.block_indices,
+                'block_labels': self.block_labels,
+                'behavioral_time': self.behavioral_time,
+                'fs': self.fs,
+                # Save parameters for verification
+                'params': {
+                    'downsample_fs': self._original_downsample_fs,  # Use original for cache key
+                    'actual_downsample_fs': self.downsample_fs,  # Save actual adjusted value
+                    'downsample_method': self.downsample_method,
+                    'good_neurons_only': self.good_neurons_only,
+                    'state_transitions': self.state_transitions,
+                    'gaussian_sigma_ms': self.gaussian_sigma_ms,
+                    'normalize_method': self.normalize_method
+                }
+            }
+            
+            # Save to pickle file
+            with open(cache_path, 'wb') as f:
+                pickle.dump(cache_data, f, protocol=pickle.HIGHEST_PROTOCOL)
+            
+            print(f"Dataset cached to: {cache_path}")
+            
+        except Exception as e:
+            print(f"Warning: Failed to save dataset to cache: {e}")
+    
+    def _load_from_cache(self):
+        """
+        Try to load processed dataset from cache.
+        
+        Returns:
+            bool: True if successfully loaded from cache, False otherwise
+        """
+        try:
+            cache_dir = self._get_cache_dir()
+            cache_filename = self._get_cache_filename()
+            cache_path = os.path.join(cache_dir, cache_filename)
+            
+            # Check if cache file exists
+            if not os.path.exists(cache_path):
+                return False
+            
+            print(f"Loading dataset from cache: {cache_path}")
+            
+            # Load from pickle file
+            with open(cache_path, 'rb') as f:
+                cache_data = pickle.load(f)
+            
+            # Verify parameters match (safety check)
+            # Use original downsample_fs for comparison
+            cached_params = cache_data.get('params', {})
+            if cached_params.get('downsample_fs') != self._original_downsample_fs or \
+               cached_params.get('downsample_method') != self.downsample_method or \
+               cached_params.get('good_neurons_only') != self.good_neurons_only or \
+               cached_params.get('normalize_method') != self.normalize_method:
+                print("Warning: Cached parameters mismatch, reprocessing data...")
+                return False
+            
+            # Restore data from cache
+            self.x = cache_data['x']
+            self.b = cache_data['b']
+            self.b_labels_dict = cache_data['b_labels_dict']
+            self.b_labels = cache_data['b_labels']
+            self.b_continuous = cache_data['b_continuous']
+            self.trial_indices = cache_data['trial_indices']
+            self.block_indices = cache_data['block_indices']
+            self.block_labels = cache_data['block_labels']
+            self.behavioral_time = cache_data['behavioral_time']
+            self.fs = cache_data['fs']
+            # Update downsample_fs to the actual value (may be slightly adjusted)
+            self.downsample_fs = cache_data['params'].get('actual_downsample_fs', self.fs)
+            
+            print(f"Successfully loaded cached dataset")
+            print(f"Neuronal data shape: {self.x.shape}, Behavioral data shape: {self.b.shape}, Sampling frequency: {self.fs} Hz")
+            print(f"Behavioral labels: {self.b_labels_dict}")
+            
+            return True
+            
+        except Exception as e:
+            print(f"Warning: Failed to load from cache: {e}")
+            print("Reprocessing data...")
+            return False
     
     def get_recording_length_mins(self):
         """
