@@ -417,10 +417,10 @@ def generate_param_combinations(args):
     values = param_grid.values()
     combinations = [dict(zip(keys, v)) for v in itertools.product(*values)]
     
-    return combinations
+    return combinations, param_grid
 
 
-def initialize_grid_search_summary(grid_dir, combinations):
+def initialize_grid_search_summary(grid_dir, combinations, param_grid):
     """Initialize grid search summary JSON file"""
     summary = {
         'total_runs': len(combinations),
@@ -428,6 +428,7 @@ def initialize_grid_search_summary(grid_dir, combinations):
         'last_updated': datetime.now().isoformat(),
         'completed_runs': 0,
         'failed_runs': 0,
+        'grid_parameters': param_grid,
         'runs': []
     }
     
@@ -625,7 +626,7 @@ def main():
     args = parse_args()
     
     # Generate parameter combinations
-    param_combinations = generate_param_combinations(args)
+    param_combinations, param_grid = generate_param_combinations(args)
     total_runs = len(param_combinations)
     
     print(f"\n{'='*80}")
@@ -651,7 +652,7 @@ def main():
         grid_dir = create_grid_search_directory(args.output_dir)
         print(f"Grid search directory: {grid_dir}\n")
         # Initialize summary JSON
-        summary_path = initialize_grid_search_summary(grid_dir, param_combinations)
+        summary_path = initialize_grid_search_summary(grid_dir, param_combinations, param_grid)
     else:
         # Single run - use original structure
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
