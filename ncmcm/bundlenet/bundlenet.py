@@ -162,7 +162,7 @@ class BunDLeTrainer:
         return avg_test_loss
 
 
-def train_model(x_train, b_train_1, model, b_type, gamma, learning_rate, batch_size, n_epochs, initialisation=None,
+def train_model(x_train, b_train_1, model, b_type, gamma, learning_rate, n_epochs, batch_size=100, initialisation=None,
                 validation_data=None, device=None, report_ray_tune=False, pca_file_save=False):
     """
     Training BunDLe Net
