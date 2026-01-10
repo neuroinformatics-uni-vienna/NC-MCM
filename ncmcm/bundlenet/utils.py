@@ -8,7 +8,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset, Dataset
-from sklearn.model_selection import KFold
+from sklearn.model_selection import KFold, TimeSeriesSplit
 
 
 class LazyWindowedDataset(Dataset):
@@ -260,6 +260,83 @@ class LazyBatchDataset(Dataset):
         b_tensor = torch.tensor(b, device=self.device)
         
         return x_tensor, b_tensor
+
+
+def timeseries_train_test_split_cv(x_paired, b_1, n_splits=5):
+    """
+    Perform train-test splits for time series data using TimeSeriesSplit.
+    Returns all splits from the cross-validation.
+    
+    Parameters:
+        x_paired : np.ndarray
+            Paired neuronal traces of shape (m, 2, win, n), where m is the number of paired windows,
+            2 represents the current and next time steps, win-1 is the length of each window excluding the last time 
+            step, and n is the number of neurons.
+        b_1 : np.ndarray
+            Behavioral traces corresponding to the next time step, of shape (m,). Each value represents the behavioral
+            data corresponding to the next time step in the paired neuronal traces.
+        n_splits : int, optional
+            Number of splits for TimeSeriesSplit. Default is 5.
+    
+    Returns:
+        splits : list of tuples
+            List of (x_train, x_test, b_train_1, b_test_1) tuples, one for each fold.
+            Each tuple contains:
+                x_train : np.ndarray - Training set of paired neuronal traces
+                x_test : np.ndarray - Test set of paired neuronal traces
+                b_train_1 : np.ndarray - Behavioral traces for training set
+                b_test_1 : np.ndarray - Behavioral traces for test set
+    """
+    tscv = TimeSeriesSplit(n_splits=n_splits)
+    splits = []
+    
+    for train_index, test_index in tscv.split(x_paired):
+        x_train, x_test = x_paired[train_index], x_paired[test_index]
+        b_train_1, b_test_1 = b_1[train_index], b_1[test_index]
+        splits.append((x_train, x_test, b_train_1, b_test_1))
+    
+    return splits
+
+
+def timeseries_train_test_split_cv_lazy(x_paired, b_1, n_splits=5):
+    """
+    MEMORY-EFFICIENT version of timeseries_train_test_split_cv that works with LazyWindowedDataset.
+    Performs train-test splits for time series data using TimeSeriesSplit.
+    Returns all splits from the cross-validation.
+    
+    Parameters:
+        x_paired : LazyWindowedDataset
+            Lazy dataset of paired neuronal traces from prep_data_lazy()
+        b_1 : np.ndarray
+            Behavioral traces corresponding to the next time step, of shape (m,)
+        n_splits : int, optional
+            Number of splits for TimeSeriesSplit. Default is 5.
+    
+    Returns:
+        splits : list of tuples
+            List of (x_train, x_test, b_train_1, b_test_1) tuples, one for each fold.
+            Each tuple contains:
+                x_train : Subset - Training set of paired neuronal traces (lazy)
+                x_test : Subset - Test set of paired neuronal traces (lazy)
+                b_train_1 : np.ndarray - Behavioral traces for training set
+                b_test_1 : np.ndarray - Behavioral traces for test set
+    """
+    from torch.utils.data import Subset
+    
+    total_samples = len(x_paired)
+    indices = np.arange(total_samples)
+    
+    tscv = TimeSeriesSplit(n_splits=n_splits)
+    splits = []
+    
+    for train_index, test_index in tscv.split(indices):
+        x_train = Subset(x_paired, train_index)
+        x_test = Subset(x_paired, test_index)
+        b_train_1 = b_1[train_index]
+        b_test_1 = b_1[test_index]
+        splits.append((x_train, x_test, b_train_1, b_test_1))
+    
+    return splits
 
 
 def torch_batch_prep(x_, b_, device, batch_size=100, shuffle=True):

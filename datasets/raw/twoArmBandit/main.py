@@ -13,7 +13,8 @@ import gc
 
 from dataset import BanditTaskNeuroPixelsDataset
 from ncmcm.bundlenet.bundlenet import BunDLeNet, train_model, project_into_latent_space, project_into_latent_space_lazy
-from ncmcm.bundlenet.utils import prep_data, timeseries_train_test_split, prep_data_lazy, timeseries_train_test_split_lazy
+from ncmcm.bundlenet.utils import (prep_data, timeseries_train_test_split, prep_data_lazy, timeseries_train_test_split_lazy,
+                                     timeseries_train_test_split_cv, timeseries_train_test_split_cv_lazy)
 from ncmcm.visualisers.neuronal_behavioural import plotting_neuronal_behavioural_plotly
 from ncmcm.visualisers.latent_space import LatentSpaceVisualiser
 from sklearn.preprocessing import LabelEncoder
@@ -79,6 +80,10 @@ def parse_args():
     # Memory optimization
     parser.add_argument('--lazy_loading', action='store_true',
                         help='Use lazy loading for memory-efficient data preparation')
+    
+    # Cross-validation
+    parser.add_argument('--cv_folds', type=int, default=None,
+                        help='Number of cross-validation folds. If not specified, uses single train/test split.')
     
     return parser.parse_args()
 
@@ -167,13 +172,23 @@ def load_data(data_path, downsample_fs, downsample_method, good_neurons_only, ap
     return x, b, b_labels, b_colors, b_colors_rgb
 
 
-def preprocess_data(x, b, window, lazy_loading=False):
-    """Preprocess data for BunDLeNet"""
-    print("Preprocessing data...")
+def preprocess_data(x, b, window, lazy_loading=False, cv_folds=None):
+    """Preprocess data for BunDLeNet
     
-    # Encode labels
-    label_encoder = LabelEncoder()
-    b = label_encoder.fit_transform(b)
+    Args:
+        x: Neural data
+        b: Behavior labels
+        window: Window size for time delay embedding
+        lazy_loading: Use memory-efficient lazy loading
+        cv_folds: Number of CV folds (None for single split)
+    
+    Returns:
+        If cv_folds is None:
+            x_, b_, x_train, x_test, b_train, b_test
+        If cv_folds is specified:
+            x_, b_, splits (list of tuples)
+    """
+    print("Preprocessing data...")
     
     # Prepare data with time delay embedding
     if lazy_loading:
@@ -184,16 +199,32 @@ def preprocess_data(x, b, window, lazy_loading=False):
         x_, b_ = prep_data(x, b, win=window)
         print(f"Prepared data shapes - x_: {x_.shape}, b_: {b_.shape}")
     
-    # Train/test split
-    if lazy_loading:
-        x_train, x_test, b_train, b_test = timeseries_train_test_split_lazy(x_, b_)
+    # Train/test split or CV splits
+    if cv_folds is not None:
+        print(f"Creating {cv_folds}-fold cross-validation splits...")
+        if lazy_loading:
+            splits = timeseries_train_test_split_cv_lazy(x_, b_, n_splits=cv_folds)
+        else:
+            splits = timeseries_train_test_split_cv(x_, b_, n_splits=cv_folds)
+        
+        print(f"Created {len(splits)} CV splits")
+        for i, (x_train, x_test, b_train, b_test) in enumerate(splits):
+            train_size = x_train.shape[0] if hasattr(x_train, 'shape') else len(x_train)
+            test_size = x_test.shape[0] if hasattr(x_test, 'shape') else len(x_test)
+            print(f"  Fold {i}: train={train_size}, test={test_size}")
+        
+        return x_, b_, splits
     else:
-        x_train, x_test, b_train, b_test = timeseries_train_test_split(x_, b_)
-    
-    print(f"Train shapes - x: {x_train.shape if hasattr(x_train, 'shape') else len(x_train)}, b: {b_train.shape}")
-    print(f"Test shapes - x: {x_test.shape if hasattr(x_test, 'shape') else len(x_test)}, b: {b_test.shape}")
-    
-    return x_, b_, x_train, x_test, b_train, b_test
+        # Single train/test split (original behavior)
+        if lazy_loading:
+            x_train, x_test, b_train, b_test = timeseries_train_test_split_lazy(x_, b_)
+        else:
+            x_train, x_test, b_train, b_test = timeseries_train_test_split(x_, b_)
+        
+        print(f"Train shapes - x: {x_train.shape if hasattr(x_train, 'shape') else len(x_train)}, b: {b_train.shape}")
+        print(f"Test shapes - x: {x_test.shape if hasattr(x_test, 'shape') else len(x_test)}, b: {b_test.shape}")
+        
+        return x_, b_, x_train, x_test, b_train, b_test
 
 
 def project_latent_space(x_data, model, lazy_loading=False):
@@ -471,18 +502,43 @@ def update_grid_search_summary(summary_path, run_idx, params, result):
         candidates = [r for r in summary['runs'] if r.get('metrics') and r['status'] == 'completed']
         if not candidates:
             return None
-        # Ensure key exists in metrics
-        candidates = [r for r in candidates if key_name in r['metrics']]
-        if not candidates:
+        
+        # Handle both CV and non-CV runs
+        valid_candidates = []
+        for r in candidates:
+            metrics = r['metrics']
+            if metrics.get('cv_mode', False):
+                # CV run - use mean metric
+                mean_key = key_name + '_mean'
+                if mean_key in metrics:
+                    valid_candidates.append((r, metrics[mean_key]))
+            else:
+                # Non-CV run - use direct metric
+                if key_name in metrics:
+                    valid_candidates.append((r, metrics[key_name]))
+        
+        if not valid_candidates:
             return None
-        best_run = min(candidates, key=lambda r: r['metrics'][key_name])
-        return {
+        
+        best_run, best_loss = min(valid_candidates, key=lambda x: x[1])
+        result = {
             'run_id': best_run['run_id'],
-            'loss': best_run['metrics'][key_name],
-            'epoch': best_run['metrics'].get(key_name.replace('loss', 'epoch'), None),
+            'loss': best_loss,
             'parameters': best_run['parameters'],
-            'output_dir': best_run['output_dir']
+            'output_dir': best_run['output_dir'],
+            'cv_mode': best_run['metrics'].get('cv_mode', False)
         }
+        
+        # Add epoch info for non-CV runs
+        if not result['cv_mode']:
+            epoch_key = key_name.replace('loss', 'epoch')
+            result['epoch'] = best_run['metrics'].get(epoch_key, None)
+        else:
+            # Add CV-specific info
+            result['std'] = best_run['metrics'].get(key_name.replace('_loss', '_loss_std'), None)
+            result['n_folds'] = best_run['metrics'].get('n_folds', None)
+        
+        return result
 
     best_markov = _best_by_key('best_markovian_loss')
     best_behavior = _best_by_key('best_behavior_loss')
@@ -497,6 +553,132 @@ def update_grid_search_summary(summary_path, run_idx, params, result):
         json.dump(summary, f, indent=4)
     
     print(f"Summary updated: {summary['completed_runs']}/{summary['total_runs']} completed, {summary['failed_runs']} failed")
+
+
+def run_single_fold(fold_idx, x_train, x_test, b_train, b_test, x_shape, b_labels, b_colors_rgb, args, fold_dir, run_start_time):
+    """Train and evaluate model on a single fold
+    
+    Returns:
+        dict with metrics and paths
+    """
+    print(f"\n{'='*70}")
+    print(f"FOLD {fold_idx}")
+    print(f"{'='*70}\n")
+    
+    # Train model
+    step_start = time.time()
+    model, loss_array, test_loss_array = train_bundlenet(
+        x_train, b_train, x_test, b_test, x_shape, args, fold_dir
+    )
+    print_step_time(f"Fold {fold_idx} - Model training", run_start_time, step_start)
+    
+    # Plot training loss
+    step_start = time.time()
+    plot_training_loss(loss_array, test_loss_array, fold_dir)
+    print_step_time(f"Fold {fold_idx} - Training loss plotting", run_start_time, step_start)
+    
+    # Project training data into latent space
+    step_start = time.time()
+    print("Projecting training data into latent space...")
+    y_train = project_latent_space(x_train, model, lazy_loading=args.lazy_loading)
+    print_step_time(f"Fold {fold_idx} - Training latent space projection", run_start_time, step_start)
+    
+    # Visualize training latent space
+    step_start = time.time()
+    visualize_latent_space(y_train, b_train, b_labels, fold_dir, args.vis_samples, 
+                          data_split='train', generate_gif=not args.no_gif, colors=b_colors_rgb)
+    print_step_time(f"Fold {fold_idx} - Training latent space visualization", run_start_time, step_start)
+    
+    # Training recurrence plot
+    if args.recurrence_threshold is not None:
+        step_start = time.time()
+        plot_recurrence(y_train, fold_dir, args.recurrence_threshold, args.vis_samples, data_split='train')
+        print_step_time(f"Fold {fold_idx} - Training recurrence plot", run_start_time, step_start)
+    
+    # Free memory from training data
+    del y_train, x_train, b_train
+    gc.collect()
+    
+    # Project validation data into latent space
+    step_start = time.time()
+    print("Projecting validation data into latent space...")
+    y_test = project_latent_space(x_test, model, lazy_loading=args.lazy_loading)
+    print_step_time(f"Fold {fold_idx} - Validation latent space projection", run_start_time, step_start)
+    
+    # Visualize validation latent space
+    step_start = time.time()
+    visualize_latent_space(y_test, b_test, b_labels, fold_dir, args.vis_samples,
+                          data_split='validation', generate_gif=not args.no_gif, colors=b_colors_rgb)
+    print_step_time(f"Fold {fold_idx} - Validation latent space visualization", run_start_time, step_start)
+    
+    # Validation recurrence plot
+    if args.recurrence_threshold is not None:
+        step_start = time.time()
+        plot_recurrence(y_test, fold_dir, args.recurrence_threshold, args.vis_samples, data_split='validation')
+        print_step_time(f"Fold {fold_idx} - Validation recurrence plot", run_start_time, step_start)
+    
+    # Collect metrics
+    fold_metrics = {
+        'fold': fold_idx,
+        'best_markovian_loss': float(np.min(test_loss_array[:, 0])),
+        'best_markovian_epoch': int(np.argmin(test_loss_array[:, 0])),
+        'best_behavior_loss': float(np.min(test_loss_array[:, 1])),
+        'best_behavior_epoch': int(np.argmin(test_loss_array[:, 1])),
+        'final_markovian_loss': float(test_loss_array[-1, 0]),
+        'final_behavior_loss': float(test_loss_array[-1, 1]),
+        'final_total_loss': float(test_loss_array[-1, 2])
+    }
+    
+    # Free memory
+    del y_test, x_test, b_test, model, loss_array, test_loss_array
+    gc.collect()
+    
+    return fold_metrics
+
+
+def generate_cv_summary(fold_metrics_list, output_dir):
+    """Generate summary statistics across CV folds"""
+    print("\nGenerating cross-validation summary...")
+    
+    # Aggregate metrics
+    metrics_names = ['best_markovian_loss', 'best_behavior_loss', 
+                    'final_markovian_loss', 'final_behavior_loss', 'final_total_loss']
+    
+    cv_summary = {
+        'n_folds': len(fold_metrics_list),
+        'fold_metrics': fold_metrics_list,
+        'aggregated': {}
+    }
+    
+    for metric in metrics_names:
+        values = [fold[metric] for fold in fold_metrics_list]
+        cv_summary['aggregated'][metric] = {
+            'mean': float(np.mean(values)),
+            'std': float(np.std(values)),
+            'min': float(np.min(values)),
+            'max': float(np.max(values)),
+            'values': values
+        }
+    
+    # Identify best fold by validation loss
+    best_fold_idx = int(np.argmin([fold['best_markovian_loss'] for fold in fold_metrics_list]))
+    cv_summary['best_fold'] = {
+        'fold_index': best_fold_idx,
+        'metrics': fold_metrics_list[best_fold_idx]
+    }
+    
+    # Save summary
+    summary_path = output_dir / 'cv_summary.json'
+    with open(summary_path, 'w') as f:
+        json.dump(cv_summary, f, indent=4)
+    
+    print(f"CV Summary saved to {summary_path}")
+    print(f"\nCross-Validation Results ({len(fold_metrics_list)} folds):")
+    print(f"  Best Markovian Loss: {cv_summary['aggregated']['best_markovian_loss']['mean']:.6f} ± {cv_summary['aggregated']['best_markovian_loss']['std']:.6f}")
+    print(f"  Best Behavior Loss:  {cv_summary['aggregated']['best_behavior_loss']['mean']:.6f} ± {cv_summary['aggregated']['best_behavior_loss']['std']:.6f}")
+    print(f"  Best Fold: {best_fold_idx} (Markovian Loss: {fold_metrics_list[best_fold_idx]['best_markovian_loss']:.6f})")
+    
+    return cv_summary
 
 
 def run_single_experiment(args, params, output_dir, run_idx, total_runs):
@@ -530,69 +712,133 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
     
     # Preprocess data
     step_start = time.time()
-    x_, b_, x_train, x_test, b_train, b_test = preprocess_data(x, b, args.window, lazy_loading=args.lazy_loading)
-    print_step_time("Data preprocessing", run_start_time, step_start)
+    preprocess_result = preprocess_data(x, b, args.window, lazy_loading=args.lazy_loading, cv_folds=args.cv_folds)
     
-    # Free memory from original arrays (preprocessed versions are now used)
+    if args.cv_folds is not None:
+        x_, b_, splits = preprocess_result
+        print_step_time("Data preprocessing (CV mode)", run_start_time, step_start)
+    else:
+        x_, b_, x_train, x_test, b_train, b_test = preprocess_result
+        print_step_time("Data preprocessing", run_start_time, step_start)
+    
+    # Free memory from original arrays
     del x, b
     
-    # Train model
-    step_start = time.time()
-    model, loss_array, test_loss_array = train_bundlenet(
-        x_train, b_train, x_test, b_test, x_.shape, args, output_dir
-    )
-    print_step_time("Model training", run_start_time, step_start)
-    
-    # Free memory from full preprocessed data (only using train/test splits now)
-    del x_, b_
-    
-    # Plot training loss
-    step_start = time.time()
-    plot_training_loss(loss_array, test_loss_array, output_dir)
-    print_step_time("Training loss plotting", run_start_time, step_start)
-    
-    # Project training data into latent space
-    step_start = time.time()
-    print("Projecting training data into latent space...")
-    y_train = project_latent_space(x_train, model, lazy_loading=args.lazy_loading)
-    print_step_time("Training latent space projection", run_start_time, step_start)
-    
-    # Visualize training latent space
-    step_start = time.time()
-    visualize_latent_space(y_train, b_train, b_labels, output_dir, args.vis_samples, data_split='train', generate_gif=not args.no_gif, colors=b_colors_rgb)
-    print_step_time("Training latent space visualization", run_start_time, step_start)
-    
-    # Training recurrence plot
-    if args.recurrence_threshold is not None:
+    # Cross-validation or single run
+    if args.cv_folds is not None:
+        # === CROSS-VALIDATION MODE ===
+        print(f"\nRunning {args.cv_folds}-fold cross-validation...")
+        fold_metrics_list = []
+        
+        for fold_idx, (x_train, x_test, b_train, b_test) in enumerate(splits):
+            # Create fold directory
+            fold_dir = output_dir / f'fold_{fold_idx}'
+            fold_dir.mkdir(parents=True, exist_ok=True)
+            (fold_dir / 'figures').mkdir(exist_ok=True)
+            (fold_dir / 'model').mkdir(exist_ok=True)
+            (fold_dir / 'data').mkdir(exist_ok=True)
+            
+            # Run fold experiment
+            fold_metrics = run_single_fold(
+                fold_idx, x_train, x_test, b_train, b_test, x_.shape,
+                b_labels, b_colors_rgb, args, fold_dir, run_start_time
+            )
+            fold_metrics_list.append(fold_metrics)
+        
+        # Free memory from preprocessed data
+        del x_, b_, splits
+        gc.collect()
+        
+        # Generate CV summary
+        cv_summary = generate_cv_summary(fold_metrics_list, output_dir)
+        
+        # Use CV aggregated metrics for grid search summary
+        metrics = {
+            'cv_mode': True,
+            'n_folds': args.cv_folds,
+            'best_markovian_loss_mean': cv_summary['aggregated']['best_markovian_loss']['mean'],
+            'best_markovian_loss_std': cv_summary['aggregated']['best_markovian_loss']['std'],
+            'best_behavior_loss_mean': cv_summary['aggregated']['best_behavior_loss']['mean'],
+            'best_behavior_loss_std': cv_summary['aggregated']['best_behavior_loss']['std'],
+            'best_fold': cv_summary['best_fold']['fold_index'],
+            'best_fold_markovian_loss': cv_summary['best_fold']['metrics']['best_markovian_loss']
+        }
+        
+    else:
+        # === SINGLE TRAIN/TEST SPLIT MODE (original behavior) ===
+        # Train model
         step_start = time.time()
-        plot_recurrence(y_train, output_dir, args.recurrence_threshold, args.vis_samples, data_split='train')
-        print_step_time("Training recurrence plot generation", run_start_time, step_start)
-    
-    # Free memory from training data (no longer needed)
-    del y_train, x_train, b_train
-    gc.collect()
-    
-    # Project validation data into latent space
-    step_start = time.time()
-    print("Projecting validation data into latent space...")
-    y_test = project_latent_space(x_test, model, lazy_loading=args.lazy_loading)
-    print_step_time("Validation latent space projection", run_start_time, step_start)
-    
-    # Visualize validation latent space
-    step_start = time.time()
-    visualize_latent_space(y_test, b_test, b_labels, output_dir, args.vis_samples, data_split='validation', generate_gif=not args.no_gif, colors=b_colors_rgb)
-    print_step_time("Validation latent space visualization", run_start_time, step_start)
-    
-    # Validation recurrence plot
-    if args.recurrence_threshold is not None:
+        model, loss_array, test_loss_array = train_bundlenet(
+            x_train, b_train, x_test, b_test, x_.shape, args, output_dir
+        )
+        print_step_time("Model training", run_start_time, step_start)
+        
+        # Free memory from full preprocessed data
+        del x_, b_
+        
+        # Plot training loss
         step_start = time.time()
-        plot_recurrence(y_test, output_dir, args.recurrence_threshold, args.vis_samples, data_split='validation')
-        print_step_time("Validation recurrence plot generation", run_start_time, step_start)
+        plot_training_loss(loss_array, test_loss_array, output_dir)
+        print_step_time("Training loss plotting", run_start_time, step_start)
+        
+        # Project training data into latent space
+        step_start = time.time()
+        print("Projecting training data into latent space...")
+        y_train = project_latent_space(x_train, model, lazy_loading=args.lazy_loading)
+        print_step_time("Training latent space projection", run_start_time, step_start)
+        
+        # Visualize training latent space
+        step_start = time.time()
+        visualize_latent_space(y_train, b_train, b_labels, output_dir, args.vis_samples, 
+                              data_split='train', generate_gif=not args.no_gif, colors=b_colors_rgb)
+        print_step_time("Training latent space visualization", run_start_time, step_start)
+        
+        # Training recurrence plot
+        if args.recurrence_threshold is not None:
+            step_start = time.time()
+            plot_recurrence(y_train, output_dir, args.recurrence_threshold, args.vis_samples, data_split='train')
+            print_step_time("Training recurrence plot generation", run_start_time, step_start)
+        
+        # Free memory from training data
+        del y_train, x_train, b_train
+        gc.collect()
+        
+        # Project validation data into latent space
+        step_start = time.time()
+        print("Projecting validation data into latent space...")
+        y_test = project_latent_space(x_test, model, lazy_loading=args.lazy_loading)
+        print_step_time("Validation latent space projection", run_start_time, step_start)
+        
+        # Visualize validation latent space
+        step_start = time.time()
+        visualize_latent_space(y_test, b_test, b_labels, output_dir, args.vis_samples,
+                              data_split='validation', generate_gif=not args.no_gif, colors=b_colors_rgb)
+        print_step_time("Validation latent space visualization", run_start_time, step_start)
+        
+        # Validation recurrence plot
+        if args.recurrence_threshold is not None:
+            step_start = time.time()
+            plot_recurrence(y_test, output_dir, args.recurrence_threshold, args.vis_samples, data_split='validation')
+            print_step_time("Validation recurrence plot generation", run_start_time, step_start)
+        
+        # Free memory from validation data
+        del y_test, x_test, b_test, model, loss_array, test_loss_array
+        gc.collect()
+        
+        # Collect validation metrics for summary
+        try:
+            metrics = {
+                'cv_mode': False,
+                'best_markovian_loss': float(np.min(test_loss_array[:, 0])),
+                'best_markovian_epoch': int(np.argmin(test_loss_array[:, 0])),
+                'best_behavior_loss': float(np.min(test_loss_array[:, 1])),
+                'best_behavior_epoch': int(np.argmin(test_loss_array[:, 1]))
+            }
+        except Exception:
+            metrics = {'cv_mode': False}
     
-    # Free memory from validation data (all processing complete)
-    del y_test, x_test, b_test
-    # Free memory from model and color mappings (no longer needed)
-    del model, loss_array, test_loss_array, b_colors, b_colors_rgb
+    # Free memory from color mappings
+    del b_colors, b_colors_rgb
     gc.collect()
     
     total_time = time.time() - run_start_time
@@ -601,17 +847,6 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
     print(f"Execution time: {format_elapsed_time(total_time)}")
     print(f"Results saved to: {output_dir}")
     print(f"{'='*80}\n")
-    
-    # Collect validation metrics for summary (best across epochs)
-    try:
-        metrics = {
-            'best_markovian_loss': float(np.min(test_loss_array[:, 0])),
-            'best_markovian_epoch': int(np.argmin(test_loss_array[:, 0])),
-            'best_behavior_loss': float(np.min(test_loss_array[:, 1])),
-            'best_behavior_epoch': int(np.argmin(test_loss_array[:, 1]))
-        }
-    except Exception:
-        metrics = {}
 
     return {
         'output_dir': output_dir,
