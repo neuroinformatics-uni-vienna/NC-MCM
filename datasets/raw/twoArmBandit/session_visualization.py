@@ -9,9 +9,14 @@ import os
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from ncmcm.data_loaders.bandit_task import BanditTaskNeuroPixelsDataset
+import argparse
 
 
-def generate_interactive_session_plot(data_session_path, output_filename='interactive_trial_plot.html', window=10):
+def generate_interactive_session_plot(data_session_path, output_filename='interactive_session_plot.html', window=10, state_color_map=None):
+    # Use default color map from BanditTaskNeuroPixelsDataset if not provided
+    if state_color_map is None:
+        state_color_map = BanditTaskNeuroPixelsDataset.DEFAULT_COLOR_MAP
     """
     Generate an interactive HTML plot for a Two-Arm Bandit session.
     
@@ -25,9 +30,13 @@ def generate_interactive_session_plot(data_session_path, output_filename='intera
     data_session_path : str
         Path to the session directory containing metrics.json
     output_filename : str, optional
-        Name of the output HTML file (default: 'interactive_trial_plot.html')
+        Name of the output HTML file (default: 'interactive_session_plot.html')
     window : int, optional
         Window size for moving average calculation (default: 10)
+    state_color_map : dict, optional
+        Dictionary mapping state names to color strings (hex codes or named colors).
+        Defaults to BanditTaskNeuroPixelsDataset.DEFAULT_COLOR_MAP.
+        Example: {'hold': '#f39d12', 'choosing left': '#e74c3c', ...}
     
     Returns
     -------
@@ -86,7 +95,13 @@ def generate_interactive_session_plot(data_session_path, output_filename='intera
                 marker_symbol = 'triangle-down'
                 y = 1
             
-            color = 'blue' if trial.get('rewarded', False) else 'red'
+            # Use colors from state_color_map for rewarded/unrewarded outcomes
+            if trial.get('rewarded', False):
+                # Try to get reward state color, fallback to blue
+                color = state_color_map.get('reward', state_color_map.get('rewarded', '#3498db'))
+            else:
+                # Try to get no reward/unrewarded/ITI state color, fallback to red
+                color = state_color_map.get('no reward', state_color_map.get('ITI', state_color_map.get('unrewarded', '#e74c3c')))
             
             prob_lr = trial.get('set reward probabs l/r', [None, None])
             hover_text = f"""<b>Trial: {i} - Click to view timing</b><br>
@@ -151,16 +166,8 @@ Rew rate recent lefts: {trial.get('rew rate in recent lefts', 'N/A')}
     # PLOT 2: States visualization (middle)
     # ========================================================================
     if states and len(states) > 0:
-        # Define colors for different states - aligned with trial plot colors
-        state_colors = {
-            'waiting': 'white',             # Pure white
-            'hold': 'orange',               # Orange (matches hold marker in first plot)
-            'choosing': 'cyan',             # Cyan (matches choosing marker in first plot)
-            'reward': 'blue',               # Blue (matches rewarded trials in first plot)
-            'no reward': 'red',             # Red (matches unrewarded trials in first plot)
-            'intertrial': 'gray',           # Gray
-            'delay': 'lightgray',           # Light gray
-        }
+        # Use the provided color map (defaults to BanditTaskNeuroPixelsDataset.DEFAULT_COLOR_MAP)
+        state_colors = state_color_map.copy()
         
         # Add a color for any unknown states
         for state in unique_states:
@@ -359,7 +366,7 @@ Number of trials: {n_trials}<br>
     )
 
     fig.update_layout(
-        title=f'Session Overview: {len(trials)} Trials, {len(states)} States<br><sub>Blue=Rewarded, Red=Unrewarded, Gray=No Choice | Green=Task blocks, Orange=Non-task blocks</sub>',
+        title=f'Session Overview: {len(trials)} Trials, {len(states)} States',
         width=1400,
         height=1000,  # Increased height for 3 plots
         hovermode='closest',
@@ -547,3 +554,46 @@ plot.on('plotly_doubleclick', function(){
     }
     
     return summary
+
+
+def main():
+    """Main function for command-line execution."""
+    parser = argparse.ArgumentParser(
+        description='Generate interactive session visualization for Two-Arm Bandit task data.',
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    
+    parser.add_argument(
+        '--data_session_path',
+        type=str,
+        help='Path to the session directory containing metrics.json'
+    )
+    
+    parser.add_argument(
+        '--output_filename',
+        type=str,
+        default='interactive_session_plot.html',
+        help='Name of the output HTML file'
+    )
+    
+    parser.add_argument(
+        '--window',
+        type=int,
+        default=10,
+        help='Window size for moving average calculation'
+    )
+    
+    args = parser.parse_args()
+    
+    # Generate the interactive plot
+    summary = generate_interactive_session_plot(
+        data_session_path=args.data_session_path,
+        output_filename=args.output_filename,
+        window=args.window
+    )
+    
+    return summary
+
+
+if __name__ == '__main__':
+    main()

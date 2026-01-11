@@ -11,7 +11,7 @@ import time
 import itertools
 import gc
 
-from dataset import BanditTaskNeuroPixelsDataset
+from ncmcm.data_loaders.bandit_task import BanditTaskNeuroPixelsDataset
 from ncmcm.bundlenet.bundlenet import BunDLeNet, train_model, project_into_latent_space, project_into_latent_space_lazy
 from ncmcm.bundlenet.utils import (prep_data, timeseries_train_test_split, prep_data_lazy, timeseries_train_test_split_lazy,
                                      timeseries_train_test_split_cv, timeseries_train_test_split_cv_lazy)
