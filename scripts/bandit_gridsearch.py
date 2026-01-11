@@ -129,6 +129,55 @@ def save_config(args, output_dir):
     print(f"Configuration saved to {config_path}")
 
 
+def save_comprehensive_config(args, params, output_dir, execution_time, execution_time_seconds, metrics, cv_summary=None, start_timestamp=None, error=None):
+    """Save comprehensive configuration with execution results and metrics
+    
+    Args:
+        args: Argument parser namespace with all configuration
+        params: Dictionary of actual parameter values used for this run
+        output_dir: Path to output directory
+        execution_time: Formatted execution time string
+        execution_time_seconds: Execution time in seconds
+        metrics: Dictionary of performance metrics
+        cv_summary: Optional CV summary dictionary (for CV runs)
+        start_timestamp: Optional start timestamp (ISO format)
+        error: Optional error message if run failed
+    """
+    # Build comprehensive config matching grid search summary structure
+    comprehensive_config = {
+        # Metadata
+        'start_timestamp': start_timestamp if start_timestamp else datetime.now().isoformat(),
+        'completed_at': datetime.now().isoformat(),
+        'execution_time': execution_time,
+        'execution_time_seconds': execution_time_seconds,
+        'status': 'failed' if error else 'completed',
+        'error': error,
+        
+        # Parameters used (actual values, not lists)
+        'parameters': params,
+        
+        # Full configuration (includes all args, with lists for grid search parameters)
+        'full_configuration': {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()},
+        
+        # Output paths
+        'output_dir': str(output_dir),
+        
+        # Performance metrics
+        'metrics': metrics
+    }
+    
+    # Add CV summary if available
+    if cv_summary is not None:
+        comprehensive_config['cv_summary'] = cv_summary
+    
+    # Save to JSON
+    config_path = output_dir / 'run_summary.json'
+    with open(config_path, 'w') as f:
+        json.dump(comprehensive_config, f, indent=4)
+    
+    print(f"Comprehensive configuration saved to {config_path}")
+
+
 def load_data(data_path, downsample_fs, downsample_method, good_neurons_only, apply_hold_transitions=False, normalize_method='none'):
     """Load and prepare dataset"""
     # Determine state_transitions parameter
@@ -684,6 +733,7 @@ def generate_cv_summary(fold_metrics_list, output_dir):
 def run_single_experiment(args, params, output_dir, run_idx, total_runs):
     """Run a single experiment with specific parameters"""
     run_start_time = time.time()
+    start_timestamp = datetime.now().isoformat()
     
     print(f"\n{'='*80}")
     print(f"RUN {run_idx + 1}/{total_runs}")
@@ -695,10 +745,10 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
     for key, value in params.items():
         setattr(args, key, value)
     
-    # Save configuration
+    # Save initial configuration (for crash recovery)
     step_start = time.time()
     save_config(args, output_dir)
-    print_step_time("Configuration saved", run_start_time, step_start)
+    print_step_time("Initial configuration saved", run_start_time, step_start)
     
     # Load data
     step_start = time.time()
@@ -764,6 +814,22 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
             'best_fold_markovian_loss': cv_summary['best_fold']['metrics']['best_markovian_loss']
         }
         
+        # Calculate execution time for comprehensive config
+        total_time = time.time() - run_start_time
+        
+        # Save comprehensive configuration with CV summary
+        save_comprehensive_config(
+            args=args,
+            params=params,
+            output_dir=output_dir,
+            execution_time=format_elapsed_time(total_time),
+            execution_time_seconds=total_time,
+            metrics=metrics,
+            cv_summary=cv_summary,
+            start_timestamp=start_timestamp,
+            error=None
+        )
+        
     else:
         # === SINGLE TRAIN/TEST SPLIT MODE (original behavior) ===
         # Train model
@@ -821,21 +887,37 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
             plot_recurrence(y_test, output_dir, args.recurrence_threshold, args.vis_samples, data_split='validation')
             print_step_time("Validation recurrence plot generation", run_start_time, step_start)
         
+        # Collect validation metrics before freeing memory
+        metrics = {
+            'cv_mode': False,
+            'best_markovian_loss': float(np.min(test_loss_array[:, 0])),
+            'best_markovian_epoch': int(np.argmin(test_loss_array[:, 0])),
+            'best_behavior_loss': float(np.min(test_loss_array[:, 1])),
+            'best_behavior_epoch': int(np.argmin(test_loss_array[:, 1])),
+            'final_markovian_loss': float(test_loss_array[-1, 0]),
+            'final_behavior_loss': float(test_loss_array[-1, 1]),
+            'final_total_loss': float(test_loss_array[-1, 2])
+        }
+        
         # Free memory from validation data
         del y_test, x_test, b_test, model, loss_array, test_loss_array
         gc.collect()
         
-        # Collect validation metrics for summary
-        try:
-            metrics = {
-                'cv_mode': False,
-                'best_markovian_loss': float(np.min(test_loss_array[:, 0])),
-                'best_markovian_epoch': int(np.argmin(test_loss_array[:, 0])),
-                'best_behavior_loss': float(np.min(test_loss_array[:, 1])),
-                'best_behavior_epoch': int(np.argmin(test_loss_array[:, 1]))
-            }
-        except Exception:
-            metrics = {'cv_mode': False}
+        # Calculate execution time for comprehensive config
+        total_time = time.time() - run_start_time
+        
+        # Save comprehensive configuration
+        save_comprehensive_config(
+            args=args,
+            params=params,
+            output_dir=output_dir,
+            execution_time=format_elapsed_time(total_time),
+            execution_time_seconds=total_time,
+            metrics=metrics,
+            cv_summary=None,
+            start_timestamp=start_timestamp,
+            error=None
+        )
     
     # Free memory from color mappings
     del b_colors, b_colors_rgb

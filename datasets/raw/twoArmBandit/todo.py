@@ -1,5 +1,4 @@
 # TODO: Check against overfitting. When shuffling b, is the manifold a dot?
-# TODO: Refactor: change paths, embed into NCMCM package structure
 # TODO: Write unit tests for each function
 # TODO: Analyze bifurcation structure of the manifold
 # TODO: Rethink behavioural state, maybe fuse some states together
