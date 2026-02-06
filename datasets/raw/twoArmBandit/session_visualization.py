@@ -61,6 +61,14 @@ def generate_interactive_session_plot(data_session_path, output_filename='intera
     # Analyze states
     if states:
         unique_states = list(set([state[1] for state in states]))
+        state_order = ['intertrial', 'iti', 'hold', 'choosing left', 'choosing right', 'choosing', 'reward', 'no reward', 'waiting', 'delay']
+        state_order_index = {name: idx for idx, name in enumerate(state_order)}
+
+        def legend_order_key(name):
+            norm = name.lower().strip()
+            return (state_order_index.get(norm, len(state_order)), norm, name)
+
+        legend_labels = {s for s in set(unique_states) if s.lower().strip() != 'choosing'}
         print(f"Unique states: {unique_states}")
     else:
         unique_states = []
@@ -70,10 +78,10 @@ def generate_interactive_session_plot(data_session_path, output_filename='intera
     fig = make_subplots(
         rows=3, cols=1,
         row_heights=[0.4, 0.2, 0.4],  # Adjusted heights
-        vertical_spacing=0.08,
-        subplot_titles=('Trial-by-Trial Choices (Click on a trial to see timing)', 
-                        'States Over Time',
-                        'Moving Average: Left Choice Rate')
+        vertical_spacing=0.12,
+        subplot_titles=('Trial-by-Trial Choices', 
+                        'Moving Average: Choice Rate',
+                        'States Over Time')
     )
 
     # ========================================================================
@@ -163,7 +171,7 @@ Rew rate recent lefts: {trial.get('rew rate in recent lefts', 'N/A')}
         ), row=1, col=1)
 
     # ========================================================================
-    # PLOT 2: States visualization (middle)
+    # PLOT 3: States visualization (bottom)
     # ========================================================================
     if states and len(states) > 0:
         # Use the provided color map (defaults to BanditTaskNeuroPixelsDataset.DEFAULT_COLOR_MAP)
@@ -176,9 +184,38 @@ Rew rate recent lefts: {trial.get('rew rate in recent lefts', 'N/A')}
         
         # Sort states by timestamp to ensure correct ordering
         states_sorted = sorted(states, key=lambda x: x[0])
+
+        # Build trial intervals to disambiguate choosing side
+        trial_intervals = []
+        for t in trials:
+            if 'choice' in t:
+                start_t = t.get('start', 0)
+                end_t = t.get('t chosen', t.get('t choosing', start_t))
+                if end_t is None:
+                    end_t = start_t
+                trial_intervals.append((start_t, end_t, t.get('choice', '').lower()))
         
         # Create state timeline visualization
         for i, (timestamp, state_name) in enumerate(states_sorted):
+            state_label = state_name
+            norm_state = state_name.lower()
+
+            # Split generic "choosing" into left/right when possible
+            if norm_state == 'choosing':
+                choice_label = None
+                for start_t, end_t, ch in trial_intervals:
+                    if start_t <= timestamp <= end_t:
+                        if ch == 'l':
+                            choice_label = 'choosing left'
+                        elif ch == 'r':
+                            choice_label = 'choosing right'
+                        break
+                if choice_label:
+                    state_label = choice_label
+                    legend_labels.add(choice_label)
+            else:
+                legend_labels.add(state_label)
+
             # Determine the duration of this state
             if i < len(states) - 1:
                 next_timestamp = states_sorted[i + 1][0]
@@ -188,7 +225,7 @@ Rew rate recent lefts: {trial.get('rew rate in recent lefts', 'N/A')}
                 duration = 1
             
             # Determine border color - use darker version of fill color, or black for white
-            fill_color = state_colors.get(state_name, '#CCCCCC')
+            fill_color = state_colors.get(state_label, state_colors.get(state_name, '#CCCCCC'))
             if fill_color == 'white':
                 border_color = 'darkgray'
             else:
@@ -204,13 +241,13 @@ Rew rate recent lefts: {trial.get('rew rate in recent lefts', 'N/A')}
                 mode='lines',
                 showlegend=False,
                 hoverinfo='text',
-                text=f"<b>State: {state_name}</b><br>Start: {timestamp}<br>Duration: {duration} samples <br>End: {timestamp + duration}<br>Index: {i} of {len(states_sorted)}",
+                text=f"<b>State: {state_label}</b><br>Start: {timestamp}<br>Duration: {duration} samples <br>End: {timestamp + duration}<br>Index: {i} of {len(states_sorted)}",
                 name=f'state_{i}'
-            ), row=2, col=1)
-        
+            ), row=3, col=1)
+
         # Add legend for states
         legend_added = set()
-        for state in unique_states:
+        for state in sorted(legend_labels, key=legend_order_key):
             if state not in legend_added:
                 fig.add_trace(go.Scatter(
                     x=[None],
@@ -220,7 +257,7 @@ Rew rate recent lefts: {trial.get('rew rate in recent lefts', 'N/A')}
                     name=f'State: {state}',
                     legendgroup='states',
                     showlegend=True
-                ), row=2, col=1)
+                ), row=3, col=1)
                 legend_added.add(state)
 
     else:
@@ -229,38 +266,50 @@ Rew rate recent lefts: {trial.get('rew rate in recent lefts', 'N/A')}
             text="No states data available",
             x=0.5,
             y=0.5,
-            xref="x2",
-            yref="y2",
+            xref="x3",
+            yref="y3",
             showarrow=False,
             font=dict(size=16, color="gray"),
-            row=2, col=1
+            row=3, col=1
         )
 
     # ========================================================================
-    # PLOT 3: Moving average of left choices (bottom)
+    # PLOT 2: Moving average of left choices (middle)
     # ========================================================================
     valid_trials_with_choice = [t for t in trials if 'choice' in t]
     times = [t.get('start', 0) for t in valid_trials_with_choice]
     choices = [1 if t['choice'] == 'l' else 0 for t in valid_trials_with_choice]
 
-    left_choice_rate = np.convolve(choices, np.ones(window)/window, mode='valid')
-    times_ma = times[window-1:]
+    # Moving average with shorter windows at the start (use available trials until window fills)
+    if choices:
+        cumsum = np.cumsum(choices)
+        left_choice_rate = []
+        for i in range(len(choices)):
+            start_idx = max(0, i - window + 1)
+            window_sum = cumsum[i] - (cumsum[start_idx - 1] if start_idx > 0 else 0)
+            window_len = i - start_idx + 1
+            left_choice_rate.append(window_sum / window_len)
+    else:
+        left_choice_rate = []
 
     fig.add_trace(go.Scatter(
-        x=times_ma,
+        x=times,
         y=left_choice_rate,
         mode='lines',
         line=dict(color='purple', width=2),
-        name=f'Left choice rate (window={window})',
+        name=f'Left choice rate (window={window}, early uses available trials)',
         hovertemplate='Time: %{x}<br>Left choice rate: %{y:.2f}<extra></extra>',
         legendgroup='behavior'
-    ), row=3, col=1)
+    ), row=2, col=1)
 
-    fig.add_hline(y=0.5, line=dict(color='gray', dash='dash'), row=3, col=1)
+    fig.add_hline(y=0.5, line=dict(color='gray', dash='dash'), row=2, col=1)
 
     # ========================================================================
     # Add block boundaries to all plots
     # ========================================================================
+    has_prob_block = False
+    has_non_prob_block = False
+
     for j, block in enumerate(blocks):
         block_time = block.get('t', 0)
         
@@ -273,7 +322,9 @@ Rew rate recent lefts: {trial.get('rew rate in recent lefts', 'N/A')}
         n_trials = len(trials_in_block)
         
         if 'probabilities l/r' in block:
+            has_prob_block = True
             prob_lr = block.get('probabilities l/r', [None, None])
+            better_side = 'better L' if prob_lr[0] > prob_lr[1] else ('better R' if prob_lr[1] > prob_lr[0] else 'equal')
             block_hover = f"""<b>Block {j}: {block.get('block', 'Unknown')}</b><br>
 <br><b>Block Start:</b><br>
 Time: {block_time}<br>
@@ -298,8 +349,37 @@ Performance: {block.get('block transition perf criteria', 'N/A')}"""
             
             for row in [1, 2, 3]:
                 fig.add_vline(x=block_time, line=dict(color='green', dash='dash', width=2), opacity=0.5, row=row, col=1)
+
+            # Label block bias above the first subplot for clarity
+            fig.add_annotation(
+                x=block_time,
+                y=1.08,
+                xref='x1',
+                yref='y1',
+                text=better_side,
+                showarrow=False,
+                font=dict(size=11, color='green'),
+                bgcolor='rgba(255,255,255,0.7)',
+                bordercolor='green',
+                borderwidth=1
+            )
+
+            # Mirror label on moving-average subplot for clarity
+            fig.add_annotation(
+                x=block_time,
+                y=1.05,
+                xref='x2',
+                yref='y2',
+                text=better_side,
+                showarrow=False,
+                font=dict(size=11, color='green'),
+                bgcolor='rgba(255,255,255,0.7)',
+                bordercolor='green',
+                borderwidth=1
+            )
             
         else:
+            has_non_prob_block = True
             block_hover = f"""<b>Block {j}: {block.get('block', 'Unknown')}</b><br>
 <br><b>Block Start:</b><br>
 Time: {block_time}<br>
@@ -321,12 +401,33 @@ Number of trials: {n_trials}<br>
             for row in [1, 2, 3]:
                 fig.add_vline(x=block_time, line=dict(color='orange', dash='dash', width=2), opacity=0.5, row=row, col=1)
 
+    if has_prob_block:
+        fig.add_trace(go.Scatter(
+            x=[None, None],
+            y=[None, None],
+            mode='lines',
+            line=dict(color='green', dash='dash', width=2),
+            name='Block start (task)',
+            legendgroup='blocks',
+            showlegend=True
+        ), row=1, col=1)
+    if has_non_prob_block:
+        fig.add_trace(go.Scatter(
+            x=[None, None],
+            y=[None, None],
+            mode='lines',
+            line=dict(color='orange', dash='dash', width=2),
+            name='Block start (non-task)',
+            legendgroup='blocks',
+            showlegend=True
+        ), row=1, col=1)
+
     # ========================================================================
     # Update layout
     # ========================================================================
-    fig.update_xaxes(title_text="Time (samples)", matches='x', row=3, col=1)
-    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='lightgray', matches='x', row=1, col=1)
-    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='lightgray', matches='x', row=2, col=1)
+    fig.update_xaxes(title_text="Behavioural Time Samples", matches='x', row=3, col=1)
+    fig.update_xaxes(title_text="Behavioural Time Samples", showgrid=True, gridwidth=1, gridcolor='lightgray', matches='x', row=1, col=1)
+    fig.update_xaxes(title_text="Behavioural Time Samples", showgrid=True, gridwidth=1, gridcolor='lightgray', matches='x', row=2, col=1)
 
     # Plot 1 (Trials)
     fig.update_yaxes(
@@ -341,18 +442,7 @@ Number of trials: {n_trials}<br>
         row=1, col=1
     )
 
-    # Plot 2 (States) 
-    fig.update_yaxes(
-        title_text="States",
-        tickmode='array',
-        tickvals=[0, 0.5, 1],
-        ticktext=['', 'Behavioral State', ''],
-        range=[-0.1, 1.1],
-        showgrid=False,
-        row=2, col=1
-    )
-
-    # Plot 3 (Choice rate)
+    # Plot 2 (Choice rate)
     fig.update_yaxes(
         title_text="Choice Rate",
         tickmode='array',
@@ -362,6 +452,17 @@ Number of trials: {n_trials}<br>
         showgrid=True,
         gridwidth=1,
         gridcolor='lightgray',
+        row=2, col=1
+    )
+
+    # Plot 3 (States) 
+    fig.update_yaxes(
+        title_text="States",
+        tickmode='array',
+        tickvals=[0, 0.5, 1],
+        ticktext=['', 'Behavioral State', ''],
+        range=[-0.1, 1.1],
+        showgrid=False,
         row=3, col=1
     )
 
@@ -375,10 +476,11 @@ Number of trials: {n_trials}<br>
         legend=dict(
             orientation="h",
             yanchor="bottom",
-            y=1.02,
+            y=1.08,
             xanchor="right",
             x=1
-        )
+        ),
+        margin=dict(t=200)
     )
 
     # Write to HTML with custom JavaScript (updated for 3 plots)
