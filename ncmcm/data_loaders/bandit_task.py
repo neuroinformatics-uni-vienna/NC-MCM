@@ -51,7 +51,7 @@ class BanditTaskNeuroPixelsDataset:
     }
       
     
-    def __init__(self, data_path, downsample_fs=None, downsample_method='binary', good_neurons_only=True, state_transitions=None, gaussian_sigma_ms=25.0, normalize_method=None):
+    def __init__(self, data_path, downsample_fs=None, downsample_method='binary', good_neurons_only=True, state_transitions=None, gaussian_sigma_ms=25.0, normalize_method=None, recompute_cache=False):
         """
         Initialize dataset with flexible spike representation options.
 
@@ -76,6 +76,7 @@ class BanditTaskNeuroPixelsDataset:
                              'None': No normalization
                              'minmax': Min-max scaling to [0, 1] per neuron (each neuron scaled independently)
                              'minmax_global': Min-max scaling to [0, 1] using global min/max across all neurons
+            recompute_cache: If True, ignore any cached dataset and rebuild it (default: False).
             
         Attributes after loading:
             data_path: Path to the dataset directory
@@ -104,6 +105,7 @@ class BanditTaskNeuroPixelsDataset:
         self.state_transitions = state_transitions if state_transitions is not None else {}
         self.gaussian_sigma_ms = gaussian_sigma_ms
         self.normalize_method = normalize_method
+        self.recompute_cache = recompute_cache
         # Store original parameters for cache key (before any adjustments)
         self._original_downsample_fs = downsample_fs
         self.x = None  # neuronal time-series data (scipy.sparse.csr_matrix)
@@ -118,7 +120,11 @@ class BanditTaskNeuroPixelsDataset:
         self.fs = None  # sampling frequency
         
         # Try to load from cache, otherwise process data and save to cache
-        if not self._load_from_cache():
+        cache_loaded = False
+        if not self.recompute_cache:
+            cache_loaded = self._load_from_cache()
+
+        if not cache_loaded:
             # load data and assign to attributes
             self.load_data()
             # Save to cache for future use
