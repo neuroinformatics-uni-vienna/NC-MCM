@@ -3,7 +3,7 @@ Microvariable Evaluation for Two-Arm Bandit Task
 
 Adapted from: https://github.com/akshey-kumar/comparison-algorithms/blob/6f388b3699a3db0c601a39be314ab89394ce1ba7/evaluation_scripts/microvariable_evaluation.py
 Original author: Akshey Kumar
-Adapted by: Kerim Atak (2026)
+Adapted by: Kerim Atak
 """
 
 import sys
@@ -14,7 +14,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from tqdm import tqdm
-from sklearn.metrics import accuracy_score, confusion_matrix, classification_report, f1_score, precision_score, recall_score
+from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, precision_score, recall_score
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
@@ -31,7 +31,7 @@ print(f"Loading data from: {data_path}")
 
 data = BanditTaskNeuroPixelsDataset(
     data_path=data_path,
-    downsample_fs=20,  # Downsample to 20 Hz
+    downsample_fs=30,  # Downsample to 30 Hz
     downsample_method='count',
     good_neurons_only=False,
     normalize_method='minmax_global'
@@ -50,36 +50,36 @@ print(f"Behavioral labels: {b_labels_dict}")
 
 # Prepare data with sliding windows
 X_, B_ = prep_data(X, B, win=50)
-X_train, X_test, B_train_1, B_test_1 = timeseries_train_test_split(X_, B_)
+X_train, X_val, B_train_1, B_val_1 = timeseries_train_test_split(X_, B_)
 X1_tr = X_train[:,1,:,:]  # Use second window (next state)
-X1_tst = X_test[:,1,:,:]
-print(f"Train shape: {X1_tr.shape}, Test shape: {X1_tst.shape}")
+X1_val = X_val[:,1,:,:]
+print(f"Train shape: {X1_tr.shape}, Validation shape: {X1_val.shape}")
 
 ### Analyze label distributions
 print("\n" + "="*60)
 print("LABEL DISTRIBUTION ANALYSIS")
 print("="*60)
 
-# Count labels in train and test sets
+# Count labels in train and validation sets
 train_label_counts = {}
-test_label_counts = {}
-for label in np.unique(np.concatenate([B_train_1, B_test_1])):
+val_label_counts = {}
+for label in np.unique(np.concatenate([B_train_1, B_val_1])):
 	train_label_counts[label] = np.sum(B_train_1 == label)
-	test_label_counts[label] = np.sum(B_test_1 == label)
+	val_label_counts[label] = np.sum(B_val_1 == label)
 
 total_train = len(B_train_1)
-total_test = len(B_test_1)
+total_val = len(B_val_1)
 
-print(f"\nTotal samples: Train={total_train}, Test={total_test}")
-print(f"\n{'State':<20} {'Train Count':>12} {'Train %':>10} {'Test Count':>12} {'Test %':>10}")
+print(f"\nTotal samples: Train={total_train}, Validation={total_val}")
+print(f"\n{'State':<20} {'Train Count':>12} {'Train %':>10} {'Validation Count':>18} {'Validation %':>14}")
 print("-" * 70)
 for label in sorted(train_label_counts.keys()):
 	state_name = b_labels_dict.get(label, f'State {label}')
 	train_count = train_label_counts.get(label, 0)
-	test_count = test_label_counts.get(label, 0)
+	val_count = val_label_counts.get(label, 0)
 	train_pct = 100 * train_count / total_train
-	test_pct = 100 * test_count / total_test
-	print(f"{state_name:<20} {train_count:>12} {train_pct:>9.1f}% {test_count:>12} {test_pct:>9.1f}%")
+	val_pct = 100 * val_count / total_val
+	print(f"{state_name:<20} {train_count:>12} {train_pct:>9.1f}% {val_count:>18} {val_pct:>13.1f}%")
 
 # Calculate class imbalance ratio
 max_count = max(train_label_counts.values())
@@ -146,9 +146,9 @@ print(f"Using device: {device}")
 
 # Convert to PyTorch tensors
 X1_tr_tensor = torch.FloatTensor(X1_tr).to(device)
-X1_tst_tensor = torch.FloatTensor(X1_tst).to(device)
+X1_val_tensor = torch.FloatTensor(X1_val).to(device)
 B_train_tensor = torch.LongTensor(B_train_1).to(device)
-B_test_tensor = torch.LongTensor(B_test_1).to(device)
+B_val_tensor = torch.LongTensor(B_val_1).to(device)
 
 # Create class weights tensor for weighted loss
 weights_list = [class_weights[label] for label in sorted(class_weights.keys())]
@@ -179,10 +179,10 @@ def train_and_evaluate_decoders(use_weighted_loss=False, suffix=""):
 	else:
 		print("Using standard CrossEntropyLoss (no class weights)")
 	
-	acc_list = []
-	all_predictions = []
-	all_f1_scores = []
-	
+	val_acc_list = []
+	val_all_predictions = []
+	val_all_f1_scores = []
+
 	train_acc_list = []
 	train_all_predictions = []
 	train_all_f1_scores = []
@@ -214,15 +214,15 @@ def train_and_evaluate_decoders(use_weighted_loss=False, suffix=""):
 		# Evaluation
 		b_predictor.eval()
 		with torch.no_grad():
-			B1_tst_pred = b_predictor(X1_tst_tensor).argmax(dim=1).cpu().numpy()
+			B1_val_pred = b_predictor(X1_val_tensor).argmax(dim=1).cpu().numpy()
 			B1_tr_pred = b_predictor(X1_tr_tensor).argmax(dim=1).cpu().numpy()
-		
-		# Test metrics
-		acc = accuracy_score(B_test_1, B1_tst_pred)
-		acc_list.append(acc)
-		all_predictions.append(B1_tst_pred)
-		f1_per_class = f1_score(B_test_1, B1_tst_pred, average=None, labels=state_labels, zero_division=0)
-		all_f1_scores.append(f1_per_class)
+
+		# Validation metrics
+		acc = accuracy_score(B_val_1, B1_val_pred)
+		val_acc_list.append(acc)
+		val_all_predictions.append(B1_val_pred)
+		f1_per_class = f1_score(B_val_1, B1_val_pred, average=None, labels=state_labels, zero_division=0)
+		val_all_f1_scores.append(f1_per_class)
 		
 		# Training metrics
 		train_acc = accuracy_score(B_train_1, B1_tr_pred)
@@ -230,35 +230,35 @@ def train_and_evaluate_decoders(use_weighted_loss=False, suffix=""):
 		train_all_predictions.append(B1_tr_pred)
 		train_f1_per_class = f1_score(B_train_1, B1_tr_pred, average=None, labels=state_labels, zero_division=0)
 		train_all_f1_scores.append(train_f1_per_class)
-	
+
 	# Convert to arrays
-	acc_list = np.array(acc_list)
-	all_predictions = np.array(all_predictions)
-	all_f1_scores = np.array(all_f1_scores)
+	val_acc_list = np.array(val_acc_list)
+	val_all_predictions = np.array(val_all_predictions)
+	val_all_f1_scores = np.array(val_all_f1_scores)
 	train_acc_list = np.array(train_acc_list)
 	train_all_predictions = np.array(train_all_predictions)
 	train_all_f1_scores = np.array(train_all_f1_scores)
-	
+
 	# Print results
 	print(f"\n{'='*60}")
-	print(f"{loss_type} LOSS - TEST DATA RESULTS")
-	print(f"Overall accuracy: {acc_list.mean():.3f} ± {acc_list.std():.3f}")
-	print(f"Median accuracy: {np.median(acc_list):.3f}")
-	print(f"Min/Max accuracy: {acc_list.min():.3f} / {acc_list.max():.3f}")
-	
+	print(f"{loss_type} LOSS - VALIDATION DATA RESULTS")
+	print(f"Overall accuracy: {val_acc_list.mean():.3f} ± {val_acc_list.std():.3f}")
+	print(f"Median accuracy: {np.median(val_acc_list):.3f}")
+	print(f"Min/Max accuracy: {val_acc_list.min():.3f} / {val_acc_list.max():.3f}")
+
 	print(f"\n{loss_type} LOSS - TRAIN DATA RESULTS")
 	print(f"Overall accuracy: {train_acc_list.mean():.3f} ± {train_acc_list.std():.3f}")
 	print(f"Median accuracy: {np.median(train_acc_list):.3f}")
 	print(f"Min/Max accuracy: {train_acc_list.min():.3f} / {train_acc_list.max():.3f}")
-	
+
 	print(f"\n{loss_type} LOSS - OVERFITTING ANALYSIS")
-	print(f"Train-Test gap: {(train_acc_list.mean() - acc_list.mean()):.3f}")
+	print(f"Train-Validation gap: {(train_acc_list.mean() - val_acc_list.mean()):.3f}")
 	print(f"{'='*60}")
-	
+
 	return {
-		'acc_list': acc_list,
-		'all_predictions': all_predictions,
-		'all_f1_scores': all_f1_scores,
+		'val_acc_list': val_acc_list,
+		'val_all_predictions': val_all_predictions,
+		'val_all_f1_scores': val_all_f1_scores,
 		'train_acc_list': train_acc_list,
 		'train_all_predictions': train_all_predictions,
 		'train_all_f1_scores': train_all_f1_scores,
@@ -272,9 +272,9 @@ def save_results_and_visualizations(results):
 	
 	suffix = results['suffix']
 	loss_type = results['loss_type']
-	acc_list = results['acc_list']
-	all_predictions = results['all_predictions']
-	all_f1_scores = results['all_f1_scores']
+	val_acc_list = results['val_acc_list']
+	val_all_predictions = results['val_all_predictions']
+	val_all_f1_scores = results['val_all_f1_scores']
 	train_acc_list = results['train_acc_list']
 	train_all_predictions = results['train_all_predictions']
 	train_all_f1_scores = results['train_all_f1_scores']
@@ -285,10 +285,10 @@ def save_results_and_visualizations(results):
 	output_dir = os.path.join(data_path, 'microvariable_evaluation')
 	os.makedirs(output_dir, exist_ok=True)
 	
-	# Save raw results (test)
-	np.savetxt(os.path.join(output_dir, f'acc_list_test_{session_dir}{suffix}.txt'), acc_list)
-	np.save(os.path.join(output_dir, f'all_predictions_test_{session_dir}{suffix}.npy'), all_predictions)
-	np.save(os.path.join(output_dir, f'all_f1_scores_test_{session_dir}{suffix}.npy'), all_f1_scores)
+	# Save raw results (validation)
+	np.savetxt(os.path.join(output_dir, f'acc_list_val_{session_dir}{suffix}.txt'), val_acc_list)
+	np.save(os.path.join(output_dir, f'all_predictions_val_{session_dir}{suffix}.npy'), val_all_predictions)
+	np.save(os.path.join(output_dir, f'all_f1_scores_val_{session_dir}{suffix}.npy'), val_all_f1_scores)
 	
 	# Save raw results (train)
 	np.savetxt(os.path.join(output_dir, f'acc_list_train_{session_dir}{suffix}.txt'), train_acc_list)
@@ -297,66 +297,66 @@ def save_results_and_visualizations(results):
 	
 	# Pre-compute values
 	x_pos = np.arange(len(state_labels))
-	test_f1_means = all_f1_scores.mean(axis=0)
+	val_f1_means = val_all_f1_scores.mean(axis=0)
 	train_f1_means = train_all_f1_scores.mean(axis=0)
-	f1_gap = train_f1_means - test_f1_means
+	f1_gap = train_f1_means - val_f1_means
 	
 	# Compute average confusion matrices
 	avg_conf_matrix = np.zeros((num_states, num_states))
-	for pred in all_predictions:
-		avg_conf_matrix += confusion_matrix(B_test_1, pred, labels=state_labels)
-	avg_conf_matrix /= len(all_predictions)
+	for pred in val_all_predictions:
+		avg_conf_matrix += confusion_matrix(B_val_1, pred, labels=state_labels)
+	avg_conf_matrix /= len(val_all_predictions)
 	
 	train_avg_conf_matrix = np.zeros((num_states, num_states))
 	for pred in train_all_predictions:
 		train_avg_conf_matrix += confusion_matrix(B_train_1, pred, labels=state_labels)
 	train_avg_conf_matrix /= len(train_all_predictions)
 	
-	### Create comprehensive train/test comparison visualizations
+	### Create comprehensive train/validation comparison visualizations
 	fig = plt.figure(figsize=(24, 16))
 	fig.suptitle(f'{loss_type} Loss Results', fontsize=18, fontweight='bold', y=1.02)
 	
-	# 0. Label distribution (Train vs Test)
+	# 0. Label distribution (Train vs Validation)
 	ax0 = plt.subplot(2, 4, 1)
 	train_counts = [train_label_counts.get(s, 0) for s in state_labels]
-	test_counts = [test_label_counts.get(s, 0) for s in state_labels]
+	val_counts = [val_label_counts.get(s, 0) for s in state_labels]
 	width = 0.35
 	ax0.bar(x_pos - width/2, train_counts, width, label='Train', color='lightgreen', alpha=0.8)
-	ax0.bar(x_pos + width/2, test_counts, width, label='Test', color='skyblue', alpha=0.8)
+	ax0.bar(x_pos + width/2, val_counts, width, label='Validation', color='skyblue', alpha=0.8)
 	ax0.set_xlabel('Behavioral State', fontsize=12)
 	ax0.set_ylabel('Sample Count', fontsize=12)
-	ax0.set_title('Label Distribution (Train vs Test)', fontsize=14, fontweight='bold')
+	ax0.set_title('Label Distribution (Train vs Validation)', fontsize=14, fontweight='bold')
 	ax0.set_xticks(x_pos)
 	ax0.set_xticklabels([b_labels_dict.get(s, f'S{s}') for s in state_labels], rotation=45, ha='right')
 	ax0.legend()
 	ax0.grid(True, alpha=0.3, axis='y')
-	for i, (tc, tec) in enumerate(zip(train_counts, test_counts)):
+	for i, (tc, vc) in enumerate(zip(train_counts, val_counts)):
 		ax0.annotate(f'{100*tc/total_train:.1f}%', (i - width/2, tc), ha='center', va='bottom', fontsize=8)
-		ax0.annotate(f'{100*tec/total_test:.1f}%', (i + width/2, tec), ha='center', va='bottom', fontsize=8)
+		ax0.annotate(f'{100*vc/total_val:.1f}%', (i + width/2, vc), ha='center', va='bottom', fontsize=8)
 	
-	# 1. Train vs Test accuracy comparison boxplot
+	# 1. Train vs Validation accuracy comparison boxplot
 	ax1 = plt.subplot(2, 4, 2)
-	bp1 = ax1.boxplot([train_acc_list, acc_list], positions=[1, 2], widths=0.6,
+	bp1 = ax1.boxplot([train_acc_list, val_acc_list], positions=[1, 2], widths=0.6,
 					   patch_artist=True, showmeans=True,
 					   meanprops=dict(marker='D', markerfacecolor='red', markersize=8))
-	colors_train_test = ['lightgreen', 'skyblue']
-	for patch, color in zip(bp1['boxes'], colors_train_test):
+	colors_train_val = ['lightgreen', 'skyblue']
+	for patch, color in zip(bp1['boxes'], colors_train_val):
 		patch.set_facecolor(color)
-	ax1.set_xticklabels(['Train', 'Test'])
+	ax1.set_xticklabels(['Train', 'Validation'])
 	ax1.set_ylabel('Accuracy', fontsize=12)
-	ax1.set_title(f'Train vs Test Accuracy\nGap: {(train_acc_list.mean() - acc_list.mean()):.3f}', fontsize=14, fontweight='bold')
+	ax1.set_title(f'Train vs Validation Accuracy\nGap: {(train_acc_list.mean() - val_acc_list.mean()):.3f}', fontsize=14, fontweight='bold')
 	ax1.grid(True, alpha=0.3, axis='y')
 	ax1.set_ylim([0, 1.05])
 	
-	# 2. Per-state F1 score boxplots (Train vs Test)
+	# 2. Per-state F1 score boxplots (Train vs Validation)
 	ax2 = plt.subplot(2, 4, 3)
 	f1_df_data = []
 	for state_idx, state_label in enumerate(state_labels):
-		for run_idx in range(all_f1_scores.shape[0]):
+		for run_idx in range(val_all_f1_scores.shape[0]):
 			f1_df_data.append({
 				'State': b_labels_dict.get(state_label, f'State {state_label}'),
-				'F1 Score': all_f1_scores[run_idx, state_idx],
-				'Dataset': 'Test'
+				'F1 Score': val_all_f1_scores[run_idx, state_idx],
+				'Dataset': 'Validation'
 			})
 			f1_df_data.append({
 				'State': b_labels_dict.get(state_label, f'State {state_label}'),
@@ -364,15 +364,15 @@ def save_results_and_visualizations(results):
 				'Dataset': 'Train'
 			})
 	f1_df = pd.DataFrame(f1_df_data)
-	sns.boxplot(data=f1_df, x='State', y='F1 Score', hue='Dataset', ax=ax2, palette={'Train': 'lightgreen', 'Test': 'skyblue'})
+	sns.boxplot(data=f1_df, x='State', y='F1 Score', hue='Dataset', ax=ax2, palette={'Train': 'lightgreen', 'Validation': 'skyblue'})
 	ax2.set_xlabel('Behavioral State', fontsize=12)
 	ax2.set_ylabel('F1 Score', fontsize=12)
-	ax2.set_title('Per-State F1 Score (Train vs Test)', fontsize=14, fontweight='bold')
+	ax2.set_title('Per-State F1 Score (Train vs Validation)', fontsize=14, fontweight='bold')
 	ax2.tick_params(axis='x', rotation=45)
 	ax2.grid(True, alpha=0.3, axis='y')
 	ax2.legend(title='Dataset')
 	
-	# 3. Average confusion matrix (TEST)
+	# 3. Average confusion matrix (VALIDATION)
 	ax3 = plt.subplot(2, 4, 4)
 	sns.heatmap(avg_conf_matrix, annot=True, fmt='.1f', cmap='Blues', ax=ax3,
 				xticklabels=[b_labels_dict.get(s, f'S{s}') for s in state_labels],
@@ -380,7 +380,7 @@ def save_results_and_visualizations(results):
 				cbar_kws={'label': 'Average Count'})
 	ax3.set_xlabel('Predicted State', fontsize=12)
 	ax3.set_ylabel('True State', fontsize=12)
-	ax3.set_title('Average Confusion Matrix (TEST)', fontsize=14, fontweight='bold')
+	ax3.set_title('Average Confusion Matrix (VALIDATION)', fontsize=14, fontweight='bold')
 	
 	# 4. Average confusion matrix (TRAIN)
 	ax4 = plt.subplot(2, 4, 5)
@@ -392,28 +392,28 @@ def save_results_and_visualizations(results):
 	ax4.set_ylabel('True State', fontsize=12)
 	ax4.set_title('Average Confusion Matrix (TRAIN)', fontsize=14, fontweight='bold')
 	
-	# 5. Per-state F1 comparison (Train vs Test bar chart)
+	# 5. Per-state F1 comparison (Train vs Validation bar chart)
 	ax5 = plt.subplot(2, 4, 6)
 	width = 0.35
 	ax5.bar(x_pos - width/2, train_f1_means, width, label='Train', color='lightgreen', alpha=0.8)
-	ax5.bar(x_pos + width/2, test_f1_means, width, label='Test', color='skyblue', alpha=0.8)
+	ax5.bar(x_pos + width/2, val_f1_means, width, label='Validation', color='skyblue', alpha=0.8)
 	ax5.set_xlabel('Behavioral State', fontsize=12)
 	ax5.set_ylabel('F1 Score', fontsize=12)
-	ax5.set_title('Per-State F1: Train vs Test', fontsize=14, fontweight='bold')
+	ax5.set_title('Per-State F1: Train vs Validation', fontsize=14, fontweight='bold')
 	ax5.set_xticks(x_pos)
 	ax5.set_xticklabels([b_labels_dict.get(s, f'S{s}') for s in state_labels], rotation=45, ha='right')
 	ax5.legend()
 	ax5.grid(True, alpha=0.3, axis='y')
 	ax5.set_ylim([0, 1.05])
 	
-	# 6. Train-Test F1 gap per state
+	# 6. Train-Validation F1 gap per state
 	ax6 = plt.subplot(2, 4, 7)
 	colors_gap = ['green' if g > 0 else 'red' for g in f1_gap]
 	ax6.bar(x_pos, f1_gap, color=colors_gap, alpha=0.7)
 	ax6.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
 	ax6.axhline(y=f1_gap.mean(), color='red', linestyle='--', label=f'Mean gap: {f1_gap.mean():.3f}')
 	ax6.set_xlabel('Behavioral State', fontsize=12)
-	ax6.set_ylabel('F1 Gap (Train - Test)', fontsize=12)
+	ax6.set_ylabel('F1 Gap (Train - Validation)', fontsize=12)
 	ax6.set_title('Overfitting Analysis: F1 Gap per State', fontsize=14, fontweight='bold')
 	ax6.set_xticks(x_pos)
 	ax6.set_xticklabels([b_labels_dict.get(s, f'S{s}') for s in state_labels], rotation=45, ha='right')
@@ -422,49 +422,49 @@ def save_results_and_visualizations(results):
 	
 	# 7. F1 Score vs Sample Count
 	ax7 = plt.subplot(2, 4, 8)
-	test_counts_arr = np.array([test_label_counts.get(s, 0) for s in state_labels])
-	ax7.scatter(test_counts_arr, test_f1_means, s=100, c='skyblue', edgecolors='blue', alpha=0.8)
-	for i, (x, y) in enumerate(zip(test_counts_arr, test_f1_means)):
+	val_counts_arr = np.array([val_label_counts.get(s, 0) for s in state_labels])
+	ax7.scatter(val_counts_arr, val_f1_means, s=100, c='skyblue', edgecolors='blue', alpha=0.8)
+	for i, (x, y) in enumerate(zip(val_counts_arr, val_f1_means)):
 		ax7.annotate(b_labels_dict.get(state_labels[i], f'S{state_labels[i]}'), 
 					 (x, y), textcoords="offset points", xytext=(5, 5), fontsize=9)
-	ax7.set_xlabel('Test Sample Count', fontsize=12)
-	ax7.set_ylabel('Test F1 Score', fontsize=12)
+	ax7.set_xlabel('Validation Sample Count', fontsize=12)
+	ax7.set_ylabel('Validation F1 Score', fontsize=12)
 	ax7.set_title('F1 Score vs Sample Count\n(Class Imbalance Effect)', fontsize=14, fontweight='bold')
 	ax7.grid(True, alpha=0.3)
-	corr = np.corrcoef(test_counts_arr, test_f1_means)[0, 1]
+	corr = np.corrcoef(val_counts_arr, val_f1_means)[0, 1]
 	ax7.text(0.05, 0.95, f'Correlation: {corr:.3f}', transform=ax7.transAxes, 
 			 verticalalignment='top', fontsize=11,
 			 bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
 	
 	plt.tight_layout()
-	plt.savefig(os.path.join(output_dir, f'train_test_comparison_{session_dir}{suffix}.png'), dpi=300, bbox_inches='tight')
-	plt.savefig(os.path.join(output_dir, f'train_test_comparison_{session_dir}{suffix}.pdf'), bbox_inches='tight')
-	print(f"Saved train/test comparison plots ({loss_type})")
+	plt.savefig(os.path.join(output_dir, f'train_validation_comparison_{session_dir}{suffix}.png'), dpi=300, bbox_inches='tight')
+	plt.savefig(os.path.join(output_dir, f'train_validation_comparison_{session_dir}{suffix}.pdf'), bbox_inches='tight')
+	print(f"Saved train/validation comparison plots ({loss_type})")
 	
-	### Create test-only detailed visualizations
-	fig_test = plt.figure(figsize=(20, 12))
-	fig_test.suptitle(f'{loss_type} Loss - Detailed Analysis', fontsize=16, fontweight='bold', y=1.02)
+	### Create validation-only detailed visualizations
+	fig_val = plt.figure(figsize=(20, 12))
+	fig_val.suptitle(f'{loss_type} Loss - Detailed Analysis', fontsize=16, fontweight='bold', y=1.02)
 	
-	# 1. Overall accuracy distribution boxplot
+	# 1. Overall accuracy distribution boxplot (validation)
 	ax1t = plt.subplot(2, 3, 1)
-	sns.boxplot(y=acc_list, ax=ax1t, color='skyblue')
-	ax1t.axhline(y=acc_list.mean(), color='red', linestyle='--', label=f'Mean: {acc_list.mean():.3f}')
+	sns.boxplot(y=val_acc_list, ax=ax1t, color='skyblue')
+	ax1t.axhline(y=val_acc_list.mean(), color='red', linestyle='--', label=f'Mean: {val_acc_list.mean():.3f}')
 	ax1t.set_ylabel('Accuracy', fontsize=12)
-	ax1t.set_title('Overall Decoder Accuracy Distribution\n(10 runs)', fontsize=14, fontweight='bold')
+	ax1t.set_title('Overall Decoder Accuracy Distribution\n(10 runs, validation)', fontsize=14, fontweight='bold')
 	ax1t.legend()
 	ax1t.grid(True, alpha=0.3)
 	
 	# 2. Per-state F1 score boxplots
 	ax2t = plt.subplot(2, 3, 2)
-	f1_df_test_only = []
+	f1_df_val_only = []
 	for state_idx, state_label in enumerate(state_labels):
-		for run_idx in range(all_f1_scores.shape[0]):
-			f1_df_test_only.append({
+		for run_idx in range(val_all_f1_scores.shape[0]):
+			f1_df_val_only.append({
 				'State': b_labels_dict.get(state_label, f'State {state_label}'),
-				'F1 Score': all_f1_scores[run_idx, state_idx]
+				'F1 Score': val_all_f1_scores[run_idx, state_idx]
 			})
-	f1_df_test = pd.DataFrame(f1_df_test_only)
-	sns.boxplot(data=f1_df_test, x='State', y='F1 Score', ax=ax2t, palette='Set2')
+	f1_df_val = pd.DataFrame(f1_df_val_only)
+	sns.boxplot(data=f1_df_val, x='State', y='F1 Score', ax=ax2t, palette='Set2')
 	ax2t.set_xlabel('Behavioral State', fontsize=12)
 	ax2t.set_ylabel('F1 Score', fontsize=12)
 	ax2t.set_title('Per-State F1 Score Distribution', fontsize=14, fontweight='bold')
@@ -500,14 +500,14 @@ def save_results_and_visualizations(results):
 	for state_idx, state_label in enumerate(state_labels):
 		state_precisions = []
 		state_recalls = []
-		for pred in all_predictions:
-			prec = precision_score(B_test_1, pred, labels=[state_label], average='macro', zero_division=0)
-			rec = recall_score(B_test_1, pred, labels=[state_label], average='macro', zero_division=0)
+		for pred in val_all_predictions:
+			prec = precision_score(B_val_1, pred, labels=[state_label], average='macro', zero_division=0)
+			rec = recall_score(B_val_1, pred, labels=[state_label], average='macro', zero_division=0)
 			state_precisions.append(prec)
 			state_recalls.append(rec)
 		avg_precision.append(np.mean(state_precisions))
 		avg_recall.append(np.mean(state_recalls))
-		avg_f1.append(np.mean(all_f1_scores[:, state_idx]))
+		avg_f1.append(np.mean(val_all_f1_scores[:, state_idx]))
 	
 	width = 0.25
 	ax5t.bar(x_pos - width, avg_precision, width, label='Precision', alpha=0.8)
@@ -524,8 +524,8 @@ def save_results_and_visualizations(results):
 	
 	# 6. State-wise F1 with error bars
 	ax6t = plt.subplot(2, 3, 6)
-	test_f1_stds = all_f1_scores.std(axis=0)
-	ax6t.errorbar(state_labels, test_f1_means, yerr=test_f1_stds, 
+	val_f1_stds = val_all_f1_scores.std(axis=0)
+	ax6t.errorbar(state_labels, val_f1_means, yerr=val_f1_stds, 
 				  fmt='o-', capsize=5, capthick=2, markersize=8, linewidth=2)
 	ax6t.set_xlabel('Behavioral State', fontsize=12)
 	ax6t.set_ylabel('F1 Score', fontsize=12)
@@ -539,7 +539,7 @@ def save_results_and_visualizations(results):
 	print(f"Saved detailed analysis plots ({loss_type})")
 	
 	# Print detailed text report
-	state_f1_stds = all_f1_scores.std(axis=0)
+	state_f1_stds = val_all_f1_scores.std(axis=0)
 	train_f1_stds = train_all_f1_scores.std(axis=0)
 	
 	print(f"\n{'='*60}")
@@ -549,11 +549,11 @@ def save_results_and_visualizations(results):
 		state_name = b_labels_dict.get(state_label, f'State {state_label}')
 		print(f"\n{state_name} (ID: {state_label}):")
 		print(f"  Train F1:   {train_f1_means[state_idx]:.3f} ± {train_f1_stds[state_idx]:.3f}")
-		print(f"  Test F1:    {test_f1_means[state_idx]:.3f} ± {state_f1_stds[state_idx]:.3f}")
+		print(f"  Validation F1:    {val_f1_means[state_idx]:.3f} ± {state_f1_stds[state_idx]:.3f}")
 		print(f"  Gap:        {f1_gap[state_idx]:.3f}")
 		train_count = np.sum(B_train_1 == state_label)
-		test_count = np.sum(B_test_1 == state_label)
-		print(f"  Train/Test samples: {train_count} / {test_count}")
+		val_count = np.sum(B_val_1 == state_label)
+		print(f"  Train/Validation samples: {train_count} / {val_count}")
 	print("\n" + "="*60)
 	
 	plt.close('all')
@@ -580,34 +580,34 @@ x_pos = np.arange(len(state_labels))
 
 # 1. Accuracy comparison
 ax1c = plt.subplot(2, 3, 1)
-bp = ax1c.boxplot([results_unweighted['acc_list'], results_weighted['acc_list']], 
-				   positions=[1, 2], widths=0.6, patch_artist=True, showmeans=True,
-				   meanprops=dict(marker='D', markerfacecolor='red', markersize=8))
+bp = ax1c.boxplot([results_unweighted['val_acc_list'], results_weighted['val_acc_list']], 
+			   positions=[1, 2], widths=0.6, patch_artist=True, showmeans=True,
+			   meanprops=dict(marker='D', markerfacecolor='red', markersize=8))
 colors_compare = ['lightcoral', 'lightgreen']
 for patch, color in zip(bp['boxes'], colors_compare):
 	patch.set_facecolor(color)
 ax1c.set_xticklabels(['Unweighted', 'Weighted'])
-ax1c.set_ylabel('Test Accuracy', fontsize=12)
-ax1c.set_title('Test Accuracy: Weighted vs Unweighted', fontsize=14, fontweight='bold')
+ax1c.set_ylabel('Validation Accuracy', fontsize=12)
+ax1c.set_title('Validation Accuracy: Weighted vs Unweighted', fontsize=14, fontweight='bold')
 ax1c.grid(True, alpha=0.3, axis='y')
 ax1c.set_ylim([0, 1.05])
 
 # Add mean values as text
-ax1c.text(1, results_unweighted['acc_list'].mean() + 0.02, 
-		  f'{results_unweighted["acc_list"].mean():.3f}', ha='center', fontsize=10)
-ax1c.text(2, results_weighted['acc_list'].mean() + 0.02, 
-		  f'{results_weighted["acc_list"].mean():.3f}', ha='center', fontsize=10)
+ax1c.text(1, results_unweighted['val_acc_list'].mean() + 0.02, 
+		  f'{results_unweighted["val_acc_list"].mean():.3f}', ha='center', fontsize=10)
+ax1c.text(2, results_weighted['val_acc_list'].mean() + 0.02, 
+		  f'{results_weighted["val_acc_list"].mean():.3f}', ha='center', fontsize=10)
 
 # 2. Per-state F1 comparison
 ax2c = plt.subplot(2, 3, 2)
-unweighted_f1_means = results_unweighted['all_f1_scores'].mean(axis=0)
-weighted_f1_means = results_weighted['all_f1_scores'].mean(axis=0)
+unweighted_f1_means = results_unweighted['val_all_f1_scores'].mean(axis=0)
+weighted_f1_means = results_weighted['val_all_f1_scores'].mean(axis=0)
 width = 0.35
 ax2c.bar(x_pos - width/2, unweighted_f1_means, width, label='Unweighted', color='lightcoral', alpha=0.8)
 ax2c.bar(x_pos + width/2, weighted_f1_means, width, label='Weighted', color='lightgreen', alpha=0.8)
 ax2c.set_xlabel('Behavioral State', fontsize=12)
-ax2c.set_ylabel('Test F1 Score', fontsize=12)
-ax2c.set_title('Per-State Test F1: Weighted vs Unweighted', fontsize=14, fontweight='bold')
+ax2c.set_ylabel('Validation F1 Score', fontsize=12)
+ax2c.set_title('Per-State Validation F1: Weighted vs Unweighted', fontsize=14, fontweight='bold')
 ax2c.set_xticks(x_pos)
 ax2c.set_xticklabels([b_labels_dict.get(s, f'S{s}') for s in state_labels], rotation=45, ha='right')
 ax2c.legend()
@@ -652,24 +652,25 @@ ax4c.text(0.05, 0.95, f'Correlation: {corr_imp:.3f}', transform=ax4c.transAxes,
 # 5. Per-state F1 boxplot comparison
 ax5c = plt.subplot(2, 3, 5)
 f1_compare_data = []
+
 for state_idx, state_label in enumerate(state_labels):
-	for run_idx in range(results_unweighted['all_f1_scores'].shape[0]):
+	for run_idx in range(results_unweighted['val_all_f1_scores'].shape[0]):
 		f1_compare_data.append({
 			'State': b_labels_dict.get(state_label, f'State {state_label}'),
-			'F1 Score': results_unweighted['all_f1_scores'][run_idx, state_idx],
+			'F1 Score': results_unweighted['val_all_f1_scores'][run_idx, state_idx],
 			'Loss Type': 'Unweighted'
 		})
 		f1_compare_data.append({
 			'State': b_labels_dict.get(state_label, f'State {state_label}'),
-			'F1 Score': results_weighted['all_f1_scores'][run_idx, state_idx],
+			'F1 Score': results_weighted['val_all_f1_scores'][run_idx, state_idx],
 			'Loss Type': 'Weighted'
 		})
 f1_compare_df = pd.DataFrame(f1_compare_data)
 sns.boxplot(data=f1_compare_df, x='State', y='F1 Score', hue='Loss Type', ax=ax5c, 
 			palette={'Unweighted': 'lightcoral', 'Weighted': 'lightgreen'})
 ax5c.set_xlabel('Behavioral State', fontsize=12)
-ax5c.set_ylabel('Test F1 Score', fontsize=12)
-ax5c.set_title('Per-State F1 Distribution: Weighted vs Unweighted', fontsize=14, fontweight='bold')
+ax5c.set_ylabel('Validation F1 Score', fontsize=12)
+ax5c.set_title('Per-State Validation F1 Distribution: Weighted vs Unweighted', fontsize=14, fontweight='bold')
 ax5c.tick_params(axis='x', rotation=45)
 ax5c.grid(True, alpha=0.3, axis='y')
 
@@ -680,10 +681,10 @@ summary_text = f"""
 SUMMARY COMPARISON
 {'='*40}
 
-OVERALL TEST ACCURACY:
-  Unweighted: {results_unweighted['acc_list'].mean():.3f} ± {results_unweighted['acc_list'].std():.3f}
-  Weighted:   {results_weighted['acc_list'].mean():.3f} ± {results_weighted['acc_list'].std():.3f}
-  Difference: {results_weighted['acc_list'].mean() - results_unweighted['acc_list'].mean():+.3f}
+OVERALL VALIDATION ACCURACY:
+	Unweighted: {results_unweighted['val_acc_list'].mean():.3f} ± {results_unweighted['val_acc_list'].std():.3f}
+	Weighted:   {results_weighted['val_acc_list'].mean():.3f} ± {results_weighted['val_acc_list'].std():.3f}
+	Difference: {results_weighted['val_acc_list'].mean() - results_unweighted['val_acc_list'].mean():+.3f}
 
 MACRO F1 SCORE:
   Unweighted: {unweighted_f1_means.mean():.3f}
@@ -709,15 +710,15 @@ print(f"Saved weighted vs unweighted comparison to {output_dir}/")
 print("\nEstimating chance accuracy...")
 chance_acc = np.zeros(500)
 for i, _ in enumerate(chance_acc):
-	B_perm = np.random.choice(B_test_1, size=B_test_1.shape)
-	chance_acc[i] = accuracy_score(B_perm, B_test_1)
+	B_perm = np.random.choice(B_val_1, size=B_val_1.shape)
+	chance_acc[i] = accuracy_score(B_perm, B_val_1)
 print(f'Chance prediction accuracy: {chance_acc.mean():.3f} ± {chance_acc.std():.3f}')
 np.savetxt(os.path.join(output_dir, f'acc_list_chance_{session_dir}.txt'), chance_acc)
 
 # Create comparison plot: decoder vs chance (using both weighted and unweighted)
 fig2, ax = plt.subplots(1, 1, figsize=(12, 6))
 positions = [1, 2, 3]
-bp = ax.boxplot([results_unweighted['acc_list'], results_weighted['acc_list'], chance_acc], 
+bp = ax.boxplot([results_unweighted['val_acc_list'], results_weighted['val_acc_list'], chance_acc], 
 				positions=positions, widths=0.6,
 				patch_artist=True, showmeans=True,
 				meanprops=dict(marker='D', markerfacecolor='red', markersize=8))
@@ -731,8 +732,8 @@ ax.grid(True, alpha=0.3, axis='y')
 ax.set_ylim([0, 1.0])
 
 # Add statistical annotations
-t_stat_uw, p_value_uw = stats.ttest_ind(results_unweighted['acc_list'], chance_acc)
-t_stat_w, p_value_w = stats.ttest_ind(results_weighted['acc_list'], chance_acc)
+t_stat_uw, p_value_uw = stats.ttest_ind(results_unweighted['val_acc_list'], chance_acc)
+t_stat_w, p_value_w = stats.ttest_ind(results_weighted['val_acc_list'], chance_acc)
 ax.text(0.5, 0.95, f'Unweighted vs Chance: t={t_stat_uw:.2f}, p={p_value_uw:.2e}\nWeighted vs Chance: t={t_stat_w:.2f}, p={p_value_w:.2e}', 
 		transform=ax.transAxes, ha='center', va='top',
 		bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5),
