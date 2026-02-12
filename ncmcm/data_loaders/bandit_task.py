@@ -51,7 +51,7 @@ class BanditTaskNeuroPixelsDataset:
     }
       
     
-    def __init__(self, data_path, downsample_fs=None, downsample_method='binary', good_neurons_only=True, state_transitions=None, gaussian_sigma_ms=25.0, normalize_method=None, recompute_cache=False):
+    def __init__(self, data_path, downsample_fs=None, downsample_method='count', good_neurons_only=True, state_transitions=None, gaussian_sigma_ms=25.0, normalize_method=None, recompute_cache=False):
         """
         Initialize dataset with flexible spike representation options.
 
@@ -1292,7 +1292,7 @@ class BanditTaskNeuroPixelsDataset:
                           Example: {"hold": ["choosing left", "choosing right"],
                                    "choosing left": ["reward", "no reward"],
                                    "choosing right": ["reward", "no reward"]}
-                          If None, returns all observed transitions without validation.
+                          If None, uses DEFAULT_TRANSITION_MAP.
         
         Returns:
             dict: Dictionary with:
@@ -1316,6 +1316,10 @@ class BanditTaskNeuroPixelsDataset:
             ...     print(f"Found {len(result['invalid_transitions'])} invalid transition types")
         """
         b_dense = self.b.toarray().flatten()
+
+        # Default to class-level transition map when no custom map is provided
+        if transition_map is None:
+            transition_map = self.DEFAULT_TRANSITION_MAP
         
         # Find all transitions (where state changes)
         state_changes = np.where(np.diff(b_dense) != 0)[0]
@@ -1336,14 +1340,6 @@ class BanditTaskNeuroPixelsDataset:
             if key not in transition_indices:
                 transition_indices[key] = []
             transition_indices[key].append(idx)
-        
-        # If no transition map provided, just return observed transitions
-        if transition_map is None:
-            return {
-                'valid': True,
-                'observed_transitions': observed_transitions,
-                'invalid_transitions': []
-            }
         
         # Validate transitions against the map
         invalid_transitions = []
