@@ -298,7 +298,7 @@ class LatentSpaceVisualiser:
         if os.path.dirname(filename):
             os.makedirs(os.path.dirname(filename), exist_ok=True)
 
-        plt.savefig(filename)
+        plt.savefig(filename, dpi=300)
 
         if show_fig:
             plt.show()
