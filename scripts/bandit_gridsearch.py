@@ -17,7 +17,6 @@ from ncmcm.bundlenet.utils import (prep_data, timeseries_train_test_split, prep_
                                      timeseries_train_test_split_cv, timeseries_train_test_split_cv_lazy)
 from ncmcm.visualisers.neuronal_behavioural import plotting_neuronal_behavioural_plotly
 from ncmcm.visualisers.latent_space import LatentSpaceVisualiser
-from sklearn.preprocessing import LabelEncoder
 
 
 def parse_args():
@@ -396,11 +395,12 @@ def visualize_latent_space(y, b, b_labels, output_dir, vis_range, data_split='tr
     # Phase space plots from multiple perspectives
     print("  - Phase space dynamics (multiple views)...")
     phase_space_views = [
-        ((30, -60), 'default'),      # Standard 3D perspective
-        ((90, 0), 'top'),            # Top-down view (bird's eye)
-        ((0, 0), 'front'),           # Front view (XZ plane)
-        ((0, 90), 'side'),           # Side view (YZ plane)
-        ((30, 45), 'isometric'),     # Isometric-like diagonal view
+        ((0, 180), "back"),
+        ((-90, 0), "bottom"),
+        ((0, 0), "front"),
+        ((90, 0), "top"),
+        ((0, 90), "right"),
+        ((0, -90), "left"),
     ]
     
     for (elev, azim), view_name in phase_space_views:
