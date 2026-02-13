@@ -56,7 +56,7 @@ def parse_args():
     parser.add_argument('--learning_rate', type=float, nargs='+', default=[0.0001],
                         help='Learning rate (can specify multiple values for grid search)')
     parser.add_argument('--gamma', type=float, nargs='+', default=[0.8],
-                        help='Weight for behavior loss (can specify multiple values for grid search)')
+                        help='Weight for behaviour loss (can specify multiple values for grid search)')
     parser.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu',
                         choices=['cpu', 'cuda'],
                         help='Device to use for training')
@@ -217,7 +217,7 @@ def load_data(data_path, downsample_fs, downsample_method, good_neurons_only, ap
     gc.collect()
     
     print(f"Data shapes - x: {x.shape}, b: {b.shape}")
-    print(f"Behavior labels: {b_labels}")
+    print(f"behaviour labels: {b_labels}")
     
     return x, b, b_labels, b_colors, b_colors_rgb
 
@@ -227,7 +227,7 @@ def preprocess_data(x, b, window, lazy_loading=False, cv_folds=None):
     
     Args:
         x: Neural data
-        b: Behavior labels
+        b: behaviour labels
         window: Window size for time delay embedding
         lazy_loading: Use memory-efficient lazy loading
         cv_folds: Number of CV folds (None for single split)
@@ -265,7 +265,7 @@ def preprocess_data(x, b, window, lazy_loading=False, cv_folds=None):
         
         return x_, b_, splits
     else:
-        # Single train/test split (original behavior)
+        # Single train/test split (original behaviour)
         if lazy_loading:
             x_train, x_test, b_train, b_test = timeseries_train_test_split_lazy(x_, b_)
         else:
@@ -290,7 +290,7 @@ def train_bundlenet(x_train, b_train, x_test, b_test, x_shape, args, output_dir)
     """Train BunDLeNet model"""
     print("Initializing BunDLeNet model...")
     
-    num_behaviour = len(np.unique(b_train)) # Assuming discrete behavior
+    num_behaviour = len(np.unique(b_train)) # Assuming discrete behaviour
     
     model = BunDLeNet(
         latent_dim=args.latent_dim,
@@ -333,7 +333,7 @@ def plot_training_loss(loss_array, test_loss_array, output_dir):
     
     labels = [
         r"$\mathcal{L}_{\mathrm{Markov}}$",
-        r"$\mathcal{L}_{\mathrm{Behavior}}$",
+        r"$\mathcal{L}_{\mathrm{Behaviour}}$",
         r"Total loss $\mathcal{L}$"
     ]
     
@@ -353,15 +353,15 @@ def plot_training_loss(loss_array, test_loss_array, output_dir):
     print(f"Training loss plot saved to {plot_path}")
 
 
-def visualize_neural_behavioral(x, b, b_labels, b_colors, output_dir):
-    """Visualize neural activity and behavioral choices"""
-    print("Plotting neural-behavioral data...")
+def visualize_neural_behavioural(x, b, b_labels, b_colors, output_dir):
+    """Visualize neural activity and behavioural choices"""
+    print("Plotting neural-behavioural data...")
     fig = plotting_neuronal_behavioural_plotly(x, b, b_names=b_labels, b_colors=b_colors, show_fig=False)
     
-    plot_path = output_dir / 'figures' / 'neural_behavioral_overview.html'
+    plot_path = output_dir / 'figures' / 'neural_behavioural_overview.html'
     fig.write_html(str(plot_path))
     
-    print(f"Neural-behavioral plot saved to {plot_path}")
+    print(f"Neural-behavioural plot saved to {plot_path}")
 
 
 def visualize_latent_space(y, b, b_labels, output_dir, vis_range, data_split='train', generate_gif=False, generate_3d_html=False, colors=None):
@@ -381,9 +381,9 @@ def visualize_latent_space(y, b, b_labels, output_dir, vis_range, data_split='tr
     y_vis = y[start:end]
     b_vis = b[start:end]
     
-    # Save latent trajectories and behavior labels with split name
+    # Save latent trajectories and behaviour labels with split name
     np.save(output_dir / 'data' / f'latent_trajectories_{data_split}.npy', y)
-    np.save(output_dir / 'data' / f'behavior_labels_{data_split}.npy', b)
+    np.save(output_dir / 'data' / f'behaviour_labels_{data_split}.npy', b)
     
     vis = LatentSpaceVisualiser(y_vis, b_vis, b_labels, show_points=True, colors=colors)
     
@@ -595,12 +595,12 @@ def update_grid_search_summary(summary_path, run_idx, params, result):
         return result
 
     best_markov = _best_by_key('best_markovian_loss')
-    best_behavior = _best_by_key('best_behavior_loss')
+    best_behaviour = _best_by_key('best_behaviour_loss')
 
     if best_markov is not None:
         summary['best_markovian_run'] = best_markov
-    if best_behavior is not None:
-        summary['best_behavior_run'] = best_behavior
+    if best_behaviour is not None:
+        summary['best_behaviour_run'] = best_behaviour
 
     # Save updated summary
     with open(summary_path, 'w') as f:
@@ -676,10 +676,10 @@ def run_single_fold(fold_idx, x_train, x_test, b_train, b_test, x_shape, b_label
         'fold': fold_idx,
         'best_markovian_loss': float(np.min(test_loss_array[:, 0])),
         'best_markovian_epoch': int(np.argmin(test_loss_array[:, 0])),
-        'best_behavior_loss': float(np.min(test_loss_array[:, 1])),
-        'best_behavior_epoch': int(np.argmin(test_loss_array[:, 1])),
+        'best_behaviour_loss': float(np.min(test_loss_array[:, 1])),
+        'best_behaviour_epoch': int(np.argmin(test_loss_array[:, 1])),
         'final_markovian_loss': float(test_loss_array[-1, 0]),
-        'final_behavior_loss': float(test_loss_array[-1, 1]),
+        'final_behaviour_loss': float(test_loss_array[-1, 1]),
         'final_total_loss': float(test_loss_array[-1, 2])
     }
     
@@ -695,8 +695,8 @@ def generate_cv_summary(fold_metrics_list, output_dir):
     print("\nGenerating cross-validation summary...")
     
     # Aggregate metrics
-    metrics_names = ['best_markovian_loss', 'best_behavior_loss', 
-                    'final_markovian_loss', 'final_behavior_loss', 'final_total_loss']
+    metrics_names = ['best_markovian_loss', 'best_behaviour_loss', 
+                    'final_markovian_loss', 'final_behaviour_loss', 'final_total_loss']
     
     cv_summary = {
         'n_folds': len(fold_metrics_list),
@@ -729,7 +729,7 @@ def generate_cv_summary(fold_metrics_list, output_dir):
     print(f"CV Summary saved to {summary_path}")
     print(f"\nCross-Validation Results ({len(fold_metrics_list)} folds):")
     print(f"  Best Markovian Loss: {cv_summary['aggregated']['best_markovian_loss']['mean']:.6f} ± {cv_summary['aggregated']['best_markovian_loss']['std']:.6f}")
-    print(f"  Best Behavior Loss:  {cv_summary['aggregated']['best_behavior_loss']['mean']:.6f} ± {cv_summary['aggregated']['best_behavior_loss']['std']:.6f}")
+    print(f"  Best behaviour Loss:  {cv_summary['aggregated']['best_behaviour_loss']['mean']:.6f} ± {cv_summary['aggregated']['best_behaviour_loss']['std']:.6f}")
     print(f"  Best Fold: {best_fold_idx} (Markovian Loss: {fold_metrics_list[best_fold_idx]['best_markovian_loss']:.6f})")
     
     return cv_summary
@@ -762,8 +762,8 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
     
     # Visualize raw data
     step_start = time.time()
-    visualize_neural_behavioral(x, b, b_labels, b_colors, output_dir)
-    print_step_time("Neural-behavioral visualization", run_start_time, step_start)
+    visualize_neural_behavioural(x, b, b_labels, b_colors, output_dir)
+    print_step_time("Neural-behavioural visualization", run_start_time, step_start)
     
     # Preprocess data
     step_start = time.time()
@@ -813,8 +813,8 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
             'n_folds': args.cv_folds,
             'best_markovian_loss_mean': cv_summary['aggregated']['best_markovian_loss']['mean'],
             'best_markovian_loss_std': cv_summary['aggregated']['best_markovian_loss']['std'],
-            'best_behavior_loss_mean': cv_summary['aggregated']['best_behavior_loss']['mean'],
-            'best_behavior_loss_std': cv_summary['aggregated']['best_behavior_loss']['std'],
+            'best_behaviour_loss_mean': cv_summary['aggregated']['best_behaviour_loss']['mean'],
+            'best_behaviour_loss_std': cv_summary['aggregated']['best_behaviour_loss']['std'],
             'best_fold': cv_summary['best_fold']['fold_index'],
             'best_fold_markovian_loss': cv_summary['best_fold']['metrics']['best_markovian_loss']
         }
@@ -836,7 +836,7 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
         )
         
     else:
-        # === SINGLE TRAIN/TEST SPLIT MODE (original behavior) ===
+        # === SINGLE TRAIN/TEST SPLIT MODE (original behaviour) ===
         # Train model
         step_start = time.time()
         model, loss_array, test_loss_array = train_bundlenet(
@@ -897,10 +897,10 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
             'cv_mode': False,
             'best_markovian_loss': float(np.min(test_loss_array[:, 0])),
             'best_markovian_epoch': int(np.argmin(test_loss_array[:, 0])),
-            'best_behavior_loss': float(np.min(test_loss_array[:, 1])),
-            'best_behavior_epoch': int(np.argmin(test_loss_array[:, 1])),
+            'best_behaviour_loss': float(np.min(test_loss_array[:, 1])),
+            'best_behaviour_epoch': int(np.argmin(test_loss_array[:, 1])),
             'final_markovian_loss': float(test_loss_array[-1, 0]),
-            'final_behavior_loss': float(test_loss_array[-1, 1]),
+            'final_behaviour_loss': float(test_loss_array[-1, 1]),
             'final_total_loss': float(test_loss_array[-1, 2])
         }
         
