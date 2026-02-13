@@ -73,8 +73,10 @@ def parse_args():
     parser.add_argument('--output_dir', type=str, 
                         default='./results',
                         help='Base directory for output')
-    parser.add_argument('--no_gif', action='store_true',
-                        help='Disable GIF generation for rotating 3D plots')
+    parser.add_argument('--generate_gif', action='store_true',
+                        help='Enable GIF generation for rotating 3D plots')
+    parser.add_argument('--generate_3d_html', action='store_true',
+                        help='Enable interactive 3D HTML plot generation')
     
     # Memory optimization
     parser.add_argument('--lazy_loading', action='store_true',
@@ -362,7 +364,7 @@ def visualize_neural_behavioral(x, b, b_labels, b_colors, output_dir):
     print(f"Neural-behavioral plot saved to {plot_path}")
 
 
-def visualize_latent_space(y, b, b_labels, output_dir, vis_range, data_split='train', generate_gif=True, colors=None):
+def visualize_latent_space(y, b, b_labels, output_dir, vis_range, data_split='train', generate_gif=False, generate_3d_html=False, colors=None):
     """Create all latent space visualizations"""
     print(f"Creating latent space visualizations for {data_split} data...")
     
@@ -422,12 +424,15 @@ def visualize_latent_space(y, b, b_labels, output_dir, vis_range, data_split='tr
     else:
         print("  - Skipping rotating 3D plot (GIF generation disabled)")
     
-    # Interactive 3D plot
-    print("  - Interactive 3D plot...")
-    _ = vis.plot_interactive_3d(
-        show_fig=False,
-        filename=str(output_dir / 'figures' / f'interactive_3d_{data_split}.html')
-    )
+    # Interactive 3D plot (HTML)
+    if generate_3d_html:
+        print("  - Interactive 3D plot...")
+        _ = vis.plot_interactive_3d(
+            show_fig=False,
+            filename=str(output_dir / 'figures' / f'interactive_3d_{data_split}.html')
+        )
+    else:
+        print("  - Skipping interactive 3D plot (HTML generation disabled)")
 
 
 def plot_recurrence(y, output_dir, threshold, vis_range, data_split='train'):
@@ -635,7 +640,7 @@ def run_single_fold(fold_idx, x_train, x_test, b_train, b_test, x_shape, b_label
     # Visualize training latent space
     step_start = time.time()
     visualize_latent_space(y_train, b_train, b_labels, fold_dir, args.vis_samples, 
-                          data_split='train', generate_gif=not args.no_gif, colors=b_colors_rgb)
+                          data_split='train', generate_gif=args.generate_gif, generate_3d_html=args.generate_3d_html, colors=b_colors_rgb)
     print_step_time(f"Fold {fold_idx} - Training latent space visualization", run_start_time, step_start)
     
     # Training recurrence plot
@@ -657,7 +662,7 @@ def run_single_fold(fold_idx, x_train, x_test, b_train, b_test, x_shape, b_label
     # Visualize validation latent space
     step_start = time.time()
     visualize_latent_space(y_test, b_test, b_labels, fold_dir, args.vis_samples,
-                          data_split='validation', generate_gif=not args.no_gif, colors=b_colors_rgb)
+                          data_split='validation', generate_gif=args.generate_gif, generate_3d_html=args.generate_3d_html, colors=b_colors_rgb)
     print_step_time(f"Fold {fold_idx} - Validation latent space visualization", run_start_time, step_start)
     
     # Validation recurrence plot
@@ -856,7 +861,7 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
         # Visualize training latent space
         step_start = time.time()
         visualize_latent_space(y_train, b_train, b_labels, output_dir, args.vis_samples, 
-                              data_split='train', generate_gif=not args.no_gif, colors=b_colors_rgb)
+                              data_split='train', generate_gif=args.generate_gif, generate_3d_html=args.generate_3d_html, colors=b_colors_rgb)
         print_step_time("Training latent space visualization", run_start_time, step_start)
         
         # Training recurrence plot
@@ -878,7 +883,7 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
         # Visualize validation latent space
         step_start = time.time()
         visualize_latent_space(y_test, b_test, b_labels, output_dir, args.vis_samples,
-                              data_split='validation', generate_gif=not args.no_gif, colors=b_colors_rgb)
+                              data_split='validation', generate_gif=args.generate_gif, generate_3d_html=args.generate_3d_html, colors=b_colors_rgb)
         print_step_time("Validation latent space visualization", run_start_time, step_start)
         
         # Validation recurrence plot
