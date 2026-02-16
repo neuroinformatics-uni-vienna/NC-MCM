@@ -21,6 +21,13 @@ class BanditTaskNeuroPixelsDataset:
         ("hold", "choosing right"): "hold --> choosing right"
     }
     
+    CHOOSING_TO_REWARD_TRANSITIONS = {
+        ("choosing left", "reward"): "choosing left --> reward",
+        ("choosing left", "no reward"): "choosing left --> no reward",
+        ("choosing right", "reward"): "choosing right --> reward",
+        ("choosing right", "no reward"): "choosing right --> no reward"
+    }
+    
     # Default valid state transition map for the bandit task
     # Maps each state to a list of valid next states
     DEFAULT_TRANSITION_MAP = {
@@ -46,8 +53,14 @@ class BanditTaskNeuroPixelsDataset:
         "choosing right": "#3498db",    # Blue - right choice
         "reward": "#1ad367",            # Green - positive outcome
         "no reward": "#172E25",         # dark green - negative outcome
+        
         "hold --> choosing left": "#e74c3c",   # Red - transition to left
         "hold --> choosing right": "#3498db",  # Blue - transition to right
+        
+        "choosing left --> reward": "#1ad367",    # Green - left choice rewarded
+        "choosing left --> no reward": "#172E25", # dark green - left choice not rewarded
+        "choosing right --> reward": "#3498db",    # Green - right choice rewarded
+        "choosing right --> no reward": "#e74c3c", # dark green - right choice not rewarded
     }
       
     
