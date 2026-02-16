@@ -34,9 +34,9 @@ def parse_args():
     parser.add_argument('--good_neurons_only', type=str, nargs='+', default=['false'],
                         choices=['true', 'false'],
                         help='Use only good neurons: true or false (can specify multiple for grid search, e.g., true false)')
-    parser.add_argument('--apply_hold_transitions', type=str, nargs='+', default=['false'],
-                        choices=['true', 'false'],
-                        help='Apply HOLD_TO_CHOOSING_TRANSITIONS: true or false (can specify multiple for grid search)')
+    parser.add_argument('--apply_hold_transitions', type=str, nargs='+', default=['none'],
+                        choices=['none', 'HOLD_TO_CHOOSING_TRANSITIONS', 'CHOOSING_TO_REWARD_TRANSITIONS'],
+                        help='State transition mapping to apply: none, HOLD_TO_CHOOSING_TRANSITIONS, or CHOOSING_TO_REWARD_TRANSITIONS (can specify multiple for grid search)')
     parser.add_argument('--normalize_method', type=str, nargs='+', default=['None'],
                         choices=['None', 'minmax', 'minmax_global'],
                         help='Normalization method: None, minmax (per-neuron), or minmax_global (can specify multiple for grid search)')
@@ -179,12 +179,26 @@ def save_comprehensive_config(args, params, output_dir, execution_time, executio
     print(f"Comprehensive configuration saved to {config_path}")
 
 
-def load_data(data_path, downsample_fs, downsample_method, good_neurons_only, apply_hold_transitions=False, normalize_method='none'):
+def load_data(data_path, downsample_fs, downsample_method, good_neurons_only, apply_hold_transitions='none', normalize_method='none'):
     """Load and prepare dataset"""
     # Determine state_transitions parameter
-    state_transitions = None
-    if apply_hold_transitions:
-        state_transitions = BanditTaskNeuroPixelsDataset.HOLD_TO_CHOOSING_TRANSITIONS
+    transition_lookup = {
+        'none': None,
+        'false': None,  # backward compatibility
+        'true': BanditTaskNeuroPixelsDataset.HOLD_TO_CHOOSING_TRANSITIONS,
+        'hold_to_choosing_transitions': BanditTaskNeuroPixelsDataset.HOLD_TO_CHOOSING_TRANSITIONS,
+        'choosing_to_reward_transitions': BanditTaskNeuroPixelsDataset.CHOOSING_TO_REWARD_TRANSITIONS,
+        'HOLD_TO_CHOOSING_TRANSITIONS': BanditTaskNeuroPixelsDataset.HOLD_TO_CHOOSING_TRANSITIONS,
+        'CHOOSING_TO_REWARD_TRANSITIONS': BanditTaskNeuroPixelsDataset.CHOOSING_TO_REWARD_TRANSITIONS,
+    }
+
+    transition_key = (apply_hold_transitions or 'none')
+    # Normalize key for lookup while still accepting exact class variable names
+    transition_key_lower = transition_key.lower() if isinstance(transition_key, str) else 'none'
+    state_transitions = transition_lookup.get(transition_key, transition_lookup.get(transition_key_lower))
+
+    if isinstance(state_transitions, type(None)) and transition_key not in transition_lookup and transition_key_lower not in transition_lookup:
+        raise ValueError(f"Unsupported apply_hold_transitions value: {apply_hold_transitions}")
     
     # Convert 'None' string to None for normalize_method
     norm_method = None if normalize_method == 'None' else normalize_method
@@ -192,7 +206,7 @@ def load_data(data_path, downsample_fs, downsample_method, good_neurons_only, ap
     print("Loading dataset...")
     
     if state_transitions is not None:
-        print(f"  Applying HOLD_TO_CHOOSING_TRANSITIONS: {state_transitions}")
+        print(f"  Applying state transitions: {transition_key}")
     
     if norm_method is not None:
         print(f"  Applying normalization: {norm_method}")
@@ -488,7 +502,7 @@ def generate_param_combinations(args):
         'downsample_fs': args.downsample_fs,
         'downsample_method': args.downsample_method,
         'good_neurons_only': [x.lower() == 'true' for x in args.good_neurons_only],
-        'apply_hold_transitions': [x.lower() == 'true' for x in args.apply_hold_transitions],
+        'apply_hold_transitions': args.apply_hold_transitions,
         'normalize_method': args.normalize_method,
         'window': args.window,
         'latent_dim': args.latent_dim,
