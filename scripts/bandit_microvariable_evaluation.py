@@ -10,17 +10,27 @@ import sys
 sys.path.append(r'../../../')
 import numpy as np
 import os
+from collections import defaultdict
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from tqdm import tqdm
-from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, precision_score, recall_score
+from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, precision_score, recall_score, precision_recall_fscore_support
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
 from scipy import stats
 from ncmcm.data_loaders.bandit_task import BanditTaskNeuroPixelsDataset
-from ncmcm.bundlenet.utils import prep_data, timeseries_train_test_split
+from ncmcm.bundlenet.utils import prep_data, timeseries_train_test_split_cv
+
+# ---------------------------------------------------------------------------
+# Experiment configuration
+# ---------------------------------------------------------------------------
+
+WINDOW_SIZE = 60               # Sliding window length for prep_data
+NUM_DECODER_RUNS = 5          # Number of decoder trainings per CV fold
+TRAIN_EPOCHS = 100             # SGD epochs per decoder
+NUM_OF_SPLITS = 7                # Number of CV splits (time series)
 
 # Get session directory from command line argument
 data_path = sys.argv[1]  # e.g., 'JPAS_0023_20230922'
@@ -31,10 +41,11 @@ print(f"Loading data from: {data_path}")
 
 data = BanditTaskNeuroPixelsDataset(
     data_path=data_path,
-    downsample_fs=30,  # Downsample to 30 Hz
+    downsample_fs=25,  # Downsample to 30 Hz
     downsample_method='count',
-    good_neurons_only=False,
-    normalize_method='minmax_global'
+    good_neurons_only=True,
+    normalize_method='minmax_global',
+    state_transitions=None #BanditTaskNeuroPixelsDataset.CHOOSING_TO_REWARD_TRANSITIONS
 )
 
 # Extract neuronal and behavioral data (handle sparse matrices)
@@ -49,51 +60,68 @@ b_labels = data.b_labels  # List of state names ordered by ID
 print(f"Behavioral labels: {b_labels_dict}")
 
 # Prepare data with sliding windows
-X_, B_ = prep_data(X, B, win=50)
-X_train, X_val, B_train_1, B_val_1 = timeseries_train_test_split(X_, B_)
-X1_tr = X_train[:,1,:,:]  # Use second window (next state)
-X1_val = X_val[:,1,:,:]
-print(f"Train shape: {X1_tr.shape}, Validation shape: {X1_val.shape}")
+X_, B_ = prep_data(X, B, win=WINDOW_SIZE)
+cv_splits = timeseries_train_test_split_cv(X_, B_, NUM_OF_SPLITS)
+num_folds = len(cv_splits)
+print(f"Prepared {num_folds}-fold time series CV splits")
+
+# Aggregate label counts across folds (averaged per fold for reporting)
+train_label_counts_raw = defaultdict(int)
+val_label_counts_raw = defaultdict(int)
+total_train = 0
+total_val = 0
+for x_train_fold, x_val_fold, b_train_fold, b_val_fold in cv_splits:
+	unique_train, counts_train = np.unique(b_train_fold, return_counts=True)
+	for lbl, cnt in zip(unique_train, counts_train):
+		train_label_counts_raw[lbl] += cnt
+	unique_val, counts_val = np.unique(b_val_fold, return_counts=True)
+	for lbl, cnt in zip(unique_val, counts_val):
+		val_label_counts_raw[lbl] += cnt
+	total_train += len(b_train_fold)
+	total_val += len(b_val_fold)
+
+state_labels = np.unique(B_)
+num_states = len(state_labels)
+
+train_label_counts = {label: train_label_counts_raw[label] / num_folds for label in state_labels}
+val_label_counts = {label: val_label_counts_raw[label] / num_folds for label in state_labels}
+total_train_avg = total_train / num_folds
+total_val_avg = total_val / num_folds
+
+# Display average shapes for transparency
+example_train = cv_splits[0][0][:, 1, :, :]
+example_val = cv_splits[0][1][:, 1, :, :]
+print(f"Example fold shapes -> Train: {example_train.shape}, Validation: {example_val.shape}")
 
 ### Analyze label distributions
 print("\n" + "="*60)
 print("LABEL DISTRIBUTION ANALYSIS")
 print("="*60)
 
-# Count labels in train and validation sets
-train_label_counts = {}
-val_label_counts = {}
-for label in np.unique(np.concatenate([B_train_1, B_val_1])):
-	train_label_counts[label] = np.sum(B_train_1 == label)
-	val_label_counts[label] = np.sum(B_val_1 == label)
-
-total_train = len(B_train_1)
-total_val = len(B_val_1)
-
-print(f"\nTotal samples: Train={total_train}, Validation={total_val}")
+# Count labels in train and validation sets (averaged per fold)
+print(f"\nTotal samples per fold (avg): Train={total_train_avg:.1f}, Validation={total_val_avg:.1f}")
 print(f"\n{'State':<20} {'Train Count':>12} {'Train %':>10} {'Validation Count':>18} {'Validation %':>14}")
 print("-" * 70)
 for label in sorted(train_label_counts.keys()):
 	state_name = b_labels_dict.get(label, f'State {label}')
 	train_count = train_label_counts.get(label, 0)
 	val_count = val_label_counts.get(label, 0)
-	train_pct = 100 * train_count / total_train
-	val_pct = 100 * val_count / total_val
-	print(f"{state_name:<20} {train_count:>12} {train_pct:>9.1f}% {val_count:>18} {val_pct:>13.1f}%")
+	train_pct = 100 * train_count / total_train_avg if total_train_avg else 0
+	val_pct = 100 * val_count / total_val_avg if total_val_avg else 0
+	print(f"{state_name:<20} {train_count:>12.1f} {train_pct:>9.1f}% {val_count:>18.1f} {val_pct:>13.1f}%")
 
-# Calculate class imbalance ratio
+# Calculate class imbalance ratio using averaged counts
 max_count = max(train_label_counts.values())
 min_count = min(train_label_counts.values())
 imbalance_ratio = max_count / min_count if min_count > 0 else float('inf')
 print(f"\nClass imbalance ratio (max/min): {imbalance_ratio:.1f}x")
 
-# Compute class weights for weighted loss (inverse frequency)
-num_states = len(np.unique(B_train_1))
-state_labels = np.unique(B_train_1)
+# Compute class weights for weighted loss (inverse frequency) using aggregated counts
 class_weights = {}
 for label in sorted(state_labels):
+	count = train_label_counts_raw[label]
 	# Inverse frequency weighting: weight = total_samples / (num_classes * class_count)
-	class_weights[label] = total_train / (num_states * train_label_counts[label]) if train_label_counts[label] > 0 else 1.0
+	class_weights[label] = total_train / (num_states * count) if count > 0 else 1.0
 
 print(f"\nClass weights (inverse frequency):")
 for label in sorted(class_weights.keys()):
@@ -144,16 +172,9 @@ plt.close()
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {device}")
 
-# Convert to PyTorch tensors
-X1_tr_tensor = torch.FloatTensor(X1_tr).to(device)
-X1_val_tensor = torch.FloatTensor(X1_val).to(device)
-B_train_tensor = torch.LongTensor(B_train_1).to(device)
-B_val_tensor = torch.LongTensor(B_val_1).to(device)
-
 # Create class weights tensor for weighted loss
 weights_list = [class_weights[label] for label in sorted(class_weights.keys())]
 class_weights_tensor = torch.FloatTensor(weights_list).to(device)
-
 
 def train_and_evaluate_decoders(use_weighted_loss=False, suffix=""):
 	"""
@@ -171,7 +192,7 @@ def train_and_evaluate_decoders(use_weighted_loss=False, suffix=""):
 	print(f"### TRAINING WITH {loss_type} LOSS ###")
 	print(f"{'#'*70}")
 	
-	print(f"\nTraining 10 decoders with {num_states} behavioral states...")
+	print(f"\nTraining {NUM_DECODER_RUNS} decoders per fold with {num_states} behavioral states...")
 	print(f"State labels: {state_labels}")
 	
 	if use_weighted_loss:
@@ -182,62 +203,88 @@ def train_and_evaluate_decoders(use_weighted_loss=False, suffix=""):
 	val_acc_list = []
 	val_all_predictions = []
 	val_all_f1_scores = []
+	val_true_labels = []
 
 	train_acc_list = []
 	train_all_predictions = []
 	train_all_f1_scores = []
-	
-	for i in tqdm(np.arange(10), desc=f'Training decoders ({loss_type})'):
-		# Define model
-		input_dim = X1_tr.shape[1] * X1_tr.shape[2]
-		b_predictor = nn.Sequential(
-			nn.Flatten(),
-			nn.Linear(input_dim, num_states)
-		).to(device)
-		
-		# Define optimizer and loss
-		optimizer = optim.Adam(b_predictor.parameters(), lr=0.01)
-		if use_weighted_loss:
-			criterion = nn.CrossEntropyLoss(weight=class_weights_tensor)
-		else:
-			criterion = nn.CrossEntropyLoss()
-		
-		# Training loop
-		for epoch in range(100):
-			b_predictor.train()
-			optimizer.zero_grad()
-			outputs = b_predictor(X1_tr_tensor)
-			loss = criterion(outputs, B_train_tensor)
-			loss.backward()
-			optimizer.step()
-		
-		# Evaluation
-		b_predictor.eval()
-		with torch.no_grad():
-			B1_val_pred = b_predictor(X1_val_tensor).argmax(dim=1).cpu().numpy()
-			B1_tr_pred = b_predictor(X1_tr_tensor).argmax(dim=1).cpu().numpy()
+	train_true_labels = []
 
-		# Validation metrics
-		acc = accuracy_score(B_val_1, B1_val_pred)
-		val_acc_list.append(acc)
-		val_all_predictions.append(B1_val_pred)
-		f1_per_class = f1_score(B_val_1, B1_val_pred, average=None, labels=state_labels, zero_division=0)
-		val_all_f1_scores.append(f1_per_class)
-		
-		# Training metrics
-		train_acc = accuracy_score(B_train_1, B1_tr_pred)
-		train_acc_list.append(train_acc)
-		train_all_predictions.append(B1_tr_pred)
-		train_f1_per_class = f1_score(B_train_1, B1_tr_pred, average=None, labels=state_labels, zero_division=0)
-		train_all_f1_scores.append(train_f1_per_class)
+	val_conf_sum = np.zeros((num_states, num_states))
+	train_conf_sum = np.zeros((num_states, num_states))
+	total_runs = 0
+
+	for fold_idx, (x_train_fold, x_val_fold, b_train_fold, b_val_fold) in enumerate(cv_splits):
+		print(f"\nFold {fold_idx + 1}/{num_folds}: train={x_train_fold.shape[0]}, val={x_val_fold.shape[0]}")
+		X1_tr = x_train_fold[:, 1, :, :]
+		X1_val = x_val_fold[:, 1, :, :]
+		X1_tr_tensor = torch.FloatTensor(X1_tr).to(device)
+		X1_val_tensor = torch.FloatTensor(X1_val).to(device)
+		B_train_tensor = torch.LongTensor(b_train_fold).to(device)
+		B_val_tensor = torch.LongTensor(b_val_fold).to(device)
+
+		for _ in tqdm(np.arange(NUM_DECODER_RUNS), desc=f'Training decoders ({loss_type}) - fold {fold_idx + 1}', leave=False):
+			# Define model
+			input_dim = X1_tr.shape[1] * X1_tr.shape[2]
+			b_predictor = nn.Sequential(
+				nn.Flatten(),
+				nn.Linear(input_dim, num_states)
+			).to(device)
+			
+			# Define optimizer and loss
+			optimizer = optim.Adam(b_predictor.parameters(), lr=0.01)
+			if use_weighted_loss:
+				criterion = nn.CrossEntropyLoss(weight=class_weights_tensor)
+			else:
+				criterion = nn.CrossEntropyLoss()
+			
+			# Training loop
+			for epoch in range(TRAIN_EPOCHS):
+				b_predictor.train()
+				optimizer.zero_grad()
+				outputs = b_predictor(X1_tr_tensor)
+				loss = criterion(outputs, B_train_tensor)
+				loss.backward()
+				optimizer.step()
+			
+			# Evaluation
+			b_predictor.eval()
+			with torch.no_grad():
+				B1_val_pred = b_predictor(X1_val_tensor).argmax(dim=1).cpu().numpy()
+				B1_tr_pred = b_predictor(X1_tr_tensor).argmax(dim=1).cpu().numpy()
+
+			# Validation metrics
+			acc = accuracy_score(b_val_fold, B1_val_pred)
+			val_acc_list.append(acc)
+			val_all_predictions.append(B1_val_pred)
+			val_true_labels.append(b_val_fold)
+			f1_per_class = f1_score(b_val_fold, B1_val_pred, average=None, labels=state_labels, zero_division=0)
+			val_all_f1_scores.append(f1_per_class)
+			val_conf_sum += confusion_matrix(b_val_fold, B1_val_pred, labels=state_labels)
+			
+			# Training metrics
+			train_acc = accuracy_score(b_train_fold, B1_tr_pred)
+			train_acc_list.append(train_acc)
+			train_all_predictions.append(B1_tr_pred)
+			train_true_labels.append(b_train_fold)
+			train_f1_per_class = f1_score(b_train_fold, B1_tr_pred, average=None, labels=state_labels, zero_division=0)
+			train_all_f1_scores.append(train_f1_per_class)
+			train_conf_sum += confusion_matrix(b_train_fold, B1_tr_pred, labels=state_labels)
+
+			total_runs += 1
 
 	# Convert to arrays
 	val_acc_list = np.array(val_acc_list)
-	val_all_predictions = np.array(val_all_predictions)
+	val_all_predictions = np.array(val_all_predictions, dtype=object)
+	val_true_labels = np.array(val_true_labels, dtype=object)
 	val_all_f1_scores = np.array(val_all_f1_scores)
 	train_acc_list = np.array(train_acc_list)
-	train_all_predictions = np.array(train_all_predictions)
+	train_all_predictions = np.array(train_all_predictions, dtype=object)
+	train_true_labels = np.array(train_true_labels, dtype=object)
 	train_all_f1_scores = np.array(train_all_f1_scores)
+
+	avg_conf_matrix_val = val_conf_sum / total_runs
+	avg_conf_matrix_train = train_conf_sum / total_runs
 
 	# Print results
 	print(f"\n{'='*60}")
@@ -259,9 +306,13 @@ def train_and_evaluate_decoders(use_weighted_loss=False, suffix=""):
 		'val_acc_list': val_acc_list,
 		'val_all_predictions': val_all_predictions,
 		'val_all_f1_scores': val_all_f1_scores,
+		'val_true_labels': val_true_labels,
 		'train_acc_list': train_acc_list,
 		'train_all_predictions': train_all_predictions,
 		'train_all_f1_scores': train_all_f1_scores,
+		'train_true_labels': train_true_labels,
+		'avg_conf_matrix_val': avg_conf_matrix_val,
+		'avg_conf_matrix_train': avg_conf_matrix_train,
 		'suffix': suffix,
 		'loss_type': loss_type
 	}
@@ -275,9 +326,13 @@ def save_results_and_visualizations(results):
 	val_acc_list = results['val_acc_list']
 	val_all_predictions = results['val_all_predictions']
 	val_all_f1_scores = results['val_all_f1_scores']
+	val_true_labels = results['val_true_labels']
 	train_acc_list = results['train_acc_list']
 	train_all_predictions = results['train_all_predictions']
 	train_all_f1_scores = results['train_all_f1_scores']
+	train_true_labels = results['train_true_labels']
+	avg_conf_matrix = results['avg_conf_matrix_val']
+	train_avg_conf_matrix = results['avg_conf_matrix_train']
 	
 	print(f"\nGenerating visualizations for {loss_type} loss...")
 	
@@ -301,17 +356,6 @@ def save_results_and_visualizations(results):
 	train_f1_means = train_all_f1_scores.mean(axis=0)
 	f1_gap = train_f1_means - val_f1_means
 	
-	# Compute average confusion matrices
-	avg_conf_matrix = np.zeros((num_states, num_states))
-	for pred in val_all_predictions:
-		avg_conf_matrix += confusion_matrix(B_val_1, pred, labels=state_labels)
-	avg_conf_matrix /= len(val_all_predictions)
-	
-	train_avg_conf_matrix = np.zeros((num_states, num_states))
-	for pred in train_all_predictions:
-		train_avg_conf_matrix += confusion_matrix(B_train_1, pred, labels=state_labels)
-	train_avg_conf_matrix /= len(train_all_predictions)
-	
 	### Create comprehensive train/validation comparison visualizations
 	fig = plt.figure(figsize=(24, 16))
 	fig.suptitle(f'{loss_type} Loss Results', fontsize=18, fontweight='bold', y=1.02)
@@ -331,8 +375,8 @@ def save_results_and_visualizations(results):
 	ax0.legend()
 	ax0.grid(True, alpha=0.3, axis='y')
 	for i, (tc, vc) in enumerate(zip(train_counts, val_counts)):
-		ax0.annotate(f'{100*tc/total_train:.1f}%', (i - width/2, tc), ha='center', va='bottom', fontsize=8)
-		ax0.annotate(f'{100*vc/total_val:.1f}%', (i + width/2, vc), ha='center', va='bottom', fontsize=8)
+		ax0.annotate(f'{100*tc/total_train_avg:.1f}%', (i - width/2, tc), ha='center', va='bottom', fontsize=8)
+		ax0.annotate(f'{100*vc/total_val_avg:.1f}%', (i + width/2, vc), ha='center', va='bottom', fontsize=8)
 	
 	# 1. Train vs Validation accuracy comparison boxplot
 	ax1 = plt.subplot(2, 4, 2)
@@ -450,7 +494,7 @@ def save_results_and_visualizations(results):
 	sns.boxplot(y=val_acc_list, ax=ax1t, color='skyblue')
 	ax1t.axhline(y=val_acc_list.mean(), color='red', linestyle='--', label=f'Mean: {val_acc_list.mean():.3f}')
 	ax1t.set_ylabel('Accuracy', fontsize=12)
-	ax1t.set_title('Overall Decoder Accuracy Distribution\n(10 runs, validation)', fontsize=14, fontweight='bold')
+	ax1t.set_title(f'Overall Decoder Accuracy Distribution\n({len(val_acc_list)} runs, validation)', fontsize=14, fontweight='bold')
 	ax1t.legend()
 	ax1t.grid(True, alpha=0.3)
 	
@@ -500,11 +544,18 @@ def save_results_and_visualizations(results):
 	for state_idx, state_label in enumerate(state_labels):
 		state_precisions = []
 		state_recalls = []
-		for pred in val_all_predictions:
-			prec = precision_score(B_val_1, pred, labels=[state_label], average='macro', zero_division=0)
-			rec = recall_score(B_val_1, pred, labels=[state_label], average='macro', zero_division=0)
-			state_precisions.append(prec)
-			state_recalls.append(rec)
+		for pred, true_labels in zip(val_all_predictions, val_true_labels):
+			true_arr = np.asarray(true_labels, dtype=np.int64).ravel()
+			pred_arr = np.asarray(pred, dtype=np.int64).ravel()
+			prec_arr, rec_arr, _, _ = precision_recall_fscore_support(
+				true_arr,
+				pred_arr,
+				labels=state_labels,
+				zero_division=0,
+				average=None,
+			)
+			state_precisions.append(prec_arr[state_idx])
+			state_recalls.append(rec_arr[state_idx])
 		avg_precision.append(np.mean(state_precisions))
 		avg_recall.append(np.mean(state_recalls))
 		avg_f1.append(np.mean(val_all_f1_scores[:, state_idx]))
@@ -551,9 +602,9 @@ def save_results_and_visualizations(results):
 		print(f"  Train F1:   {train_f1_means[state_idx]:.3f} ± {train_f1_stds[state_idx]:.3f}")
 		print(f"  Validation F1:    {val_f1_means[state_idx]:.3f} ± {state_f1_stds[state_idx]:.3f}")
 		print(f"  Gap:        {f1_gap[state_idx]:.3f}")
-		train_count = np.sum(B_train_1 == state_label)
-		val_count = np.sum(B_val_1 == state_label)
-		print(f"  Train/Validation samples: {train_count} / {val_count}")
+		train_count = train_label_counts.get(state_label, 0)
+		val_count = val_label_counts.get(state_label, 0)
+		print(f"  Train/Validation samples (avg per fold): {train_count:.1f} / {val_count:.1f}")
 	print("\n" + "="*60)
 	
 	plt.close('all')
@@ -709,9 +760,10 @@ print(f"Saved weighted vs unweighted comparison to {output_dir}/")
 ### Estimating the chance accuracy of behaviour decoding
 print("\nEstimating chance accuracy...")
 chance_acc = np.zeros(500)
+all_val_labels_for_chance = np.concatenate([split[3] for split in cv_splits])
 for i, _ in enumerate(chance_acc):
-	B_perm = np.random.choice(B_val_1, size=B_val_1.shape)
-	chance_acc[i] = accuracy_score(B_perm, B_val_1)
+	B_perm = np.random.choice(all_val_labels_for_chance, size=all_val_labels_for_chance.shape)
+	chance_acc[i] = accuracy_score(B_perm, all_val_labels_for_chance)
 print(f'Chance prediction accuracy: {chance_acc.mean():.3f} ± {chance_acc.std():.3f}')
 np.savetxt(os.path.join(output_dir, f'acc_list_chance_{session_dir}.txt'), chance_acc)
 
