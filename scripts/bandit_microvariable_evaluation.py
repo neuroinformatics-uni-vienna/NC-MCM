@@ -28,9 +28,9 @@ from ncmcm.bundlenet.utils import prep_data, timeseries_train_test_split_cv
 # ---------------------------------------------------------------------------
 
 WINDOW_SIZE = 60               # Sliding window length for prep_data
-NUM_DECODER_RUNS = 5          # Number of decoder trainings per CV fold
+NUM_DECODER_RUNS = 10          # Number of decoder trainings per CV fold
 TRAIN_EPOCHS = 100             # SGD epochs per decoder
-NUM_OF_SPLITS = 7                # Number of CV splits (time series)
+NUM_OF_SPLITS = 9                # Number of CV splits (time series)
 
 # Get session directory from command line argument
 data_path = sys.argv[1]  # e.g., 'JPAS_0023_20230922'
@@ -41,11 +41,11 @@ print(f"Loading data from: {data_path}")
 
 data = BanditTaskNeuroPixelsDataset(
     data_path=data_path,
-    downsample_fs=25,  # Downsample to 30 Hz
+    downsample_fs=20, 
     downsample_method='count',
     good_neurons_only=True,
     normalize_method='minmax_global',
-    state_transitions=None #BanditTaskNeuroPixelsDataset.CHOOSING_TO_REWARD_TRANSITIONS
+    state_transitions=BanditTaskNeuroPixelsDataset.CHOOSING_TO_REWARD_TRANSITIONS
 )
 
 # Extract neuronal and behavioral data (handle sparse matrices)
