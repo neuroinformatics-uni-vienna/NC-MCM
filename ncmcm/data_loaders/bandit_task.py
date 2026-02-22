@@ -21,12 +21,23 @@ class BanditTaskNeuroPixelsDataset:
         ("hold", "choosing right"): "hold --> choosing right"
     }
     
-    CHOOSING_TO_REWARD_TRANSITIONS = {
+    CHOOSING_TO_OUTCOME_TRANSITIONS = {
         ("choosing left", "reward"): "choosing left --> reward",
         ("choosing left", "no reward"): "choosing left --> no reward",
         ("choosing right", "reward"): "choosing right --> reward",
         ("choosing right", "no reward"): "choosing right --> no reward"
     }
+    
+    CHOOSING_TO_CORRECTNESS_TRANSITIONS = {
+        ("choosing left", "reward"): "choosing reward",
+        ("choosing left", "no reward"): "choosing no reward",
+        ("choosing right", "reward"): "choosing reward",
+        ("choosing right", "no reward"): "choosing no reward"
+    }
+    
+    # Backward compatibility aliases (deprecated names retained for existing scripts)
+    CHOOSING_TO_REWARD_TRANSITIONS = CHOOSING_TO_OUTCOME_TRANSITIONS
+    CHOOSING_TO_REWARD_2_TRANSITIONS = CHOOSING_TO_CORRECTNESS_TRANSITIONS
     
     # Default valid state transition map for the bandit task
     # Maps each state to a list of valid next states
@@ -61,10 +72,18 @@ class BanditTaskNeuroPixelsDataset:
         "choosing left --> no reward": "#172E25", # dark green - left choice not rewarded
         "choosing right --> reward": "#3498db",    # Green - right choice rewarded
         "choosing right --> no reward": "#e74c3c", # dark green - right choice not rewarded
+
+        "choosing reward": "#1ad367",   # Green - correct choice (rewarded)
+        "choosing no reward": "#e74c3c",  # dark green - wrong choice (not rewarded)
+
+        "choosing correct": "#3498db",   # Green - correct choice (irrespective of side)
+        "choosing wrong": "#e74c3c",     # Dark green - incorrect choice (irrespective of side)
     }
       
     
-    def __init__(self, data_path, downsample_fs=None, downsample_method='count', good_neurons_only=True, state_transitions=None, gaussian_sigma_ms=25.0, normalize_method=None, recompute_cache=False):
+    def __init__(self, data_path, downsample_fs=None, downsample_method='count', good_neurons_only=True,
+                 state_transitions=None, gaussian_sigma_ms=25.0, normalize_method=None,
+                 choosing_state_mode='side', recompute_cache=False):
         """
         Initialize dataset with flexible spike representation options.
 
@@ -89,6 +108,9 @@ class BanditTaskNeuroPixelsDataset:
                              'None': No normalization
                              'minmax': Min-max scaling to [0, 1] per neuron (each neuron scaled independently)
                              'minmax_global': Min-max scaling to [0, 1] using global min/max across all neurons
+            choosing_state_mode: How to represent the "choosing" behavioural state. Options:
+                'side' (default) splits into "choosing left"/"choosing right" based on the actual choice.
+                'correctness' labels choices as "choosing correct"/"choosing wrong" using the current block's better arm.
             recompute_cache: If True, ignore any cached dataset and rebuild it (default: False).
             
         Attributes after loading:
@@ -118,6 +140,10 @@ class BanditTaskNeuroPixelsDataset:
         self.state_transitions = state_transitions if state_transitions is not None else {}
         self.gaussian_sigma_ms = gaussian_sigma_ms
         self.normalize_method = normalize_method
+        mode = (choosing_state_mode or 'side').lower()
+        if mode not in ('side', 'correctness'):
+            raise ValueError("choosing_state_mode must be 'side' or 'correctness'")
+        self.choosing_state_mode = mode
         self.recompute_cache = recompute_cache
         # Store original parameters for cache key (before any adjustments)
         self._original_downsample_fs = downsample_fs
@@ -276,10 +302,13 @@ class BanditTaskNeuroPixelsDataset:
                 # Check if we already have a combined state for this transition
                 transition_key = (state1_id, state2_id)
                 if transition_key not in transition_id_mapping:
-                    combined_state_id = next_state_id
+                    combined_state_id = state_name_to_id.get(combined_name)
+                    if combined_state_id is None:
+                        combined_state_id = next_state_id
+                        state_name_to_id[combined_name] = combined_state_id
+                        combined_state_labels[combined_state_id] = combined_name
+                        next_state_id += 1
                     transition_id_mapping[transition_key] = combined_state_id
-                    combined_state_labels[combined_state_id] = combined_name
-                    next_state_id += 1
         
         # Process the state array to identify and merge transitions
         new_state_array = b_dense.copy()
@@ -723,6 +752,7 @@ class BanditTaskNeuroPixelsDataset:
         """
         trials = metrics['metrics']['trials']
         states = metrics['metrics']['states']
+        blocks = metrics['metrics'].get('blocks', [])
 
         # Find the last timestamp in behavioral time (ms)
         max_trial_time = max([t.get('t chosen', 0) for t in trials if 't chosen' in t], default=0)
@@ -736,11 +766,16 @@ class BanditTaskNeuroPixelsDataset:
             if state_name not in unique_state_names:
                 unique_state_names.append(state_name)
 
-        # Handle "choosing" state specially - split into "choosing left" and "choosing right"
+        # Handle "choosing" state specially based on representation preference
         if "choosing" in unique_state_names:
             unique_state_names.remove("choosing")
-            unique_state_names.append("choosing left")
-            unique_state_names.append("choosing right")
+            for name in ("choosing left", "choosing right"):
+                if name not in unique_state_names:
+                    unique_state_names.append(name)
+            if self.choosing_state_mode == 'correctness':
+                for name in ("choosing correct", "choosing wrong"):
+                    if name not in unique_state_names:
+                        unique_state_names.append(name)
 
         state_name_to_id = {name: idx for idx, name in enumerate(unique_state_names)}
         state_labels = {idx: name for name, idx in state_name_to_id.items()}
@@ -748,13 +783,38 @@ class BanditTaskNeuroPixelsDataset:
         # Initialize state array in behavioral time (milliseconds)
         state_array_ms = np.zeros(last_timestamp_ms + 1, dtype=np.int8)
 
-        # Create a mapping from trial start time to choice (l or r)
-        trial_choice_map = {}
+        # Precompute trial windows (start, end, choice)
+        trial_windows = []
         for trial in trials:
             start_time = trial.get('start')
+            end_time = trial.get('t chosen')
             choice = trial.get('choice', '').lower()
-            if start_time is not None:
-                trial_choice_map[start_time] = choice
+            if start_time is None or end_time is None or choice not in ['l', 'r']:
+                continue
+            trial_windows.append((start_time, end_time, choice))
+        trial_windows.sort(key=lambda t: t[0])
+
+        # Create a mapping from behavioral time to "better" side (l/r) based on block labels
+        block_side_ms = None
+        if self.choosing_state_mode == 'correctness' and blocks:
+            block_side_ms = np.full(last_timestamp_ms + 1, None, dtype=object)
+            sorted_blocks = sorted(blocks, key=lambda b: b.get('t', 0))
+            for block_idx, block in enumerate(sorted_blocks):
+                start_time = block.get('t')
+                if start_time is None:
+                    continue
+                if block_idx < len(sorted_blocks) - 1:
+                    end_time = sorted_blocks[block_idx + 1].get('t', last_timestamp_ms)
+                else:
+                    end_time = last_timestamp_ms
+                label = str(block.get('block', '')).lower()
+                if 'left' in label:
+                    better_side = 'l'
+                elif 'right' in label:
+                    better_side = 'r'
+                else:
+                    better_side = None
+                block_side_ms[start_time:end_time + 1] = better_side
 
         # Apply states from metrics.json to behavioral time array
         for i in range(len(states)):
@@ -767,25 +827,33 @@ class BanditTaskNeuroPixelsDataset:
             else:
                 next_state_time = last_timestamp_ms + 1
 
-            # Handle "choosing" state: determine if left or right based on trial choice
+            # Handle "choosing" state
             if state_name == "choosing":
-                # Find the trial that contains this state time
                 trial_choice = None
-                for trial in trials:
-                    trial_start = trial.get('start')
-                    trial_end = trial.get('t chosen')
-                    if trial_start is not None and trial_end is not None:
-                        if trial_start <= state_time < trial_end:
-                            trial_choice = trial.get('choice', '').lower()
-                            break
-                
-                # Determine state name based on choice
-                if trial_choice == 'r':
-                    state_name = "choosing right"
-                elif trial_choice == 'l':
-                    state_name = "choosing left"
+                for trial_start, trial_end, choice in trial_windows:
+                    if trial_start <= state_time < trial_end:
+                        trial_choice = choice
+                        break
+
+                if self.choosing_state_mode == 'correctness':
+                    better_side = None
+                    if block_side_ms is not None and state_time <= last_timestamp_ms:
+                        better_side = block_side_ms[state_time]
+                    if trial_choice in ['l', 'r'] and better_side in ['l', 'r']:
+                        state_name = "choosing correct" if trial_choice == better_side else "choosing wrong"
+                    elif trial_choice == 'l':
+                        state_name = "choosing left"
+                    elif trial_choice == 'r':
+                        state_name = "choosing right"
+                    else:
+                        state_name = "choosing left"
                 else:
-                    state_name = "choosing left"  # Default fallback
+                    if trial_choice == 'r':
+                        state_name = "choosing right"
+                    elif trial_choice == 'l':
+                        state_name = "choosing left"
+                    else:
+                        state_name = "choosing left"  # Default fallback
 
             state_id = state_name_to_id[state_name]
             state_array_ms[state_time:next_state_time] = state_id
@@ -1156,7 +1224,8 @@ class BanditTaskNeuroPixelsDataset:
             'good_neurons_only': self.good_neurons_only,
             'state_transitions': str(sorted(self.state_transitions.items())) if self.state_transitions else 'None',
             'gaussian_sigma_ms': self.gaussian_sigma_ms,
-            'normalize_method': self.normalize_method
+            'normalize_method': self.normalize_method,
+            'choosing_state_mode': self.choosing_state_mode
         }
         
         # Create a string representation of parameters
@@ -1217,7 +1286,8 @@ class BanditTaskNeuroPixelsDataset:
                     'good_neurons_only': self.good_neurons_only,
                     'state_transitions': self.state_transitions,
                     'gaussian_sigma_ms': self.gaussian_sigma_ms,
-                    'normalize_method': self.normalize_method
+                    'normalize_method': self.normalize_method,
+                    'choosing_state_mode': self.choosing_state_mode
                 }
             }
             
@@ -1258,7 +1328,8 @@ class BanditTaskNeuroPixelsDataset:
             if cached_params.get('downsample_fs') != self._original_downsample_fs or \
                cached_params.get('downsample_method') != self.downsample_method or \
                cached_params.get('good_neurons_only') != self.good_neurons_only or \
-               cached_params.get('normalize_method') != self.normalize_method:
+               cached_params.get('normalize_method') != self.normalize_method or \
+               cached_params.get('choosing_state_mode', self.choosing_state_mode) != self.choosing_state_mode:
                 print("Warning: Cached parameters mismatch, reprocessing data...")
                 return False
             
@@ -1275,6 +1346,7 @@ class BanditTaskNeuroPixelsDataset:
             self.fs = cache_data['fs']
             # Update downsample_fs to the actual value (may be slightly adjusted)
             self.downsample_fs = cache_data['params'].get('actual_downsample_fs', self.fs)
+            self.choosing_state_mode = cache_data['params'].get('choosing_state_mode', self.choosing_state_mode)
             
             print(f"Successfully loaded cached dataset")
             print(f"Neuronal data shape: {self.x.shape}, Behavioral data shape: {self.b.shape}, Sampling frequency: {self.fs} Hz")
