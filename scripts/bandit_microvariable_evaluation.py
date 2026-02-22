@@ -30,7 +30,7 @@ from ncmcm.bundlenet.utils import prep_data, timeseries_train_test_split_cv
 WINDOW_SIZE = 60               # Sliding window length for prep_data
 NUM_DECODER_RUNS = 10          # Number of decoder trainings per CV fold
 TRAIN_EPOCHS = 100             # SGD epochs per decoder
-NUM_OF_SPLITS = 9                # Number of CV splits (time series)
+NUM_OF_SPLITS = 9              # Number of CV splits (time series)
 
 # Get session directory from command line argument
 data_path = sys.argv[1]  # e.g., 'JPAS_0023_20230922'
@@ -44,8 +44,8 @@ data = BanditTaskNeuroPixelsDataset(
     downsample_fs=20, 
     downsample_method='count',
     good_neurons_only=True,
-    normalize_method='minmax_global',
-    state_transitions=BanditTaskNeuroPixelsDataset.CHOOSING_TO_REWARD_TRANSITIONS
+	normalize_method='minmax_global',
+	state_transitions=BanditTaskNeuroPixelsDataset.CHOOSING_TO_CORRECTNESS_TRANSITIONS
 )
 
 # Extract neuronal and behavioral data (handle sparse matrices)
@@ -225,10 +225,10 @@ def train_and_evaluate_decoders(use_weighted_loss=False, suffix=""):
 
 		for _ in tqdm(np.arange(NUM_DECODER_RUNS), desc=f'Training decoders ({loss_type}) - fold {fold_idx + 1}', leave=False):
 			# Define model
-			input_dim = X1_tr.shape[1] * X1_tr.shape[2]
+			input_dim = X1_tr.shape[1] * X1_tr.shape[2] # Flattened input dimension (neurons * window_size)
 			b_predictor = nn.Sequential(
-				nn.Flatten(),
-				nn.Linear(input_dim, num_states)
+				nn.Flatten(),	# Flatten (batch_size, neurons, window) -> (batch_size, neurons*window)
+				nn.Linear(input_dim, num_states) 	# Output logits for each behavioral state
 			).to(device)
 			
 			# Define optimizer and loss

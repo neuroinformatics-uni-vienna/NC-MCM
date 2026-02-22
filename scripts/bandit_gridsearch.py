@@ -35,8 +35,8 @@ def parse_args():
                         choices=['true', 'false'],
                         help='Use only good neurons: true or false (can specify multiple for grid search, e.g., true false)')
     parser.add_argument('--apply_hold_transitions', type=str, nargs='+', default=['none'],
-                        choices=['none', 'HOLD_TO_CHOOSING_TRANSITIONS', 'CHOOSING_TO_REWARD_TRANSITIONS'],
-                        help='State transition mapping to apply: none, HOLD_TO_CHOOSING_TRANSITIONS, or CHOOSING_TO_REWARD_TRANSITIONS (can specify multiple for grid search)')
+                        choices=['none', 'HOLD_TO_CHOOSING_TRANSITIONS', 'CHOOSING_TO_OUTCOME_TRANSITIONS', 'CHOOSING_TO_CORRECTNESS_TRANSITIONS'],
+                        help='State transition mapping to apply: none, HOLD_TO_CHOOSING_TRANSITIONS, CHOOSING_TO_OUTCOME_TRANSITIONS, or CHOOSING_TO_CORRECTNESS_TRANSITIONS (can specify multiple for grid search)')
     parser.add_argument('--normalize_method', type=str, nargs='+', default=['None'],
                         choices=['None', 'minmax', 'minmax_global'],
                         help='Normalization method: None, minmax (per-neuron), or minmax_global (can specify multiple for grid search)')
@@ -184,12 +184,22 @@ def load_data(data_path, downsample_fs, downsample_method, good_neurons_only, ap
     # Determine state_transitions parameter
     transition_lookup = {
         'none': None,
-        'false': None,  # backward compatibility
+        'false': None,  # backward compatibility for boolean flags
         'true': BanditTaskNeuroPixelsDataset.HOLD_TO_CHOOSING_TRANSITIONS,
         'hold_to_choosing_transitions': BanditTaskNeuroPixelsDataset.HOLD_TO_CHOOSING_TRANSITIONS,
-        'choosing_to_reward_transitions': BanditTaskNeuroPixelsDataset.CHOOSING_TO_REWARD_TRANSITIONS,
         'HOLD_TO_CHOOSING_TRANSITIONS': BanditTaskNeuroPixelsDataset.HOLD_TO_CHOOSING_TRANSITIONS,
-        'CHOOSING_TO_REWARD_TRANSITIONS': BanditTaskNeuroPixelsDataset.CHOOSING_TO_REWARD_TRANSITIONS,
+
+        # Descriptive transition sets
+        'choosing_to_outcome_transitions': BanditTaskNeuroPixelsDataset.CHOOSING_TO_OUTCOME_TRANSITIONS,
+        'CHOOSING_TO_OUTCOME_TRANSITIONS': BanditTaskNeuroPixelsDataset.CHOOSING_TO_OUTCOME_TRANSITIONS,
+        'choosing_to_correctness_transitions': BanditTaskNeuroPixelsDataset.CHOOSING_TO_CORRECTNESS_TRANSITIONS,
+        'CHOOSING_TO_CORRECTNESS_TRANSITIONS': BanditTaskNeuroPixelsDataset.CHOOSING_TO_CORRECTNESS_TRANSITIONS,
+
+        # Backward compatibility aliases for deprecated names
+        'choosing_to_reward_transitions': BanditTaskNeuroPixelsDataset.CHOOSING_TO_OUTCOME_TRANSITIONS,
+        'CHOOSING_TO_REWARD_TRANSITIONS': BanditTaskNeuroPixelsDataset.CHOOSING_TO_OUTCOME_TRANSITIONS,
+        'choosing_to_reward_2_transitions': BanditTaskNeuroPixelsDataset.CHOOSING_TO_CORRECTNESS_TRANSITIONS,
+        'CHOOSING_TO_REWARD_2_TRANSITIONS': BanditTaskNeuroPixelsDataset.CHOOSING_TO_CORRECTNESS_TRANSITIONS,
     }
 
     transition_key = (apply_hold_transitions or 'none')
