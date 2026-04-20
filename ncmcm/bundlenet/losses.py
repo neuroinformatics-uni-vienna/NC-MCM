@@ -4,6 +4,7 @@ Akshey Kumar
 Vittorio Boarini
 """
 
+import math
 import torch
 
 
@@ -48,9 +49,11 @@ class BccDccLoss:
         tuple: A tuple containing the DCC loss, behavior loss, and total loss.
     """
 
-    def __init__(self, b_type, gamma):
+    def __init__(self, b_type, gamma, n_classes=None, alpha=0.5):
         self.b_type = b_type
         self.gamma = gamma
+        self.n_classes = n_classes
+        self.alpha = alpha
 
         if b_type == 'discrete':
             self.loss_functions = {
@@ -62,13 +65,37 @@ class BccDccLoss:
                 'd_loss_func': torch.nn.MSELoss(),
                 'b_loss_func': torch.nn.MSELoss()
             }
+        elif b_type == 'hybrid':
+            if n_classes is None:
+                raise ValueError(
+                    "b_type='hybrid' requires n_classes to be specified. "
+                    "Pass n_classes=<number of discrete classes> to BccDccLoss."
+                )
+            self._ce_norm = math.log(n_classes)  # normalise CE to ~[0,1] scale
+            self.loss_functions = {
+                'd_loss_func': torch.nn.MSELoss(),
+                'b_loss_func_discrete': torch.nn.CrossEntropyLoss(),
+                'b_loss_func_continuous': torch.nn.MSELoss()
+            }
         else:
-            raise ValueError('Unknown loss type')
+            raise ValueError(f"Unknown b_type '{b_type}'. Must be 'discrete', 'continuous', or 'hybrid'.")
 
     def __call__(self, yt1_upper, yt1_lower, bt1_upper, b_train_1):
         DCC_loss = self.loss_functions['d_loss_func'](yt1_upper, yt1_lower)
         if self.b_type == 'discrete':
             behaviour_loss = self.loss_functions['b_loss_func'](bt1_upper, b_train_1.long())
+        elif self.b_type == 'hybrid':
+            # bt1_upper: (batch, n_classes + n_continuous)
+            # b_train_1: (batch, 1 + n_continuous) — col 0 = class index (float), cols 1+ = continuous targets
+            logits   = bt1_upper[:, :self.n_classes]            # (batch, n_classes)
+            cont_pred = bt1_upper[:, self.n_classes:]           # (batch, n_continuous)
+            disc_loss = self.loss_functions['b_loss_func_discrete'](
+                logits, b_train_1[:, 0].long()
+            ) / self._ce_norm                                   # normalise CE to ~[0,1]
+            cont_loss = self.loss_functions['b_loss_func_continuous'](
+                cont_pred, b_train_1[:, 1:].float()
+            )
+            behaviour_loss = self.alpha * disc_loss + (1 - self.alpha) * cont_loss
         else:
             behaviour_loss = self.loss_functions['b_loss_func'](b_train_1.float(), bt1_upper)
         total_loss = self.gamma * DCC_loss + (1 - self.gamma) * behaviour_loss

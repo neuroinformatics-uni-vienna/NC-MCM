@@ -14,7 +14,8 @@ import gc
 from ncmcm.data_loaders.bandit_task import BanditTaskNeuroPixelsDataset
 from ncmcm.bundlenet.bundlenet import BunDLeNet, train_model, project_into_latent_space, project_into_latent_space_lazy
 from ncmcm.bundlenet.utils import (prep_data, timeseries_train_test_split, prep_data_lazy, timeseries_train_test_split_lazy,
-                                     timeseries_train_test_split_cv, timeseries_train_test_split_cv_lazy)
+                                     timeseries_train_test_split_cv, timeseries_train_test_split_cv_lazy, make_hybrid_b)
+from sklearn.preprocessing import LabelEncoder
 from ncmcm.visualisers.neuronal_behavioural import plotting_neuronal_behavioural_plotly
 from ncmcm.visualisers.latent_space import LatentSpaceVisualiser
 
@@ -85,6 +86,19 @@ def parse_args():
     # Cross-validation
     parser.add_argument('--cv_folds', type=int, default=None,
                         help='Number of cross-validation folds. If not specified, uses single train/test split.')
+    
+    # Behaviour type
+    parser.add_argument('--b_type', type=str, nargs='+', default=['discrete'],
+                        choices=['discrete', 'continuous', 'hybrid'],
+                        help='Type of behaviour variable for BunDLeNet loss (can specify multiple for grid search)')
+    
+    # HGF parameters (used when b_type contains hybrid)
+    parser.add_argument('--hgf_model', type=str, default='binary2',
+                        help='HGF model variant to use for belief computation (e.g. binary2, binary3)')
+    parser.add_argument('--hgf_column', type=str, default='x_1_expected_mean',
+                        help='HGF output column to use as continuous behaviour signal')
+    parser.add_argument('--alpha', type=float, nargs='+', default=[0.5],
+                        help='Discrete CE weight in hybrid loss: alpha*CE + (1-alpha)*MSE. Can specify multiple for grid search.')
     
     return parser.parse_args()
 
@@ -179,7 +193,8 @@ def save_comprehensive_config(args, params, output_dir, execution_time, executio
     print(f"Comprehensive configuration saved to {config_path}")
 
 
-def load_data(data_path, downsample_fs, downsample_method, good_neurons_only, apply_hold_transitions='none', normalize_method='none'):
+def load_data(data_path, downsample_fs, downsample_method, good_neurons_only, apply_hold_transitions='none', normalize_method='none',
+              hgf_model=None, hgf_column=None):
     """Load and prepare dataset"""
     # Determine state_transitions parameter
     transition_lookup = {
@@ -227,7 +242,8 @@ def load_data(data_path, downsample_fs, downsample_method, good_neurons_only, ap
         downsample_method=downsample_method,
         good_neurons_only=good_neurons_only,
         state_transitions=state_transitions,
-        normalize_method=norm_method
+        normalize_method=norm_method,
+        **(dict(hgf_model=hgf_model, hgf_column=hgf_column) if hgf_model is not None else {})
     )
     # Use float32 to reduce memory usage by 50%
     x = dataset.x.T.toarray().astype(np.float32)
@@ -235,6 +251,7 @@ def load_data(data_path, downsample_fs, downsample_method, good_neurons_only, ap
     b_labels = dataset.b_labels
     b_colors = dataset.get_color_map_for_plotting()
     b_colors_rgb = dataset.get_rgb_colors_for_visualizer()
+    hgf_beliefs = getattr(dataset, 'hgf_beliefs', None)  # None if HGF was not loaded
     
     # Free memory from dataset object (contains large sparse matrices)
     del dataset
@@ -243,7 +260,7 @@ def load_data(data_path, downsample_fs, downsample_method, good_neurons_only, ap
     print(f"Data shapes - x: {x.shape}, b: {b.shape}")
     print(f"behaviour labels: {b_labels}")
     
-    return x, b, b_labels, b_colors, b_colors_rgb
+    return x, b, b_labels, b_colors, b_colors_rgb, hgf_beliefs
 
 
 def preprocess_data(x, b, window, lazy_loading=False, cv_folds=None):
@@ -310,11 +327,23 @@ def project_latent_space(x_data, model, lazy_loading=False):
         return project_into_latent_space(x_data, model)
 
 
-def train_bundlenet(x_train, b_train, x_test, b_test, x_shape, args, output_dir):
+def train_bundlenet(x_train, b_train, x_test, b_test, x_shape, args, output_dir, n_classes=None):
     """Train BunDLeNet model"""
     print("Initializing BunDLeNet model...")
-    
-    num_behaviour = len(np.unique(b_train)) # Assuming discrete behaviour
+
+    b_type = getattr(args, 'b_type', 'discrete')
+    alpha = getattr(args, 'alpha', 0.5)
+
+    if b_type == 'hybrid':
+        if n_classes is None:
+            raise ValueError("n_classes must be provided for b_type='hybrid'")
+        # Output head: n_classes logits + n_continuous outputs (cols 1+ of b_train)
+        n_continuous = b_train.shape[1] - 1
+        num_behaviour = n_classes + n_continuous
+    elif b_type == 'continuous':
+        num_behaviour = b_train.shape[1] if b_train.ndim > 1 else 1
+    else:  # discrete
+        num_behaviour = len(np.unique(b_train))
     
     model = BunDLeNet(
         latent_dim=args.latent_dim,
@@ -323,19 +352,21 @@ def train_bundlenet(x_train, b_train, x_test, b_test, x_shape, args, output_dir)
     )
     
     device = torch.device(args.device)
-    print(f"Training on {device} for {args.n_epochs} epochs...")
+    print(f"Training on {device} for {args.n_epochs} epochs (b_type='{b_type}')...")
     
     loss_array, test_loss_array = train_model(
         x_train,
         b_train,
         model,
-        b_type='discrete',
+        b_type=b_type,
         gamma=args.gamma,
         learning_rate=args.learning_rate,
         batch_size=args.batch_size,
         n_epochs=args.n_epochs,
         device=device,
-        validation_data=(x_test, b_test)
+        validation_data=(x_test, b_test),
+        n_classes=n_classes,
+        alpha=alpha,
     )
     
     # Save model
@@ -518,7 +549,9 @@ def generate_param_combinations(args):
         'latent_dim': args.latent_dim,
         'batch_size': args.batch_size,
         'learning_rate': args.learning_rate,
-        'gamma': args.gamma
+        'gamma': args.gamma,
+        'b_type': args.b_type,
+        'alpha': args.alpha,
     }
     
     # Generate all combinations
@@ -633,7 +666,7 @@ def update_grid_search_summary(summary_path, run_idx, params, result):
     print(f"Summary updated: {summary['completed_runs']}/{summary['total_runs']} completed, {summary['failed_runs']} failed")
 
 
-def run_single_fold(fold_idx, x_train, x_test, b_train, b_test, x_shape, b_labels, b_colors_rgb, args, fold_dir, run_start_time):
+def run_single_fold(fold_idx, x_train, x_test, b_train, b_test, x_shape, b_labels, b_colors_rgb, args, fold_dir, run_start_time, n_classes=None):
     """Train and evaluate model on a single fold
     
     Returns:
@@ -646,7 +679,7 @@ def run_single_fold(fold_idx, x_train, x_test, b_train, b_test, x_shape, b_label
     # Train model
     step_start = time.time()
     model, loss_array, test_loss_array = train_bundlenet(
-        x_train, b_train, x_test, b_test, x_shape, args, fold_dir
+        x_train, b_train, x_test, b_test, x_shape, args, fold_dir, n_classes=n_classes
     )
     print_step_time(f"Fold {fold_idx} - Model training", run_start_time, step_start)
     
@@ -781,8 +814,31 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
     
     # Load data
     step_start = time.time()
-    x, b, b_labels, b_colors, b_colors_rgb = load_data(args.data_path, args.downsample_fs, args.downsample_method, args.good_neurons_only, args.apply_hold_transitions, args.normalize_method)
+    b_type = getattr(args, 'b_type', 'discrete')
+    x, b, b_labels, b_colors, b_colors_rgb, hgf_beliefs = load_data(
+        args.data_path, args.downsample_fs, args.downsample_method, args.good_neurons_only,
+        args.apply_hold_transitions, args.normalize_method,
+        hgf_model=args.hgf_model if b_type == 'hybrid' else None,
+        hgf_column=args.hgf_column if b_type == 'hybrid' else None,
+    )
     print_step_time("Data loading", run_start_time, step_start)
+    
+    # Encode behaviour labels and optionally build hybrid b array
+    label_encoder = LabelEncoder()
+    b_encoded = label_encoder.fit_transform(b)   # int64 class indices
+    n_classes = len(np.unique(b_encoded))
+
+    if b_type == 'hybrid':
+        if hgf_beliefs is None:
+            raise ValueError(
+                "b_type='hybrid' requires HGF beliefs but the dataset returned none. "
+                "Pass --hgf_model and --hgf_column to enable HGF loading."
+            )
+        b_for_bundlenet = make_hybrid_b(b_encoded, hgf_beliefs)
+        print(f"Hybrid b array shape: {b_for_bundlenet.shape} (col 0 = class index, cols 1+ = continuous)")
+    else:
+        b_for_bundlenet = b_encoded
+        n_classes = None  # not needed for non-hybrid
     
     # Visualize raw data
     step_start = time.time()
@@ -791,7 +847,7 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
     
     # Preprocess data
     step_start = time.time()
-    preprocess_result = preprocess_data(x, b, args.window, lazy_loading=args.lazy_loading, cv_folds=args.cv_folds)
+    preprocess_result = preprocess_data(x, b_for_bundlenet, args.window, lazy_loading=args.lazy_loading, cv_folds=args.cv_folds)
     
     if args.cv_folds is not None:
         x_, b_, splits = preprocess_result
@@ -801,7 +857,7 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
         print_step_time("Data preprocessing", run_start_time, step_start)
     
     # Free memory from original arrays
-    del x, b
+    del x, b, b_for_bundlenet
     
     # Cross-validation or single run
     if args.cv_folds is not None:
@@ -820,7 +876,7 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
             # Run fold experiment
             fold_metrics = run_single_fold(
                 fold_idx, x_train, x_test, b_train, b_test, x_.shape,
-                b_labels, b_colors_rgb, args, fold_dir, run_start_time
+                b_labels, b_colors_rgb, args, fold_dir, run_start_time, n_classes=n_classes
             )
             fold_metrics_list.append(fold_metrics)
         
@@ -864,7 +920,7 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
         # Train model
         step_start = time.time()
         model, loss_array, test_loss_array = train_bundlenet(
-            x_train, b_train, x_test, b_test, x_.shape, args, output_dir
+            x_train, b_train, x_test, b_test, x_.shape, args, output_dir, n_classes=n_classes
         )
         print_step_time("Model training", run_start_time, step_start)
         

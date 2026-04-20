@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from ncmcm.data_loaders.bandit_task import BanditTaskNeuroPixelsDataset
 from ncmcm.bundlenet.bundlenet import BunDLeNet, train_model, project_into_latent_space
-from ncmcm.bundlenet.utils import prep_data
+from ncmcm.bundlenet.utils import prep_data, make_hybrid_b
 from ncmcm.visualisers.neuronal_behavioural import plotting_neuronal_behavioural
 from ncmcm.visualisers.latent_space import LatentSpaceVisualiser
 from sklearn.preprocessing import LabelEncoder
@@ -42,6 +42,29 @@ B_encoded = label_encoder.fit_transform(B)
 X_, B_ = prep_data(X, B_encoded, win=50)
 
 print(f"Prepared data shape: X_={X_.shape}, B_={B_.shape}")
+
+# ── Hybrid mode example ──────────────────────────────────────────────────────
+# Uncomment the block below to train with joint discrete + continuous behaviour.
+# Requires that dataset.hgf_beliefs has been computed (pass hgf_model / hgf_column
+# to BanditTaskNeuroPixelsDataset to enable it).
+#
+# n_classes = len(dataset.b_labels_dict)          # number of discrete classes
+# B_hybrid = make_hybrid_b(B_encoded, dataset.hgf_beliefs)  # (T, 1 + n_continuous)
+# X_h, B_h = prep_data(X, B_hybrid, win=50)
+# model_hybrid = BunDLeNet(
+#     latent_dim=3,
+#     num_behaviour=n_classes + 1,                # n_classes logits + 1 continuous output
+#     input_shape=X_h.shape
+# )
+# loss_array_hybrid, _ = train_model(
+#     X_h, B_h, model_hybrid,
+#     b_type='hybrid',
+#     n_classes=n_classes,
+#     gamma=0.75,
+#     learning_rate=0.00005,
+#     n_epochs=500
+# )
+# ─────────────────────────────────────────────────────────────────────────────
 
 # Deploy BunDLeNet
 model = BunDLeNet(

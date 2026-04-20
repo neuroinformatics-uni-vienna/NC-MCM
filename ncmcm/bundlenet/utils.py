@@ -55,6 +55,35 @@ def prep_data(x, b, win=15):
     return x_paired, b_1
 
 
+def make_hybrid_b(b_encoded, *continuous_arrays):
+    """Combine a discrete label array with one or more continuous behaviour arrays
+    into a single float32 array suitable for ``b_type='hybrid'`` training.
+
+    Parameters
+    ----------
+    b_encoded : array-like, shape (T,)
+        Integer (or float) class indices, e.g. the output of a LabelEncoder.
+    *continuous_arrays : array-like, each shape (T,) or (T, k)
+        One or more continuous behaviour signals that have already been
+        normalised to a fixed range (e.g. [-1, 1]).  Each 1-D array is
+        reshaped to (T, 1) before concatenation.
+
+    Returns
+    -------
+    b_hybrid : np.ndarray, shape (T, 1 + n_continuous), dtype float32
+        Column 0 holds the class indices; subsequent columns hold the
+        continuous values.
+    """
+    b_encoded = np.asarray(b_encoded, dtype=np.float32).reshape(-1, 1)
+    parts = [b_encoded]
+    for arr in continuous_arrays:
+        arr = np.asarray(arr, dtype=np.float32)
+        if arr.ndim == 1:
+            arr = arr.reshape(-1, 1)
+        parts.append(arr)
+    return np.concatenate(parts, axis=1)
+
+
 def timeseries_train_test_split(x_paired, b_1):
     """
     Perform a train-test split for time series data without shuffling, based on a specific fold.
