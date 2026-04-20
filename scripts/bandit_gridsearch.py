@@ -419,8 +419,13 @@ def visualize_neural_behavioural(x, b, b_labels, b_colors, output_dir):
     print(f"Neural-behavioural plot saved to {plot_path}")
 
 
-def visualize_latent_space(y, b, b_labels, output_dir, vis_range, data_split='train', generate_gif=False, generate_3d_html=False, colors=None):
-    """Create all latent space visualizations"""
+def visualize_latent_space(y, b, b_labels, output_dir, vis_range, data_split='train', generate_gif=False, generate_3d_html=False, colors=None, continuous_vars=None):
+    """Create all latent space visualizations
+    
+    Args:
+        continuous_vars: Optional dict of {label: array} for continuous-variable coloured
+                         phase space plots (e.g. {'HGF belief': hgf_beliefs_split}).
+    """
     print(f"Creating latent space visualizations for {data_split} data...")
     
     # Extract range
@@ -488,6 +493,22 @@ def visualize_latent_space(y, b, b_labels, output_dir, vis_range, data_split='tr
         )
     else:
         print("  - Skipping interactive 3D plot (HTML generation disabled)")
+
+    # Continuous-variable phase space plots
+    if continuous_vars:
+        print("  - Continuous-variable phase space plots...")
+        for var_label, c_array in continuous_vars.items():
+            c_vis = np.asarray(c_array)[start:end]
+            safe_label = var_label.replace(' ', '_').replace('/', '_')
+            for (elev, azim), view_name in phase_space_views:
+                fig, ax = vis.plot_phase_space_continuous(
+                    c=c_vis,
+                    label=var_label,
+                    show_fig=False,
+                    axis_view=(elev, azim),
+                    filename=str(output_dir / 'figures' / f'phase_space_continuous_{data_split}_{safe_label}_{view_name}.png')
+                )
+                plt.close(fig)
 
 
 def plot_recurrence(y, output_dir, threshold, vis_range, data_split='train'):
@@ -697,8 +718,10 @@ def run_single_fold(fold_idx, x_train, x_test, b_train, b_test, x_shape, b_label
     # Visualize training latent space
     step_start = time.time()
     b_train_vis = b_train[:, 0].astype(int) if hasattr(b_train, 'ndim') and b_train.ndim > 1 else b_train
+    continuous_train = {'HGF belief': b_train[:, 1]} if hasattr(b_train, 'ndim') and b_train.ndim > 1 else None
     visualize_latent_space(y_train, b_train_vis, b_labels, fold_dir, args.vis_samples, 
-                          data_split='train', generate_gif=args.generate_gif, generate_3d_html=args.generate_3d_html, colors=b_colors_rgb)
+                          data_split='train', generate_gif=args.generate_gif, generate_3d_html=args.generate_3d_html, colors=b_colors_rgb,
+                          continuous_vars=continuous_train)
     print_step_time(f"Fold {fold_idx} - Training latent space visualization", run_start_time, step_start)
     
     # Training recurrence plot
@@ -720,8 +743,10 @@ def run_single_fold(fold_idx, x_train, x_test, b_train, b_test, x_shape, b_label
     # Visualize validation latent space
     step_start = time.time()
     b_test_vis = b_test[:, 0].astype(int) if hasattr(b_test, 'ndim') and b_test.ndim > 1 else b_test
+    continuous_test = {'HGF belief': b_test[:, 1]} if hasattr(b_test, 'ndim') and b_test.ndim > 1 else None
     visualize_latent_space(y_test, b_test_vis, b_labels, fold_dir, args.vis_samples,
-                          data_split='validation', generate_gif=args.generate_gif, generate_3d_html=args.generate_3d_html, colors=b_colors_rgb)
+                          data_split='validation', generate_gif=args.generate_gif, generate_3d_html=args.generate_3d_html, colors=b_colors_rgb,
+                          continuous_vars=continuous_test)
     print_step_time(f"Fold {fold_idx} - Validation latent space visualization", run_start_time, step_start)
     
     # Validation recurrence plot
@@ -943,8 +968,10 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
         # Visualize training latent space
         step_start = time.time()
         b_train_vis = b_train[:, 0].astype(int) if hasattr(b_train, 'ndim') and b_train.ndim > 1 else b_train
+        continuous_train = {'HGF belief': b_train[:, 1]} if hasattr(b_train, 'ndim') and b_train.ndim > 1 else None
         visualize_latent_space(y_train, b_train_vis, b_labels, output_dir, args.vis_samples, 
-                              data_split='train', generate_gif=args.generate_gif, generate_3d_html=args.generate_3d_html, colors=b_colors_rgb)
+                              data_split='train', generate_gif=args.generate_gif, generate_3d_html=args.generate_3d_html, colors=b_colors_rgb,
+                              continuous_vars=continuous_train)
         print_step_time("Training latent space visualization", run_start_time, step_start)
         
         # Training recurrence plot
@@ -966,8 +993,10 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
         # Visualize validation latent space
         step_start = time.time()
         b_test_vis = b_test[:, 0].astype(int) if hasattr(b_test, 'ndim') and b_test.ndim > 1 else b_test
+        continuous_test = {'HGF belief': b_test[:, 1]} if hasattr(b_test, 'ndim') and b_test.ndim > 1 else None
         visualize_latent_space(y_test, b_test_vis, b_labels, output_dir, args.vis_samples,
-                              data_split='validation', generate_gif=args.generate_gif, generate_3d_html=args.generate_3d_html, colors=b_colors_rgb)
+                              data_split='validation', generate_gif=args.generate_gif, generate_3d_html=args.generate_3d_html, colors=b_colors_rgb,
+                              continuous_vars=continuous_test)
         print_step_time("Validation latent space visualization", run_start_time, step_start)
         
         # Validation recurrence plot

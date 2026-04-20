@@ -305,6 +305,70 @@ class LatentSpaceVisualiser:
 
         return fig, ax
 
+    def plot_phase_space_continuous(
+        self,
+        c,
+        cmap='viridis',
+        label='',
+        show_fig=False,
+        filename='figures/phase_space_continuous.png',
+        axis_view=None,
+    ):
+        """
+        Plot the latent space trajectory coloured by a continuous variable.
+
+        Uses scatter with a continuous colormap and colorbar instead of the
+        discrete quiver arrows used in plot_phase_space.
+
+        Parameters
+        ----------
+        c : array-like, shape (T,)
+            Continuous values to map to colour (e.g. HGF belief trajectory).
+        cmap : str, optional
+            Matplotlib colormap name. Default is 'viridis'.
+        label : str, optional
+            Label for the colorbar axis. Default is ''.
+        show_fig : bool, optional
+            If True, display the figure interactively. Default is False.
+        filename : str, optional
+            Path to save the figure.
+        axis_view : (float, float), optional
+            (elevation, azimuth) angles for the 3D view.
+
+        Returns
+        -------
+        fig, ax
+        """
+        c = np.asarray(c)
+        fig = plt.figure(figsize=(8, 8))
+        ax = fig.add_subplot(111, projection='3d')
+
+        if axis_view is not None:
+            ax.view_init(elev=axis_view[0], azim=axis_view[1])
+
+        sc = ax.scatter(
+            self.y[:, 0],
+            self.y[:, 1],
+            self.y[:, 2],
+            c=c,
+            cmap=cmap,
+            s=1,
+            linewidths=0,
+        )
+        cbar = fig.colorbar(sc, ax=ax, shrink=0.5, pad=0.1)
+        cbar.set_label(label)
+        ax.set_axis_off()
+
+        if os.path.dirname(filename):
+            os.makedirs(os.path.dirname(filename), exist_ok=True)
+
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
+
+        if show_fig:
+            plt.show()
+
+        return fig, ax
+
     def _plot_ps(self, fig, ax, **kwargs):
         """
         Helper to plot neuronal dynamics in a 3D phase space.
