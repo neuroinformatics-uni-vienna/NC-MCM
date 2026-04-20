@@ -457,12 +457,12 @@ def visualize_latent_space(y, b, b_labels, output_dir, vis_range, data_split='tr
     # Phase space plots from multiple perspectives
     print("  - Phase space dynamics (multiple views)...")
     phase_space_views = [
-        ((0, 180), "back"),
-        ((-90, 0), "bottom"),
+        # ((0, 180), "back"),    # redundant with front
+        # ((-90, 0), "bottom"),  # redundant with top
         ((0, 0), "front"),
         ((90, 0), "top"),
         ((0, 90), "right"),
-        ((0, -90), "left"),
+        # ((0, -90), "left"),    # redundant with right
     ]
     
     for (elev, azim), view_name in phase_space_views:
