@@ -83,7 +83,8 @@ class BanditTaskNeuroPixelsDataset:
     
     def __init__(self, data_path, downsample_fs=None, downsample_method='count', good_neurons_only=True,
                  state_transitions=None, gaussian_sigma_ms=25.0, normalize_method=None,
-                 choosing_state_mode='side', recompute_cache=False):
+                 choosing_state_mode='side', recompute_cache=False,
+                 hgf_model=None, hgf_column='x_0_expected_mean'):
         """
         Initialize dataset with flexible spike representation options.
 
@@ -112,6 +113,10 @@ class BanditTaskNeuroPixelsDataset:
                 'side' (default) splits into "choosing left"/"choosing right" based on the actual choice.
                 'correctness' labels choices as "choosing correct"/"choosing wrong" using the current block's better arm.
             recompute_cache: If True, ignore any cached dataset and rebuild it (default: False).
+            hgf_model: Substring to match HGF PKL filename in `{data_path}/hgf_models/` folder.
+                     E.g. 'binary2', 'binary3', 'nomasking'. If None, hgf_beliefs is not computed.
+            hgf_column: Column name in the HGF dataframe to use as belief trajectory (default: 'x_0_expected_mean').
+                      'x_0_expected_mean' is the prior reward probability in [0, 1].
             
         Attributes after loading:
             data_path: Path to the dataset directory
@@ -131,6 +136,7 @@ class BanditTaskNeuroPixelsDataset:
             block_labels: Block labels (np.ndarray) of shape (num_timepoints,) indicating the block name for each timepoint
             behavioral_time: Behavioral time (np.ndarray) of shape (num_timepoints,) with the behavioral time in milliseconds at the start of each timepoint
             fs: Sampling frequency (Hz) after any downsampling
+            hgf_beliefs: Per-timepoint HGF belief values (np.ndarray) of shape (num_timepoints,), or None if not loaded.
         
         """
         self.data_path = data_path
@@ -145,6 +151,8 @@ class BanditTaskNeuroPixelsDataset:
             raise ValueError("choosing_state_mode must be 'side' or 'correctness'")
         self.choosing_state_mode = mode
         self.recompute_cache = recompute_cache
+        self.hgf_model = hgf_model
+        self.hgf_column = hgf_column
         # Store original parameters for cache key (before any adjustments)
         self._original_downsample_fs = downsample_fs
         self.x = None  # neuronal time-series data (scipy.sparse.csr_matrix)
@@ -157,6 +165,7 @@ class BanditTaskNeuroPixelsDataset:
         self.block_labels = None  # the block labels/names for each timepoint
         self.behavioral_time = None  # behavioral time array (in ms)
         self.fs = None  # sampling frequency
+        self.hgf_beliefs = None  # per-timepoint HGF belief values
         
         # Try to load from cache, otherwise process data and save to cache
         cache_loaded = False
@@ -251,6 +260,10 @@ class BanditTaskNeuroPixelsDataset:
         # Create behavioral time array (start time of each timepoint in ms)
         self.behavioral_time = self._create_behavioral_time_array(neuronal_length, translation_indices_neuronal_to_behavioral)
         
+        # Align HGF beliefs to neuronal timepoints (if requested)
+        if self.hgf_model is not None:
+            self.hgf_beliefs = self._align_hgf_beliefs(neuronal_length)
+        
         # Free memory from large temporary arrays no longer needed
         del translation_indices_neuronal_to_behavioral, metrics
         
@@ -273,6 +286,8 @@ class BanditTaskNeuroPixelsDataset:
         assert len(self.block_indices) == self.b.shape[1], "Block indices length mismatch after processing."
         assert len(self.block_labels) == self.b.shape[1], "Block labels length mismatch after processing."
         assert len(self.behavioral_time) == self.b.shape[1], "Behavioral time array length mismatch after processing."
+        if self.hgf_beliefs is not None:
+            assert len(self.hgf_beliefs) == self.b.shape[1], "HGF beliefs length mismatch after processing."
         
         # Sort behavioral labels by their state id (dict keys) and store as list
         self.b_labels = [self.b_labels_dict[k] for k in sorted(self.b_labels_dict.keys())]
@@ -408,6 +423,8 @@ class BanditTaskNeuroPixelsDataset:
         self.block_indices = self.block_indices[first_non_waiting_idx:last_non_waiting_idx]
         self.block_labels = self.block_labels[first_non_waiting_idx:last_non_waiting_idx]
         self.behavioral_time = self.behavioral_time[first_non_waiting_idx:last_non_waiting_idx]
+        if self.hgf_beliefs is not None:
+            self.hgf_beliefs = self.hgf_beliefs[first_non_waiting_idx:last_non_waiting_idx]
 
     def _normalize_neuronal_data(self):
         """
@@ -1136,6 +1153,64 @@ class BanditTaskNeuroPixelsDataset:
         
         return behavioral_time
     
+    def _align_hgf_beliefs(self, neuronal_length):
+        """
+        Align per-trial HGF belief values to the neuronal timepoint axis.
+
+        Loads the HGF PKL file whose filename contains `self.hgf_model`, reads the
+        column `self.hgf_column` (one value per trial), and forward-fills the values
+        across all neuronal timepoints using `self.trial_indices` as the mapping.
+        Intertrial timepoints (trial_indices == -1) receive the belief of the most
+        recently completed trial (forward-fill). Timepoints before the first trial
+        are set to 0.0.
+
+        Args:
+            neuronal_length: Number of timepoints in the (pre-trim) neuronal recording.
+
+        Returns:
+            np.ndarray of shape (neuronal_length,) with dtype float32.
+
+        Raises:
+            FileNotFoundError: If no PKL file matches `self.hgf_model`.
+            ValueError: If `self.hgf_column` is not found in the loaded dataframe.
+        """
+        hgf_folder = os.path.join(self.data_path, 'hgf_models')
+        matches = sorted(
+            [f for f in os.listdir(hgf_folder) if self.hgf_model in f and f.endswith('.pkl')]
+        )
+        if not matches:
+            raise FileNotFoundError(
+                f"No PKL file matching '{self.hgf_model}' found in {hgf_folder}. "
+                f"Available files: {os.listdir(hgf_folder)}"
+            )
+        hgf_df = pd.read_pickle(os.path.join(hgf_folder, matches[0]))
+        if self.hgf_column not in hgf_df.columns:
+            raise ValueError(
+                f"Column '{self.hgf_column}' not found in HGF dataframe. "
+                f"Available columns: {list(hgf_df.columns)}"
+            )
+        belief_per_trial = hgf_df[self.hgf_column].values.astype(np.float32)
+        n_trials = len(belief_per_trial)
+
+        # Build a per-timepoint array: trial timepoints get the trial's belief,
+        # intertrial timepoints (trial_indices == -1 or >= n_trials) get 0 temporarily.
+        valid_mask = (self.trial_indices >= 0) & (self.trial_indices < n_trials)
+        source = np.zeros(neuronal_length, dtype=np.float32)
+        source[valid_mask] = belief_per_trial[self.trial_indices[valid_mask]]
+
+        # Forward-fill: propagate the last valid value through intertrial gaps.
+        # Strategy: track index of last valid position and use it for filling.
+        last_valid_idx = np.where(valid_mask, np.arange(neuronal_length), 0)
+        np.maximum.accumulate(last_valid_idx, out=last_valid_idx)
+
+        # Only fill after the first trial has been encountered.
+        hgf_beliefs = np.where(
+            np.cumsum(valid_mask.astype(np.int32)) > 0,
+            source[last_valid_idx],
+            np.float32(0.0)
+        )
+        return hgf_beliefs
+
     # ------------------ Additional methods can be added here ----------------- #
     
     def get_color_map_for_plotting(self):
@@ -1225,7 +1300,9 @@ class BanditTaskNeuroPixelsDataset:
             'state_transitions': str(sorted(self.state_transitions.items())) if self.state_transitions else 'None',
             'gaussian_sigma_ms': self.gaussian_sigma_ms,
             'normalize_method': self.normalize_method,
-            'choosing_state_mode': self.choosing_state_mode
+            'choosing_state_mode': self.choosing_state_mode,
+            'hgf_model': self.hgf_model,
+            'hgf_column': self.hgf_column
         }
         
         # Create a string representation of parameters
@@ -1278,6 +1355,7 @@ class BanditTaskNeuroPixelsDataset:
                 'block_labels': self.block_labels,
                 'behavioral_time': self.behavioral_time,
                 'fs': self.fs,
+                'hgf_beliefs': self.hgf_beliefs,
                 # Save parameters for verification
                 'params': {
                     'downsample_fs': self._original_downsample_fs,  # Use original for cache key
@@ -1287,7 +1365,9 @@ class BanditTaskNeuroPixelsDataset:
                     'state_transitions': self.state_transitions,
                     'gaussian_sigma_ms': self.gaussian_sigma_ms,
                     'normalize_method': self.normalize_method,
-                    'choosing_state_mode': self.choosing_state_mode
+                    'choosing_state_mode': self.choosing_state_mode,
+                    'hgf_model': self.hgf_model,
+                    'hgf_column': self.hgf_column
                 }
             }
             
@@ -1329,7 +1409,9 @@ class BanditTaskNeuroPixelsDataset:
                cached_params.get('downsample_method') != self.downsample_method or \
                cached_params.get('good_neurons_only') != self.good_neurons_only or \
                cached_params.get('normalize_method') != self.normalize_method or \
-               cached_params.get('choosing_state_mode', self.choosing_state_mode) != self.choosing_state_mode:
+               cached_params.get('choosing_state_mode', self.choosing_state_mode) != self.choosing_state_mode or \
+               cached_params.get('hgf_model') != self.hgf_model or \
+               cached_params.get('hgf_column') != self.hgf_column:
                 print("Warning: Cached parameters mismatch, reprocessing data...")
                 return False
             
@@ -1344,6 +1426,7 @@ class BanditTaskNeuroPixelsDataset:
             self.block_labels = cache_data['block_labels']
             self.behavioral_time = cache_data['behavioral_time']
             self.fs = cache_data['fs']
+            self.hgf_beliefs = cache_data.get('hgf_beliefs', None)
             # Update downsample_fs to the actual value (may be slightly adjusted)
             self.downsample_fs = cache_data['params'].get('actual_downsample_fs', self.fs)
             self.choosing_state_mode = cache_data['params'].get('choosing_state_mode', self.choosing_state_mode)
