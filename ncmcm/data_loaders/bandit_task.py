@@ -14,6 +14,14 @@ import hashlib
 class BanditTaskNeuroPixelsDataset:
     # Cache directory name
     CACHE_DIR = "BanditTaskNeuroPixelsDataset"
+
+    # Conceptual [-1, 1] rescaling ranges for known HGF columns.
+    # Format: column_name -> (lo, hi) where lo maps to -1 and hi maps to +1.
+    # Add entries here when introducing new HGF model outputs.
+    KNOWN_HGF_RANGES = {
+        'x_0_expected_mean': (0.0, 1.0),    # prior reward probability ∈ [0, 1]
+        'x_1_expected_mean': (-2.0, 2.0),   # precision-weighted log-odds belief ∈ [-2, 2]
+    }
     
     # Common state transition combinations
     HOLD_TO_CHOOSING_TRANSITIONS = {
@@ -84,7 +92,7 @@ class BanditTaskNeuroPixelsDataset:
     def __init__(self, data_path, downsample_fs=None, downsample_method='count', good_neurons_only=True,
                  state_transitions=None, gaussian_sigma_ms=25.0, normalize_method=None,
                  choosing_state_mode='side', recompute_cache=False,
-                 hgf_model=None, hgf_column='x_0_expected_mean'):
+                 hgf_model='binary2', hgf_column='x_1_expected_mean', hgf_belief_range=None):
         """
         Initialize dataset with flexible spike representation options.
 
@@ -114,9 +122,16 @@ class BanditTaskNeuroPixelsDataset:
                 'correctness' labels choices as "choosing correct"/"choosing wrong" using the current block's better arm.
             recompute_cache: If True, ignore any cached dataset and rebuild it (default: False).
             hgf_model: Substring to match HGF PKL filename in `{data_path}/hgf_models/` folder.
-                     E.g. 'binary2', 'binary3', 'nomasking'. If None, hgf_beliefs is not computed.
-            hgf_column: Column name in the HGF dataframe to use as belief trajectory (default: 'x_0_expected_mean').
+                     E.g. 'binary2', 'binary3', 'nomasking'. Default: 'binary2'.
+                     If None, hgf_beliefs is not computed.
+            hgf_column: Column name in the HGF dataframe to use as belief trajectory (default: 'x_1_expected_mean').
+                      'x_1_expected_mean' is the precision-weighted log-odds belief (conceptual range [-2, 2]).
                       'x_0_expected_mean' is the prior reward probability in [0, 1].
+            hgf_belief_range: Explicit (lo, hi) tuple defining the conceptual range of `hgf_column`,
+                      used to rescale beliefs to [-1, 1] via `2*(x - lo)/(hi - lo) - 1`.
+                      If None, the range is looked up from `KNOWN_HGF_RANGES`; if not found there,
+                      a ValueError is raised asking you to either add an entry to `KNOWN_HGF_RANGES`
+                      or pass an explicit range.
             
         Attributes after loading:
             data_path: Path to the dataset directory
@@ -136,7 +151,8 @@ class BanditTaskNeuroPixelsDataset:
             block_labels: Block labels (np.ndarray) of shape (num_timepoints,) indicating the block name for each timepoint
             behavioral_time: Behavioral time (np.ndarray) of shape (num_timepoints,) with the behavioral time in milliseconds at the start of each timepoint
             fs: Sampling frequency (Hz) after any downsampling
-            hgf_beliefs: Per-timepoint HGF belief values (np.ndarray) of shape (num_timepoints,), or None if not loaded.
+            hgf_beliefs: Per-timepoint HGF belief values (np.ndarray) of shape (num_timepoints,),
+                      rescaled to [-1, 1] using `hgf_belief_range` or `KNOWN_HGF_RANGES`, or None if not loaded.
         
         """
         self.data_path = data_path
@@ -153,6 +169,7 @@ class BanditTaskNeuroPixelsDataset:
         self.recompute_cache = recompute_cache
         self.hgf_model = hgf_model
         self.hgf_column = hgf_column
+        self.hgf_belief_range = hgf_belief_range
         # Store original parameters for cache key (before any adjustments)
         self._original_downsample_fs = downsample_fs
         self.x = None  # neuronal time-series data (scipy.sparse.csr_matrix)
@@ -1162,7 +1179,9 @@ class BanditTaskNeuroPixelsDataset:
         across all neuronal timepoints using `self.trial_indices` as the mapping.
         Intertrial timepoints (trial_indices == -1) receive the belief of the most
         recently completed trial (forward-fill). Timepoints before the first trial
-        are set to 0.0.
+        are set to 0.0. The raw values are then rescaled to [-1, 1] using the
+        conceptual range from `hgf_belief_range` (if provided), `KNOWN_HGF_RANGES`
+        (for recognised columns), or raises a ValueError asking you to specify a range.
 
         Args:
             neuronal_length: Number of timepoints in the (pre-trim) neuronal recording.
@@ -1209,6 +1228,24 @@ class BanditTaskNeuroPixelsDataset:
             source[last_valid_idx],
             np.float32(0.0)
         )
+
+        # Rescale to [-1, 1] using conceptual range.
+        # Priority: (1) explicit hgf_belief_range, (2) KNOWN_HGF_RANGES, (3) error.
+        if self.hgf_belief_range is not None:
+            lo, hi = float(self.hgf_belief_range[0]), float(self.hgf_belief_range[1])
+        elif self.hgf_column in self.KNOWN_HGF_RANGES:
+            lo, hi = self.KNOWN_HGF_RANGES[self.hgf_column]
+        else:
+            raise ValueError(
+                f"hgf_column='{self.hgf_column}' has no entry in KNOWN_HGF_RANGES and no "
+                f"hgf_belief_range was provided. Please either:\n"
+                f"  (a) pass hgf_belief_range=(lo, hi) to the constructor, or\n"
+                f"  (b) add '{self.hgf_column}' to BanditTaskNeuroPixelsDataset.KNOWN_HGF_RANGES."
+            )
+        span = hi - lo
+        if span > 0:
+            hgf_beliefs = (2.0 * (hgf_beliefs - lo) / span - 1.0).astype(np.float32)
+
         return hgf_beliefs
 
     # ------------------ Additional methods can be added here ----------------- #
@@ -1302,7 +1339,8 @@ class BanditTaskNeuroPixelsDataset:
             'normalize_method': self.normalize_method,
             'choosing_state_mode': self.choosing_state_mode,
             'hgf_model': self.hgf_model,
-            'hgf_column': self.hgf_column
+            'hgf_column': self.hgf_column,
+            'hgf_belief_range': str(self.hgf_belief_range)
         }
         
         # Create a string representation of parameters
@@ -1367,7 +1405,8 @@ class BanditTaskNeuroPixelsDataset:
                     'normalize_method': self.normalize_method,
                     'choosing_state_mode': self.choosing_state_mode,
                     'hgf_model': self.hgf_model,
-                    'hgf_column': self.hgf_column
+                    'hgf_column': self.hgf_column,
+                    'hgf_belief_range': self.hgf_belief_range
                 }
             }
             
@@ -1411,7 +1450,8 @@ class BanditTaskNeuroPixelsDataset:
                cached_params.get('normalize_method') != self.normalize_method or \
                cached_params.get('choosing_state_mode', self.choosing_state_mode) != self.choosing_state_mode or \
                cached_params.get('hgf_model') != self.hgf_model or \
-               cached_params.get('hgf_column') != self.hgf_column:
+               cached_params.get('hgf_column') != self.hgf_column or \
+               cached_params.get('hgf_belief_range') != self.hgf_belief_range:
                 print("Warning: Cached parameters mismatch, reprocessing data...")
                 return False
             
