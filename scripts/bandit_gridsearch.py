@@ -696,7 +696,8 @@ def run_single_fold(fold_idx, x_train, x_test, b_train, b_test, x_shape, b_label
     
     # Visualize training latent space
     step_start = time.time()
-    visualize_latent_space(y_train, b_train, b_labels, fold_dir, args.vis_samples, 
+    b_train_vis = b_train[:, 0].astype(int) if hasattr(b_train, 'ndim') and b_train.ndim > 1 else b_train
+    visualize_latent_space(y_train, b_train_vis, b_labels, fold_dir, args.vis_samples, 
                           data_split='train', generate_gif=args.generate_gif, generate_3d_html=args.generate_3d_html, colors=b_colors_rgb)
     print_step_time(f"Fold {fold_idx} - Training latent space visualization", run_start_time, step_start)
     
@@ -718,7 +719,8 @@ def run_single_fold(fold_idx, x_train, x_test, b_train, b_test, x_shape, b_label
     
     # Visualize validation latent space
     step_start = time.time()
-    visualize_latent_space(y_test, b_test, b_labels, fold_dir, args.vis_samples,
+    b_test_vis = b_test[:, 0].astype(int) if hasattr(b_test, 'ndim') and b_test.ndim > 1 else b_test
+    visualize_latent_space(y_test, b_test_vis, b_labels, fold_dir, args.vis_samples,
                           data_split='validation', generate_gif=args.generate_gif, generate_3d_html=args.generate_3d_html, colors=b_colors_rgb)
     print_step_time(f"Fold {fold_idx} - Validation latent space visualization", run_start_time, step_start)
     
@@ -940,7 +942,8 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
         
         # Visualize training latent space
         step_start = time.time()
-        visualize_latent_space(y_train, b_train, b_labels, output_dir, args.vis_samples, 
+        b_train_vis = b_train[:, 0].astype(int) if hasattr(b_train, 'ndim') and b_train.ndim > 1 else b_train
+        visualize_latent_space(y_train, b_train_vis, b_labels, output_dir, args.vis_samples, 
                               data_split='train', generate_gif=args.generate_gif, generate_3d_html=args.generate_3d_html, colors=b_colors_rgb)
         print_step_time("Training latent space visualization", run_start_time, step_start)
         
@@ -962,7 +965,8 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
         
         # Visualize validation latent space
         step_start = time.time()
-        visualize_latent_space(y_test, b_test, b_labels, output_dir, args.vis_samples,
+        b_test_vis = b_test[:, 0].astype(int) if hasattr(b_test, 'ndim') and b_test.ndim > 1 else b_test
+        visualize_latent_space(y_test, b_test_vis, b_labels, output_dir, args.vis_samples,
                               data_split='validation', generate_gif=args.generate_gif, generate_3d_html=args.generate_3d_html, colors=b_colors_rgb)
         print_step_time("Validation latent space visualization", run_start_time, step_start)
         
