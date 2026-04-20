@@ -77,7 +77,7 @@ def pca_initialisation(X_, tau, latent_dim, device, flag_file_save=False):
         return pcaencoder.encoder
 
 
-def best_of_5_runs(x_train, b_train_1, model, b_type, gamma, learning_rate, validation_data, device):
+def best_of_5_runs(x_train, b_train_1, model, b_type, gamma, learning_rate, validation_data, device, n_classes=None, alpha=0.5):
     """
     Initialises BunDLe net with the best of 5 runs
 
@@ -111,6 +111,8 @@ def best_of_5_runs(x_train, b_train_1, model, b_type, gamma, learning_rate, vali
             initialisation=None,
             device=device,
             report_ray_tune=False,
+            n_classes=n_classes,
+            alpha=alpha,
         )
 
         # Store the best weights in memory
@@ -125,7 +127,7 @@ def best_of_5_runs(x_train, b_train_1, model, b_type, gamma, learning_rate, vali
     return model
 
 
-def best_of_n_runs(n, n_epochs, x_train, b_train_1, model, b_type, gamma, learning_rate, validation_data, device):
+def best_of_n_runs(n, n_epochs, x_train, b_train_1, model, b_type, gamma, learning_rate, validation_data, device, n_classes=None, alpha=0.5):
     """
     Initialises BunDLe net with the best of n runs
 
@@ -158,6 +160,8 @@ def best_of_n_runs(n, n_epochs, x_train, b_train_1, model, b_type, gamma, learni
             initialisation=None,
             device=device,
             report_ray_tune=False,
+            n_classes=n_classes,
+            alpha=alpha,
         )
 
         # Store the best weights in memory

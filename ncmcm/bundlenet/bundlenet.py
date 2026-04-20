@@ -103,11 +103,11 @@ class BunDLeTrainer:
         gamma: Hyper-parameter of BunDLe-Net loss function
     """
 
-    def __init__(self, model, optimizer, b_type, gamma):
+    def __init__(self, model, optimizer, b_type, gamma, n_classes=None, alpha=0.5):
         self.model = model
         self.optimizer = optimizer
         self.gamma = gamma
-        self.bccdcc_loss = BccDccLoss(b_type, gamma)
+        self.bccdcc_loss = BccDccLoss(b_type, gamma, n_classes=n_classes, alpha=alpha)
 
     def train_step(self, x_train, b_train_1):
         self.model.train()
@@ -163,7 +163,8 @@ class BunDLeTrainer:
 
 
 def train_model(x_train, b_train_1, model, b_type, gamma, learning_rate, n_epochs, batch_size=100, initialisation=None,
-                validation_data=None, device=None, report_ray_tune=False, pca_file_save=False):
+                validation_data=None, device=None, report_ray_tune=False, pca_file_save=False,
+                n_classes=None, alpha=0.5):
     """
     Training BunDLe Net
 
@@ -205,9 +206,11 @@ def train_model(x_train, b_train_1, model, b_type, gamma, learning_rate, n_epoch
         else: # ret is encoder
             model.tau.load_state_dict(ret.state_dict())
     elif initialisation == 'best_of_5_init':
-        model = best_of_5_runs(x_train, b_train_1, model, b_type, gamma, learning_rate, validation_data, device)
+        model = best_of_5_runs(x_train, b_train_1, model, b_type, gamma, learning_rate, validation_data, device,
+                               n_classes=n_classes, alpha=alpha)
     elif isinstance(initialisation, tuple):
-        model = best_of_n_runs(initialisation[0], initialisation[1], x_train, b_train_1, model, b_type, gamma, learning_rate, validation_data, device)
+        model = best_of_n_runs(initialisation[0], initialisation[1], x_train, b_train_1, model, b_type, gamma,
+                               learning_rate, validation_data, device, n_classes=n_classes, alpha=alpha)
     elif initialisation is None:
         pass
     else:
@@ -215,7 +218,7 @@ def train_model(x_train, b_train_1, model, b_type, gamma, learning_rate, n_epoch
 
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
-    trainer = BunDLeTrainer(model, optimizer, b_type, gamma)
+    trainer = BunDLeTrainer(model, optimizer, b_type, gamma, n_classes=n_classes, alpha=alpha)
     epochs = tqdm(np.arange(n_epochs))
     train_history = []
     test_history = [] if validation_data is not None else None
