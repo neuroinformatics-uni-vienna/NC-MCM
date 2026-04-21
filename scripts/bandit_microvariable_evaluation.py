@@ -168,7 +168,6 @@ _config = dict(
     batch_size=BATCH_SIZE, num_permutations=NUM_PERMUTATIONS,
     # data info
     n_timesteps=int(X.shape[0]), n_neurons=int(X.shape[1]),
-    device=str(device),
     start_timestamp=_ts,
 )
 with open(os.path.join(run_dir, 'config.json'), 'w') as _f:
@@ -195,6 +194,10 @@ input_dim = n_neurons * WINDOW_SIZE
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {device}")
+_config['device'] = str(device)
+with open(os.path.join(run_dir, 'config.json'), 'w') as _f:
+    json.dump(_config, _f, indent=2)
+print(f"Config written \u2192 {run_dir}/config.json")
 
 # ===========================================================================
 # Shared utilities
