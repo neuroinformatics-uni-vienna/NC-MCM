@@ -14,6 +14,8 @@ import sys
 sys.path.append(r'../../../')
 import numpy as np
 import os
+import json
+import datetime
 from collections import defaultdict
 import torch
 import torch.nn as nn
@@ -53,8 +55,8 @@ HGF_COLUMN          = 'x_1_expected_mean'   # 'x_1_expected_mean' | 'x_0_expecte
 HGF_BELIEF_RANGE    = None          # None = use KNOWN_HGF_RANGES; or explicit (lo, hi)
 
 # --- Evaluation modes -------------------------------------------------------
-RUN_DISCRETE        = True          # classification: behavioral state → cross-entropy decoder
-RUN_CONTINUOUS      = True          # regression: HGF belief → MSE decoder (requires USE_HGF=True)
+RUN_DISCRETE        = False          # classification: behavioral state → cross-entropy decoder
+RUN_CONTINUOUS      = False          # regression: HGF belief → MSE decoder (requires USE_HGF=True)
 RUN_HYBRID          = True          # joint decoder: discrete + continuous (requires USE_HGF=True)
 HYBRID_ALPHA        = 0.5           # α * CE_norm + (1-α) * MSE  (matches BunDLeNet default)
 
@@ -134,6 +136,45 @@ if B_belief is not None:
 # Hybrid label array: col 0 = discrete class index (float), col 1 = HGF belief
 # Shape (T, 2) — matches BunDLeNet make_hybrid_b convention
 B_hybrid = make_hybrid_b(B, B_belief) if (USE_HGF and B_belief is not None) else None
+
+# ===========================================================================
+# Output folder (results/twoArmBandit/microvariable_evaluation/<session>_<ts>/)
+# ===========================================================================
+
+_ts      = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+run_dir  = os.path.join('results', 'twoArmBandit', 'microvariable_evaluation',
+                        f'{session_dir}_{_ts}')
+for _sub in ('discrete', 'continuous', 'hybrid'):
+    os.makedirs(os.path.join(run_dir, _sub), exist_ok=True)
+
+_config = dict(
+    # dataset
+    data_path=data_path, session_dir=session_dir,
+    downsample_fs=DOWNSAMPLE_FS, downsample_method=DOWNSAMPLE_METHOD,
+    good_neurons_only=GOOD_NEURONS_ONLY, normalize_method=NORMALIZE_METHOD,
+    state_transitions=str(STATE_TRANSITIONS), choosing_state_mode=CHOOSING_STATE_MODE,
+    gaussian_sigma_ms=GAUSSIAN_SIGMA_MS, recompute_cache=RECOMPUTE_CACHE,
+    # HGF
+    use_hgf=USE_HGF, hgf_model=HGF_MODEL, hgf_column=HGF_COLUMN,
+    hgf_belief_range=str(HGF_BELIEF_RANGE),
+    # modes
+    run_discrete=RUN_DISCRETE, run_continuous=RUN_CONTINUOUS,
+    run_hybrid=RUN_HYBRID, hybrid_alpha=HYBRID_ALPHA,
+    # pipeline
+    window_size=WINDOW_SIZE, num_of_splits=NUM_OF_SPLITS,
+    use_lazy_loading=USE_LAZY_LOADING, num_workers=NUM_WORKERS,
+    # training
+    num_decoder_runs=NUM_DECODER_RUNS, train_epochs=TRAIN_EPOCHS,
+    batch_size=BATCH_SIZE, num_permutations=NUM_PERMUTATIONS,
+    # data info
+    n_timesteps=int(X.shape[0]), n_neurons=int(X.shape[1]),
+    device=str(device),
+    start_timestamp=_ts,
+)
+with open(os.path.join(run_dir, 'config.json'), 'w') as _f:
+    json.dump(_config, _f, indent=2)
+print(f"Run folder: {run_dir}")
+print(f"Config written → {run_dir}/config.json")
 
 # ===========================================================================
 # Data pipeline helpers
@@ -304,8 +345,7 @@ def run_discrete_evaluation():
     class_weights_tensor  = torch.FloatTensor(weights_list).to(device)
 
     # ── Output dir ───────────────────────────────────────────────────────────
-    output_dir = os.path.join(data_path, 'microvariable_evaluation')
-    os.makedirs(output_dir, exist_ok=True)
+    output_dir = os.path.join(run_dir, 'discrete')
 
     # ── Class-weights plot ────────────────────────────────────────────────────
     x_pos = np.arange(len(state_labels))
@@ -674,6 +714,14 @@ def run_discrete_evaluation():
     print(f"  Saved decoder vs chance comparison.")
 
     print(f"\nDiscrete evaluation done. Results → {output_dir}/")
+    return {
+        'unweighted_val_acc': float(res_uw['val_acc_list'].mean()),
+        'unweighted_val_acc_std': float(res_uw['val_acc_list'].std()),
+        'weighted_val_acc': float(res_w['val_acc_list'].mean()),
+        'weighted_val_acc_std': float(res_w['val_acc_list'].std()),
+        'chance_acc': float(chance_acc.mean()),
+        't_weighted_vs_chance': float(t_w), 'p_weighted_vs_chance': float(p_w),
+    }
 
 
 # ===========================================================================
@@ -701,8 +749,7 @@ def run_continuous_evaluation():
     num_folds = len(cv_splits)
     print(f"Prepared {num_folds}-fold CV.")
 
-    output_dir = os.path.join(data_path, 'microvariable_evaluation_belief')
-    os.makedirs(output_dir, exist_ok=True)
+    output_dir = os.path.join(run_dir, 'continuous')
 
     val_metrics_list   = []
     train_metrics_list = []
@@ -899,6 +946,14 @@ def run_continuous_evaluation():
     plt.close(); print("  Saved per-fold R² figure.")
 
     print(f"\nContinuous evaluation done. Results → {output_dir}/")
+    return {
+        'val_r2': float(val_r2_mean), 'val_r2_std': float(val_r2_std),
+        'val_pearson_r': float(val_pr_mean), 'val_pearson_r_std': float(val_pr_std),
+        'val_mse': float(val_mse_mean),
+        'train_r2': float(tr_r2_mean),
+        'perm_r2': float(perm_r2.mean()),
+        't_stat': float(t_stat), 'p_value': float(p_value),
+    }
 
 
 # ===========================================================================
@@ -921,8 +976,7 @@ def run_hybrid_evaluation():
     output_dim   = num_states + 1                # logits + 1 belief output
     print(f"Prepared {num_folds}-fold CV. {num_states} states, output_dim={output_dim}.")
 
-    output_dir = os.path.join(data_path, 'microvariable_evaluation_hybrid')
-    os.makedirs(output_dir, exist_ok=True)
+    output_dir = os.path.join(run_dir, 'hybrid')
 
     val_acc_list,   train_acc_list   = [], []
     val_r2_list,    train_r2_list    = [], []
@@ -1135,6 +1189,13 @@ def run_hybrid_evaluation():
     plt.close(); print("  Saved per-fold R² figure.")
 
     print(f"\nHybrid evaluation done. Results → {output_dir}/")
+    return {
+        'val_acc': float(val_acc.mean()), 'val_acc_std': float(val_acc.std()),
+        'val_r2': float(val_r2.mean()), 'val_r2_std': float(val_r2.std()),
+        'val_pearson_r': float(val_pr.mean()), 'val_pearson_r_std': float(val_pr.std()),
+        'perm_acc': float(perm_acc.mean()), 'p_acc': float(p_acc),
+        'perm_r2': float(perm_r2.mean()), 'p_r2': float(p_r2),
+    }
 
 
 # ===========================================================================
@@ -1147,9 +1208,28 @@ if RUN_DISCRETE:
 if RUN_CONTINUOUS:
     run_continuous_evaluation()
 
+_run_metrics = {}
+
+if RUN_DISCRETE:
+    _run_metrics['discrete'] = run_discrete_evaluation()
+
+if RUN_CONTINUOUS:
+    _run_metrics['continuous'] = run_continuous_evaluation()
+
 if RUN_HYBRID:
-    run_hybrid_evaluation()
+    _run_metrics['hybrid'] = run_hybrid_evaluation()
+
+_summary = dict(
+    status='completed',
+    completed_at=datetime.datetime.now().isoformat(),
+    output_dir=run_dir,
+    configuration=_config,
+    metrics=_run_metrics,
+)
+with open(os.path.join(run_dir, 'run_summary.json'), 'w') as _f:
+    json.dump(_summary, _f, indent=2)
 
 print(f"\n{'='*60}")
 print(f"All done.  Session: {session_dir}")
+print(f"Results  → {run_dir}/")
 print(f"{'='*60}")
