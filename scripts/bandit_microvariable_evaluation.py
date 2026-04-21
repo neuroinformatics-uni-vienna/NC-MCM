@@ -29,6 +29,7 @@ from ncmcm.data_loaders.bandit_task import BanditTaskNeuroPixelsDataset
 from ncmcm.bundlenet.utils import (
     prep_data, prep_data_lazy,
     timeseries_train_test_split_cv, timeseries_train_test_split_cv_lazy,
+    make_hybrid_b,
 )
 
 # ===========================================================================
@@ -54,6 +55,8 @@ HGF_BELIEF_RANGE    = None          # None = use KNOWN_HGF_RANGES; or explicit (
 # --- Evaluation modes -------------------------------------------------------
 RUN_DISCRETE        = True          # classification: behavioral state → cross-entropy decoder
 RUN_CONTINUOUS      = True          # regression: HGF belief → MSE decoder (requires USE_HGF=True)
+RUN_HYBRID          = True          # joint decoder: discrete + continuous (requires USE_HGF=True)
+HYBRID_ALPHA        = 0.5           # α * CE_norm + (1-α) * MSE  (matches BunDLeNet default)
 
 # --- Data pipeline ----------------------------------------------------------
 WINDOW_SIZE         = 60            # sliding window length (timesteps)
@@ -76,6 +79,11 @@ if RUN_CONTINUOUS and not USE_HGF:
     raise ValueError(
         "RUN_CONTINUOUS=True requires USE_HGF=True. "
         "Either set USE_HGF=True or disable RUN_CONTINUOUS."
+    )
+if RUN_HYBRID and not USE_HGF:
+    raise ValueError(
+        "RUN_HYBRID=True requires USE_HGF=True. "
+        "Either set USE_HGF=True or disable RUN_HYBRID."
     )
 
 # ===========================================================================
@@ -123,6 +131,10 @@ if B_belief is not None:
     print(f"HGF beliefs shape: {B_belief.shape}, "
           f"range=[{B_belief.min():.3f}, {B_belief.max():.3f}]")
 
+# Hybrid label array: col 0 = discrete class index (float), col 1 = HGF belief
+# Shape (T, 2) — matches BunDLeNet make_hybrid_b convention
+B_hybrid = make_hybrid_b(B, B_belief) if (USE_HGF and B_belief is not None) else None
+
 # ===========================================================================
 # Data pipeline helpers
 # ===========================================================================
@@ -150,11 +162,13 @@ print(f"Using device: {device}")
 class FoldDataset(Dataset):
     """Extract channel-1 windows on demand, flatten, return tensor.
 
-    dtype_str: 'long' for discrete labels (CrossEntropy),
-               'float' for continuous labels (MSE).
+    dtype_str: 'long'   for discrete labels (CrossEntropy)  — returns (x, long scalar)
+               'float'  for continuous labels (MSE)         — returns (x, float [1])
+               'hybrid' for joint labels (CE + MSE)         — returns (x, float [2])
+                        col 0 = class index (float), col 1 = belief
     """
     def __init__(self, subset, b_labels, dtype_str='long'):
-        self.subset   = subset
+        self.subset    = subset
         self.dtype_str = dtype_str
         if dtype_str == 'long':
             self.b_labels = b_labels.astype(np.int64)
@@ -170,8 +184,10 @@ class FoldDataset(Dataset):
         x_t = torch.from_numpy(x1.astype(np.float32))
         if self.dtype_str == 'long':
             return x_t, torch.tensor(self.b_labels[idx], dtype=torch.long)
-        else:
+        elif self.dtype_str == 'float':
             return x_t, torch.tensor([self.b_labels[idx]], dtype=torch.float32)
+        else:  # hybrid
+            return x_t, torch.tensor(self.b_labels[idx], dtype=torch.float32)  # (2,)
 
 
 def make_loaders(x_fold, b_fold, dtype_str):
@@ -186,8 +202,10 @@ def make_loaders(x_fold, b_fold, dtype_str):
         x_t = torch.FloatTensor(X1_flat)
         if dtype_str == 'long':
             b_t = torch.LongTensor(b_fold)
-        else:
+        elif dtype_str == 'float':
             b_t = torch.FloatTensor(b_fold).unsqueeze(1)
+        else:  # hybrid: b_fold is (T, 2)
+            b_t = torch.FloatTensor(b_fold)
         return list(zip(
             [x_t[i:i+BATCH_SIZE] for i in range(0, len(x_t), BATCH_SIZE)],
             [b_t[i:i+BATCH_SIZE] for i in range(0, len(b_t), BATCH_SIZE)],
@@ -205,6 +223,22 @@ def predict_all(model, loader, squeeze_pred=False, squeeze_true=False):
             preds.append((out.squeeze(1) if squeeze_pred else out.argmax(dim=1)).cpu().numpy())
             trues.append((yb.squeeze(1) if squeeze_true else yb).numpy())
     return np.concatenate(preds), np.concatenate(trues)
+
+
+def predict_all_hybrid(model, loader, n_classes):
+    """Run hybrid model over loader, return (disc_preds, cont_preds, disc_true, cont_true)."""
+    model.eval()
+    disc_preds, cont_preds, disc_true, cont_true = [], [], [], []
+    with torch.no_grad():
+        for xb, yb in loader:
+            xb = xb.to(device)
+            out = model(xb)                               # (batch, n_classes + 1)
+            disc_preds.append(out[:, :n_classes].argmax(dim=1).cpu().numpy())
+            cont_preds.append(out[:, n_classes].cpu().numpy())
+            disc_true.append(yb[:, 0].long().numpy())
+            cont_true.append(yb[:, 1].numpy())
+    return (np.concatenate(disc_preds), np.concatenate(cont_preds),
+            np.concatenate(disc_true),  np.concatenate(cont_true))
 
 
 def fold_size(fold_split):
@@ -868,6 +902,242 @@ def run_continuous_evaluation():
 
 
 # ===========================================================================
+# HYBRID EVALUATION
+# ===========================================================================
+
+def run_hybrid_evaluation():
+    print(f"\n{'#'*70}")
+    print(f"### HYBRID EVALUATION — JOINT DISCRETE + CONTINUOUS DECODER ###")
+    print(f"{'#'*70}")
+    print(f"Alpha={HYBRID_ALPHA}  (α·CE_norm + (1-α)·MSE, matching BunDLeNet)")
+
+    import math
+
+    cv_splits, B_hyb_ = make_cv_splits(B_hybrid)
+    num_folds  = len(cv_splits)
+    state_labels = np.unique(B_hyb_[:, 0].astype(np.int64))
+    num_states   = len(state_labels)
+    ce_norm      = math.log(num_states)          # normalise CE to ~[0,1] — same as BunDLeNet
+    output_dim   = num_states + 1                # logits + 1 belief output
+    print(f"Prepared {num_folds}-fold CV. {num_states} states, output_dim={output_dim}.")
+
+    output_dir = os.path.join(data_path, 'microvariable_evaluation_hybrid')
+    os.makedirs(output_dir, exist_ok=True)
+
+    val_acc_list,   train_acc_list   = [], []
+    val_r2_list,    train_r2_list    = [], []
+    val_pr_list,    train_pr_list    = [], []
+    val_preds_per_fold,  val_true_per_fold   = [], []
+    val_cpreds_per_fold, val_ctrue_per_fold  = [], []
+
+    ce_loss_fn  = nn.CrossEntropyLoss()
+    mse_loss_fn = nn.MSELoss()
+
+    for fold_idx, (x_tr, x_val, b_tr, b_val) in enumerate(cv_splits):
+        print(f"\nFold {fold_idx+1}/{num_folds}: train={fold_size(x_tr)}, val={fold_size(x_val)}")
+
+        tr_loader  = make_loaders(x_tr,  b_tr,  'hybrid')
+        val_loader = make_loaders(x_val, b_val, 'hybrid')
+
+        fold_best_acc = -np.inf
+        fold_best_r2  = -np.inf
+
+        fold_val_acc, fold_val_r2, fold_val_pr     = [], [], []
+        fold_tr_acc,  fold_tr_r2,  fold_tr_pr      = [], [], []
+
+        for _ in tqdm(range(NUM_DECODER_RUNS), desc=f'Decoders hybrid fold {fold_idx+1}', leave=False):
+            model = nn.Linear(input_dim, output_dim).to(device)
+            opt   = optim.Adam(model.parameters(), lr=0.01)
+
+            for epoch in range(TRAIN_EPOCHS):
+                model.train()
+                for xb, yb in tr_loader:
+                    xb, yb = xb.to(device), yb.to(device)
+                    out      = model(xb)                       # (batch, num_states+1)
+                    logits   = out[:, :num_states]             # (batch, num_states)
+                    cont_out = out[:, num_states:num_states+1] # (batch, 1)
+                    disc_lbl = yb[:, 0].long()                 # (batch,)
+                    cont_lbl = yb[:, 1:2]                      # (batch, 1)
+                    loss = (HYBRID_ALPHA * ce_loss_fn(logits, disc_lbl) / ce_norm
+                            + (1 - HYBRID_ALPHA) * mse_loss_fn(cont_out, cont_lbl))
+                    opt.zero_grad(); loss.backward(); opt.step()
+
+            dp, cp, dt, ct = predict_all_hybrid(model, val_loader, num_states)
+            acc = accuracy_score(dt, dp)
+            r2  = regression_metrics(ct, cp)['r2']
+            pr  = regression_metrics(ct, cp)['pearson_r']
+            fold_val_acc.append(acc); fold_val_r2.append(r2); fold_val_pr.append(pr)
+
+            dp_tr, cp_tr, dt_tr, ct_tr = predict_all_hybrid(model, tr_loader, num_states)
+            fold_tr_acc.append(accuracy_score(dt_tr, dp_tr))
+            fold_tr_r2.append(regression_metrics(ct_tr, cp_tr)['r2'])
+            fold_tr_pr.append(regression_metrics(ct_tr, cp_tr)['pearson_r'])
+
+            if r2 > fold_best_r2:
+                fold_best_r2  = r2
+                fold_best_acc = acc
+                best_dp, best_cp, best_dt, best_ct = dp, cp, dt, ct
+
+        val_acc_list.extend(fold_val_acc);   train_acc_list.extend(fold_tr_acc)
+        val_r2_list.extend(fold_val_r2);     train_r2_list.extend(fold_tr_r2)
+        val_pr_list.extend(fold_val_pr);     train_pr_list.extend(fold_tr_pr)
+        val_preds_per_fold.append(best_dp);  val_true_per_fold.append(best_dt)
+        val_cpreds_per_fold.append(best_cp); val_ctrue_per_fold.append(best_ct)
+
+    val_acc   = np.array(val_acc_list);   tr_acc  = np.array(train_acc_list)
+    val_r2    = np.array(val_r2_list);    tr_r2   = np.array(train_r2_list)
+    val_pr    = np.array(val_pr_list);    tr_pr   = np.array(train_pr_list)
+
+    print(f"\n{'='*60}")
+    print(f"VALIDATION  Acc={val_acc.mean():.4f}±{val_acc.std():.4f}  "
+          f"R²={val_r2.mean():.4f}±{val_r2.std():.4f}  r={val_pr.mean():.4f}±{val_pr.std():.4f}")
+    print(f"TRAIN       Acc={tr_acc.mean():.4f}±{tr_acc.std():.4f}  "
+          f"R²={tr_r2.mean():.4f}±{tr_r2.std():.4f}  r={tr_pr.mean():.4f}±{tr_pr.std():.4f}")
+    print(f"ΔAcc={tr_acc.mean()-val_acc.mean():+.4f}  ΔR²={tr_r2.mean()-val_r2.mean():+.4f}")
+    print(f"{'='*60}")
+
+    # ── Permutation baselines ─────────────────────────────────────────────────
+    print(f"\nPermutation baselines ({NUM_PERMUTATIONS} permutations)...")
+    all_val_disc  = np.concatenate(val_true_per_fold)
+    all_val_cont  = np.concatenate(val_ctrue_per_fold)
+
+    perm_acc_list, perm_r2_list = [], []
+    for _ in tqdm(range(NUM_PERMUTATIONS), desc='Permutations', leave=False):
+        perm_acc_list.append(
+            accuracy_score(all_val_disc, np.random.choice(all_val_disc, size=all_val_disc.shape))
+        )
+        perm = np.random.permutation(all_val_cont)
+        ss_res = np.sum((all_val_cont - perm) ** 2)
+        ss_tot = np.sum((all_val_cont - all_val_cont.mean()) ** 2)
+        perm_r2_list.append(1.0 - ss_res / ss_tot if ss_tot > 0 else float('nan'))
+
+    perm_acc = np.array(perm_acc_list)
+    perm_r2  = np.array(perm_r2_list)
+    t_acc, p_acc = stats.ttest_ind(val_acc, perm_acc)
+    t_r2,  p_r2  = stats.ttest_ind(val_r2,  perm_r2)
+    print(f"Perm Acc: {perm_acc.mean():.4f}±{perm_acc.std():.4f}  t={t_acc:.3f} p={p_acc:.2e}")
+    print(f"Perm R²:  {perm_r2.mean():.4f}±{perm_r2.std():.4f}  t={t_r2:.3f}  p={p_r2:.2e}")
+
+    # ── Save raw ──────────────────────────────────────────────────────────────
+    np.savetxt(os.path.join(output_dir, f'acc_val_{session_dir}.txt'),        val_acc)
+    np.savetxt(os.path.join(output_dir, f'acc_train_{session_dir}.txt'),      tr_acc)
+    np.savetxt(os.path.join(output_dir, f'r2_val_{session_dir}.txt'),         val_r2)
+    np.savetxt(os.path.join(output_dir, f'r2_train_{session_dir}.txt'),       tr_r2)
+    np.savetxt(os.path.join(output_dir, f'pearson_r_val_{session_dir}.txt'),  val_pr)
+    np.savetxt(os.path.join(output_dir, f'acc_permutation_{session_dir}.txt'),perm_acc)
+    np.savetxt(os.path.join(output_dir, f'r2_permutation_{session_dir}.txt'), perm_r2)
+
+    # ── Figure: 2×3 summary ───────────────────────────────────────────────────
+    print("\nGenerating visualizations...")
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    fig.suptitle(f'Hybrid Decoder (α={HYBRID_ALPHA}) — {session_dir}', fontsize=16, fontweight='bold')
+
+    # [0,0] Accuracy: train / val / permutation
+    ax = axes[0, 0]
+    bp = ax.boxplot([tr_acc, val_acc, perm_acc], positions=[1, 2, 3], widths=0.6,
+                    patch_artist=True, showmeans=True,
+                    meanprops=dict(marker='D', markerfacecolor='red', markersize=8))
+    for p, c in zip(bp['boxes'], ['lightgreen', 'skyblue', 'lightgray']): p.set_facecolor(c)
+    ax.set_xticks([1, 2, 3]); ax.set_xticklabels(['Train', 'Validation', 'Permutation'])
+    ax.set_ylabel('Accuracy')
+    ax.set_title(f'Accuracy\nVal={val_acc.mean():.3f}±{val_acc.std():.3f}  p={p_acc:.2e}', fontweight='bold')
+    ax.grid(True, alpha=0.3, axis='y'); ax.set_ylim([0, 1.05])
+
+    # [0,1] R²: train / val / permutation
+    ax = axes[0, 1]
+    bp2 = ax.boxplot([tr_r2, val_r2, perm_r2], positions=[1, 2, 3], widths=0.6,
+                     patch_artist=True, showmeans=True,
+                     meanprops=dict(marker='D', markerfacecolor='red', markersize=8))
+    for p, c in zip(bp2['boxes'], ['lightgreen', 'skyblue', 'lightgray']): p.set_facecolor(c)
+    ax.set_xticks([1, 2, 3]); ax.set_xticklabels(['Train', 'Validation', 'Permutation'])
+    ax.set_ylabel('R²')
+    ax.set_title(f'R² (Belief)\nVal={val_r2.mean():.3f}±{val_r2.std():.3f}  p={p_r2:.2e}', fontweight='bold')
+    ax.grid(True, alpha=0.3, axis='y'); ax.axhline(0, color='black', linestyle='--', linewidth=0.8, alpha=0.5)
+
+    # [0,2] Pearson r
+    ax = axes[0, 2]
+    bp3 = ax.boxplot([tr_pr, val_pr], positions=[1, 2], widths=0.6,
+                     patch_artist=True, showmeans=True,
+                     meanprops=dict(marker='D', markerfacecolor='red', markersize=8))
+    for p, c in zip(bp3['boxes'], ['lightgreen', 'skyblue']): p.set_facecolor(c)
+    ax.set_xticks([1, 2]); ax.set_xticklabels(['Train', 'Validation'])
+    ax.set_ylabel('Pearson r')
+    ax.set_title(f'Pearson r (Belief)\nVal={val_pr.mean():.3f}±{val_pr.std():.3f}', fontweight='bold')
+    ax.grid(True, alpha=0.3, axis='y'); ax.axhline(0, color='black', linestyle='--', linewidth=0.8, alpha=0.5)
+
+    # [1,0] True vs Predicted belief (all folds, best run)
+    ax = axes[1, 0]
+    all_ct = np.concatenate(val_ctrue_per_fold)
+    all_cp = np.concatenate(val_cpreds_per_fold)
+    ax.scatter(all_ct, all_cp, alpha=0.2, s=5, color='steelblue', rasterized=True)
+    lim_lo = min(all_ct.min(), all_cp.min()); lim_hi = max(all_ct.max(), all_cp.max())
+    ax.plot([lim_lo, lim_hi], [lim_lo, lim_hi], 'r--', linewidth=1.5, label='Perfect')
+    r_all, _ = stats.pearsonr(all_ct, all_cp)
+    ax.text(0.05, 0.93, f'r={r_all:.3f}', transform=ax.transAxes, fontsize=11,
+            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.7))
+    ax.set_xlabel('True HGF Belief'); ax.set_ylabel('Predicted HGF Belief')
+    ax.set_title('True vs Predicted Belief (best runs)', fontweight='bold'); ax.legend(); ax.grid(True, alpha=0.3)
+
+    # [1,1] Per-fold R² and Acc bar
+    ax = axes[1, 1]
+    fold_val_acc_m = np.array([np.mean(val_acc_list[f*NUM_DECODER_RUNS:(f+1)*NUM_DECODER_RUNS]) for f in range(num_folds)])
+    fold_val_r2_m  = np.array([np.mean(val_r2_list [f*NUM_DECODER_RUNS:(f+1)*NUM_DECODER_RUNS]) for f in range(num_folds)])
+    xf = np.arange(num_folds)
+    ax.bar(xf - 0.175, fold_val_acc_m, 0.35, label='Val Acc',  color='skyblue',  alpha=0.85)
+    ax.bar(xf + 0.175, fold_val_r2_m,  0.35, label='Val R²',   color='tomato',   alpha=0.85)
+    ax.axhline(perm_acc.mean(), color='blue',  linestyle=':', linewidth=1.2, label=f'Perm Acc ({perm_acc.mean():.3f})')
+    ax.axhline(perm_r2.mean(),  color='red',   linestyle=':', linewidth=1.2, label=f'Perm R² ({perm_r2.mean():.3f})')
+    ax.set_xticks(xf); ax.set_xticklabels([f'F{i+1}' for i in range(num_folds)])
+    ax.set_xlabel('Fold'); ax.set_title('Per-Fold Val Acc & R²', fontweight='bold')
+    ax.legend(fontsize=8); ax.grid(True, alpha=0.3, axis='y')
+
+    # [1,2] Summary text
+    ax = axes[1, 2]; ax.axis('off')
+    summary = (
+        f"HYBRID SUMMARY — {session_dir}\n{'='*36}\n\n"
+        f"Alpha = {HYBRID_ALPHA}  (CE_norm + MSE)\n\n"
+        f"Accuracy (Discrete)\n"
+        f"  Val:   {val_acc.mean():.4f} ± {val_acc.std():.4f}\n"
+        f"  Train: {tr_acc.mean():.4f} ± {tr_acc.std():.4f}\n"
+        f"  Perm:  {perm_acc.mean():.4f}  p={p_acc:.2e}\n\n"
+        f"R² (Belief Regression)\n"
+        f"  Val:   {val_r2.mean():.4f} ± {val_r2.std():.4f}\n"
+        f"  Train: {tr_r2.mean():.4f} ± {tr_r2.std():.4f}\n"
+        f"  Perm:  {perm_r2.mean():.4f}  p={p_r2:.2e}\n\n"
+        f"Pearson r (Belief)\n"
+        f"  Val:   {val_pr.mean():.4f} ± {val_pr.std():.4f}\n"
+        f"  Train: {tr_pr.mean():.4f} ± {tr_pr.std():.4f}\n"
+    )
+    ax.text(0.05, 0.95, summary, transform=ax.transAxes, fontsize=10, va='top', family='monospace',
+            bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.9))
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, f'summary_{session_dir}.png'), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, f'summary_{session_dir}.pdf'), bbox_inches='tight')
+    plt.close(); print("  Saved summary figure.")
+
+    # ── Per-fold R² bar chart ─────────────────────────────────────────────────
+    fold_tr_r2_m  = np.array([np.mean(train_r2_list[f*NUM_DECODER_RUNS:(f+1)*NUM_DECODER_RUNS]) for f in range(num_folds)])
+    fold_val_r2_s = np.array([np.std( val_r2_list  [f*NUM_DECODER_RUNS:(f+1)*NUM_DECODER_RUNS]) for f in range(num_folds)])
+
+    fig2, ax2 = plt.subplots(figsize=(10, 5))
+    ax2.bar(xf - 0.175, fold_tr_r2_m,  0.35, label='Train R²', color='lightgreen', alpha=0.85)
+    ax2.bar(xf + 0.175, fold_val_r2_m, 0.35, yerr=fold_val_r2_s, capsize=4, label='Val R²', color='skyblue', alpha=0.85)
+    ax2.axhline(0, color='black', linestyle='--', linewidth=0.8)
+    ax2.axhline(perm_r2.mean(), color='gray', linestyle=':', linewidth=1.2, label=f'Permutation ({perm_r2.mean():.3f})')
+    ax2.set_xticks(xf); ax2.set_xticklabels([f'F{i+1}' for i in range(num_folds)])
+    ax2.set_xlabel('Fold'); ax2.set_ylabel('R²')
+    ax2.set_title(f'R² per Fold (Hybrid) — {session_dir}', fontsize=13, fontweight='bold')
+    ax2.legend(); ax2.grid(True, alpha=0.3, axis='y')
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, f'per_fold_r2_{session_dir}.png'), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, f'per_fold_r2_{session_dir}.pdf'), bbox_inches='tight')
+    plt.close(); print("  Saved per-fold R² figure.")
+
+    print(f"\nHybrid evaluation done. Results → {output_dir}/")
+
+
+# ===========================================================================
 # MAIN
 # ===========================================================================
 
@@ -876,6 +1146,9 @@ if RUN_DISCRETE:
 
 if RUN_CONTINUOUS:
     run_continuous_evaluation()
+
+if RUN_HYBRID:
+    run_hybrid_evaluation()
 
 print(f"\n{'='*60}")
 print(f"All done.  Session: {session_dir}")
