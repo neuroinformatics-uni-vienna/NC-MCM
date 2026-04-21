@@ -58,8 +58,9 @@ RUN_CONTINUOUS      = True          # regression: HGF belief → MSE decoder (re
 # --- Data pipeline ----------------------------------------------------------
 WINDOW_SIZE         = 60            # sliding window length (timesteps)
 NUM_OF_SPLITS       = 9             # number of time-series CV folds
-USE_LAZY_LOADING    = True          # True = memory-efficient (required for large datasets)
+USE_LAZY_LOADING    = True           # True = memory-efficient (required for large datasets)
                                     # False = eager numpy (fast but may OOM)
+NUM_WORKERS         = 4             # DataLoader worker processes for prefetching (USE_LAZY_LOADING only)
 
 # --- Decoder training -------------------------------------------------------
 NUM_DECODER_RUNS    = 10            # independent decoder runs per fold
@@ -177,7 +178,7 @@ def make_loaders(x_fold, b_fold, dtype_str):
     """Build train/val DataLoaders (lazy) or tensors (eager)."""
     if USE_LAZY_LOADING:
         ds = FoldDataset(x_fold, b_fold, dtype_str)
-        return DataLoader(ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
+        return DataLoader(ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=NUM_WORKERS, persistent_workers=NUM_WORKERS > 0)
     else:
         # Eager: x_fold shape (T, 2, win, N); channel 1
         X1 = x_fold[:, 1, :, :]  # (T, win, N)
