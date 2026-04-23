@@ -444,7 +444,13 @@ def visualize_latent_space(y, b, b_labels, output_dir, vis_range, data_split='tr
     # Save latent trajectories and behaviour labels with split name
     np.save(output_dir / 'data' / f'latent_trajectories_{data_split}.npy', y)
     np.save(output_dir / 'data' / f'behaviour_labels_{data_split}.npy', b)
-    
+
+    # Save continuous variables (e.g. HGF belief) when present
+    if continuous_vars is not None:
+        for var_name, var_array in continuous_vars.items():
+            safe_name = var_name.lower().replace(' ', '_')
+            np.save(output_dir / 'data' / f'{safe_name}_{data_split}.npy', var_array)
+
     vis = LatentSpaceVisualiser(y_vis, b_vis, b_labels, show_points=True, colors=colors)
     
     # Time series plot
