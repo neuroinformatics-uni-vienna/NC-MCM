@@ -16,6 +16,7 @@ import numpy as np
 import os
 import json
 import datetime
+from pathlib import Path
 from collections import defaultdict
 import torch
 import torch.nn as nn
@@ -62,10 +63,20 @@ HYBRID_ALPHA        = 0.1           # α * CE_norm + (1-α) * MSE  (matches BunD
 
 # --- Data pipeline ----------------------------------------------------------
 WINDOW_SIZE         = 60            # sliding window length (timesteps)
-NUM_OF_SPLITS       = 9             # number of time-series CV folds
+NUM_OF_SPLITS       = 9             # number of time-series CV folds (only used when SPLIT_MODE='cv')
 USE_LAZY_LOADING    = True           # True = memory-efficient (required for large datasets)
                                     # False = eager numpy (fast but may OOM)
 NUM_WORKERS         = 4             # DataLoader worker processes for prefetching (USE_LAZY_LOADING only)
+
+# --- Split mode -------------------------------------------------------------
+# 'cv'         : NUM_OF_SPLITS-fold time-series cross-validation (default, thorough)
+# 'test_split' : single temporal train/val split — comparable to BunDLeNet's fixed split
+SPLIT_MODE          = 'cv'          # 'cv' | 'test_split'
+TEST_SPLIT_RATIO    = 0.8           # fraction used for training (only when SPLIT_MODE='test_split')
+# Optional: path to a BunDLeNet run folder.  When set, SPLIT_MODE is forced to
+# 'test_split' and the exact split point is read from the run folder so the
+# evaluation uses the same train/val partition as BunDLeNet.
+BUNDLENET_RUN_FOLDER = None         # e.g. 'results/twoArmBandit/hybrid_alpha_search/.../run_004_...'
 
 # --- Decoder training -------------------------------------------------------
 NUM_DECODER_RUNS    = 10            # independent decoder runs per fold
@@ -143,8 +154,31 @@ B_hybrid = make_hybrid_b(B, B_belief) if (USE_HGF and B_belief is not None) else
 # ===========================================================================
 
 _ts      = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+
+# Resolve split mode — BunDLeNet run folder overrides SPLIT_MODE
+_active_split_mode = SPLIT_MODE
+_bundlenet_split_idx = None
+if BUNDLENET_RUN_FOLDER is not None:
+    import json as _json
+    _bn_dir = Path(BUNDLENET_RUN_FOLDER)
+    with open(_bn_dir / 'config.json') as _f:
+        _bn_cfg = _json.load(_f)
+    _bn_window = _bn_cfg['window']
+    _bn_n_train = len(np.load(_bn_dir / 'data' / 'latent_trajectories_train.npy'))
+    _bundlenet_split_idx = _bn_n_train + _bn_window - 1
+    _active_split_mode = 'test_split'
+    print(f"BunDLeNet run folder: {_bn_dir.name}")
+    print(f"  → using exact BunDLeNet split at raw index {_bundlenet_split_idx}")
+
+_split_suffix = 'cv' if _active_split_mode == 'cv' else 'testsplit'
+if _active_split_mode == 'cv':
+    _split_label = f'{NUM_OF_SPLITS}-fold CV'
+elif BUNDLENET_RUN_FOLDER is not None:
+    _split_label = f'test split (BunDLeNet match, idx={_bundlenet_split_idx})'
+else:
+    _split_label = f'test split ({int(TEST_SPLIT_RATIO*100)}/{int((1-TEST_SPLIT_RATIO)*100)})'
 run_dir  = os.path.join('results', 'twoArmBandit', 'microvariable_evaluation',
-                        f'{session_dir}_{_ts}')
+                        f'{session_dir}_{_ts}_{_split_suffix}')
 for _sub in ('discrete', 'hybrid', 'continuous'):
     os.makedirs(os.path.join(run_dir, _sub), exist_ok=True)
 
@@ -164,6 +198,9 @@ _config = dict(
     run_continuous=RUN_CONTINUOUS,
     # pipeline
     window_size=WINDOW_SIZE, num_of_splits=NUM_OF_SPLITS,
+    split_mode=_active_split_mode, test_split_ratio=TEST_SPLIT_RATIO,
+    bundlenet_run_folder=str(BUNDLENET_RUN_FOLDER),
+    bundlenet_split_idx=_bundlenet_split_idx,
     use_lazy_loading=USE_LAZY_LOADING, num_workers=NUM_WORKERS,
     # training
     num_decoder_runs=NUM_DECODER_RUNS, train_epochs=TRAIN_EPOCHS,
@@ -182,13 +219,35 @@ print(f"Config written → {run_dir}/config.json")
 # ===========================================================================
 
 def make_cv_splits(label_array):
-    """Return CV splits for a given label array using the configured pipeline."""
-    if USE_LAZY_LOADING:
-        X_, B_ = prep_data_lazy(X, label_array, win=WINDOW_SIZE)
-        return timeseries_train_test_split_cv_lazy(X_, B_, NUM_OF_SPLITS), B_
+    """Return CV splits for a given label array using the configured pipeline.
+
+    Returns a list of (x_tr, x_val, b_tr, b_val) tuples and the processed B.
+    In 'cv' mode: NUM_OF_SPLITS folds.
+    In 'test_split' mode: a single-element list with one temporal split.
+    """
+    if _active_split_mode == 'cv':
+        if USE_LAZY_LOADING:
+            X_, B_ = prep_data_lazy(X, label_array, win=WINDOW_SIZE)
+            return timeseries_train_test_split_cv_lazy(X_, B_, NUM_OF_SPLITS), B_
+        else:
+            X_, B_ = prep_data(X, label_array, win=WINDOW_SIZE)
+            return timeseries_train_test_split_cv(X_, B_, NUM_OF_SPLITS), B_
     else:
-        X_, B_ = prep_data(X, label_array, win=WINDOW_SIZE)
-        return timeseries_train_test_split_cv(X_, B_, NUM_OF_SPLITS), B_
+        # Single temporal split
+        if USE_LAZY_LOADING:
+            X_, B_ = prep_data_lazy(X, label_array, win=WINDOW_SIZE)
+        else:
+            X_, B_ = prep_data(X, label_array, win=WINDOW_SIZE)
+        # Determine split index in embedded space
+        if _bundlenet_split_idx is not None:
+            # Convert raw split index to embedded index: raw_idx - (window - 1)
+            split_emb = _bundlenet_split_idx - (WINDOW_SIZE - 1)
+        else:
+            split_emb = int(len(X_) * TEST_SPLIT_RATIO)
+        split_emb = max(1, min(split_emb, len(X_) - 1))
+        x_tr, x_val = X_[:split_emb], X_[split_emb:]
+        b_tr, b_val = B_[:split_emb], B_[split_emb:]
+        return [(x_tr, x_val, b_tr, b_val)], B_
 
 
 n_neurons = X.shape[1]
@@ -537,7 +596,8 @@ def run_discrete_evaluation():
     # (1,2) Summary text
     ax = axs[1, 2]; ax.axis('off')
     summary_t = (
-        f"SUMMARY — {session_dir}\n{'─'*36}\n\n"
+        f"SUMMARY — {session_dir}\n{'─'*36}\n"
+        f"Split: {_split_label}\n\n"
         f"Val Accuracy\n"
         f"  Unweighted : {res_uw['val_acc_list'].mean():.3f} ± {res_uw['val_acc_list'].std():.3f}\n"
         f"  Weighted   : {res_w['val_acc_list'].mean():.3f} ± {res_w['val_acc_list'].std():.3f}\n"
@@ -847,7 +907,8 @@ def run_hybrid_evaluation():
     ax = axs[1, 2]; ax.axis('off')
     summary_t = (
         f"HYBRID SUMMARY — {session_dir}\n{'─'*36}\n"
-        f"Alpha = {HYBRID_ALPHA}  (α·CE_norm + (1-α)·MSE)\n\n"
+        f"Alpha = {HYBRID_ALPHA}  (α·CE_norm + (1-α)·MSE)\n"
+        f"Split: {_split_label}\n\n"
         f"Val Accuracy\n"
         f"  Unweighted : {res_uw['val_acc_list'].mean():.3f} ± {res_uw['val_acc_list'].std():.3f}\n"
         f"  Weighted   : {res_w['val_acc_list'].mean():.3f} ± {res_w['val_acc_list'].std():.3f}\n"
