@@ -16,8 +16,8 @@ import numpy as np
 import os
 import json
 import datetime
-from pathlib import Path
 from collections import defaultdict
+from sklearn.model_selection import KFold
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -70,13 +70,8 @@ NUM_WORKERS         = 4             # DataLoader worker processes for prefetchin
 
 # --- Split mode -------------------------------------------------------------
 # 'cv'         : NUM_OF_SPLITS-fold time-series cross-validation (default, thorough)
-# 'test_split' : single temporal train/val split — comparable to BunDLeNet's fixed split
+# 'test_split' : KFold(n_splits=7) fold-4 — same non-contiguous split used by BunDLeNet
 SPLIT_MODE          = 'cv'          # 'cv' | 'test_split'
-TEST_SPLIT_RATIO    = 0.8           # fraction used for training (only when SPLIT_MODE='test_split')
-# Optional: path to a BunDLeNet run folder.  When set, SPLIT_MODE is forced to
-# 'test_split' and the exact split point is read from the run folder so the
-# evaluation uses the same train/val partition as BunDLeNet.
-BUNDLENET_RUN_FOLDER = None         # e.g. 'results/twoArmBandit/hybrid_alpha_search/.../run_004_...'
 
 # --- Decoder training -------------------------------------------------------
 NUM_DECODER_RUNS    = 10            # independent decoder runs per fold
@@ -155,28 +150,12 @@ B_hybrid = make_hybrid_b(B, B_belief) if (USE_HGF and B_belief is not None) else
 
 _ts      = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
 
-# Resolve split mode — BunDLeNet run folder overrides SPLIT_MODE
 _active_split_mode = SPLIT_MODE
-_bundlenet_split_idx = None
-if BUNDLENET_RUN_FOLDER is not None:
-    import json as _json
-    _bn_dir = Path(BUNDLENET_RUN_FOLDER)
-    with open(_bn_dir / 'config.json') as _f:
-        _bn_cfg = _json.load(_f)
-    _bn_window = _bn_cfg['window']
-    _bn_n_train = len(np.load(_bn_dir / 'data' / 'latent_trajectories_train.npy'))
-    _bundlenet_split_idx = _bn_n_train + _bn_window - 1
-    _active_split_mode = 'test_split'
-    print(f"BunDLeNet run folder: {_bn_dir.name}")
-    print(f"  → using exact BunDLeNet split at raw index {_bundlenet_split_idx}")
-
 _split_suffix = 'cv' if _active_split_mode == 'cv' else 'testsplit'
 if _active_split_mode == 'cv':
     _split_label = f'{NUM_OF_SPLITS}-fold CV'
-elif BUNDLENET_RUN_FOLDER is not None:
-    _split_label = f'test split (BunDLeNet match, idx={_bundlenet_split_idx})'
 else:
-    _split_label = f'test split ({int(TEST_SPLIT_RATIO*100)}/{int((1-TEST_SPLIT_RATIO)*100)})'
+    _split_label = 'KFold-7 fold-4 (BunDLeNet-style)'
 run_dir  = os.path.join('results', 'twoArmBandit', 'microvariable_evaluation',
                         f'{session_dir}_{_ts}_{_split_suffix}')
 for _sub in ('discrete', 'hybrid', 'continuous'):
@@ -198,9 +177,7 @@ _config = dict(
     run_continuous=RUN_CONTINUOUS,
     # pipeline
     window_size=WINDOW_SIZE, num_of_splits=NUM_OF_SPLITS,
-    split_mode=_active_split_mode, test_split_ratio=TEST_SPLIT_RATIO,
-    bundlenet_run_folder=str(BUNDLENET_RUN_FOLDER),
-    bundlenet_split_idx=_bundlenet_split_idx,
+    split_mode=_active_split_mode,
     use_lazy_loading=USE_LAZY_LOADING, num_workers=NUM_WORKERS,
     # training
     num_decoder_runs=NUM_DECODER_RUNS, train_epochs=TRAIN_EPOCHS,
@@ -233,21 +210,28 @@ def make_cv_splits(label_array):
             X_, B_ = prep_data(X, label_array, win=WINDOW_SIZE)
             return timeseries_train_test_split_cv(X_, B_, NUM_OF_SPLITS), B_
     else:
-        # Single temporal split
+        # KFold(n_splits=7, shuffle=False) fold-4 — same split used by BunDLeNet
         if USE_LAZY_LOADING:
+            from torch.utils.data import Subset
             X_, B_ = prep_data_lazy(X, label_array, win=WINDOW_SIZE)
+            kf = KFold(n_splits=7, shuffle=False)
+            for i, (train_idx, test_idx) in enumerate(kf.split(range(len(X_)))):
+                if i == 4:
+                    x_tr  = Subset(X_, train_idx)
+                    x_val = Subset(X_, test_idx)
+                    b_tr  = B_[train_idx]
+                    b_val = B_[test_idx]
+                    return [(x_tr, x_val, b_tr, b_val)], B_
         else:
             X_, B_ = prep_data(X, label_array, win=WINDOW_SIZE)
-        # Determine split index in embedded space
-        if _bundlenet_split_idx is not None:
-            # Convert raw split index to embedded index: raw_idx - (window - 1)
-            split_emb = _bundlenet_split_idx - (WINDOW_SIZE - 1)
-        else:
-            split_emb = int(len(X_) * TEST_SPLIT_RATIO)
-        split_emb = max(1, min(split_emb, len(X_) - 1))
-        x_tr, x_val = X_[:split_emb], X_[split_emb:]
-        b_tr, b_val = B_[:split_emb], B_[split_emb:]
-        return [(x_tr, x_val, b_tr, b_val)], B_
+            kf = KFold(n_splits=7, shuffle=False)
+            for i, (train_idx, test_idx) in enumerate(kf.split(X_)):
+                if i == 4:
+                    x_tr  = X_[train_idx]
+                    x_val = X_[test_idx]
+                    b_tr  = B_[train_idx]
+                    b_val = B_[test_idx]
+                    return [(x_tr, x_val, b_tr, b_val)], B_
 
 
 n_neurons = X.shape[1]
