@@ -22,7 +22,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
-from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, precision_recall_fscore_support
+from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, precision_recall_fscore_support, r2_score
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
@@ -57,6 +57,7 @@ HGF_BELIEF_RANGE    = None          # None = use KNOWN_HGF_RANGES; or explicit (
 # --- Evaluation modes -------------------------------------------------------
 RUN_DISCRETE        = True           # classification: behavioral state → cross-entropy decoder
 RUN_HYBRID          = True           # joint decoder: discrete + continuous (requires USE_HGF=True)
+RUN_CONTINUOUS      = True           # regression: HGF belief trajectory → MSE decoder (requires USE_HGF=True)
 HYBRID_ALPHA        = 0.1           # α * CE_norm + (1-α) * MSE  (matches BunDLeNet default)
 
 # --- Data pipeline ----------------------------------------------------------
@@ -80,6 +81,12 @@ if RUN_HYBRID and not USE_HGF:
     raise ValueError(
         "RUN_HYBRID=True requires USE_HGF=True. "
         "Either set USE_HGF=True or disable RUN_HYBRID."
+    )
+
+if RUN_CONTINUOUS and not USE_HGF:
+    raise ValueError(
+        "RUN_CONTINUOUS=True requires USE_HGF=True. "
+        "Either set USE_HGF=True or disable RUN_CONTINUOUS."
     )
 
 # ===========================================================================
@@ -138,7 +145,7 @@ B_hybrid = make_hybrid_b(B, B_belief) if (USE_HGF and B_belief is not None) else
 _ts      = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
 run_dir  = os.path.join('results', 'twoArmBandit', 'microvariable_evaluation',
                         f'{session_dir}_{_ts}')
-for _sub in ('discrete', 'hybrid'):
+for _sub in ('discrete', 'hybrid', 'continuous'):
     os.makedirs(os.path.join(run_dir, _sub), exist_ok=True)
 
 _config = dict(
@@ -154,6 +161,7 @@ _config = dict(
     # modes
     run_discrete=RUN_DISCRETE,
     run_hybrid=RUN_HYBRID, hybrid_alpha=HYBRID_ALPHA,
+    run_continuous=RUN_CONTINUOUS,
     # pipeline
     window_size=WINDOW_SIZE, num_of_splits=NUM_OF_SPLITS,
     use_lazy_loading=USE_LAZY_LOADING, num_workers=NUM_WORKERS,
@@ -344,28 +352,8 @@ def run_discrete_evaluation():
     # ── Output dir ───────────────────────────────────────────────────────────
     output_dir = os.path.join(run_dir, 'discrete')
 
-    # ── Class-weights plot ────────────────────────────────────────────────────
+    # x_pos used in summary figure below
     x_pos = np.arange(len(state_labels))
-    fig_w, ax_w = plt.subplots(figsize=(10, 6))
-    bars = ax_w.bar(x_pos, weights_list, alpha=0.8, edgecolor='black')
-    mn, mx = min(weights_list), max(weights_list)
-    for bar, w in zip(bars, weights_list):
-        nrm = (w - mn) / (mx - mn) if mx != mn else 0.5
-        bar.set_color(plt.cm.RdYlGn_r(nrm))
-    ax_w.axhline(1.0, color='black', linestyle='--', linewidth=1.5, label='weight=1.0')
-    ax_w.set_xticks(x_pos)
-    ax_w.set_xticklabels([b_labels_dict.get(s, f'S{s}') for s in state_labels], rotation=45, ha='right')
-    ax_w.set_ylabel('Class Weight'); ax_w.set_xlabel('Behavioral State')
-    ax_w.set_title('Class Weights for Weighted Loss', fontweight='bold')
-    ax_w.legend(); ax_w.grid(True, alpha=0.3, axis='y')
-    for bar, w in zip(bars, weights_list):
-        ax_w.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.02,
-                  f'{w:.2f}', ha='center', va='bottom', fontsize=10, fontweight='bold')
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, f'class_weights_{session_dir}.png'), dpi=300, bbox_inches='tight')
-    plt.savefig(os.path.join(output_dir, f'class_weights_{session_dir}.pdf'), bbox_inches='tight')
-    plt.close()
-    print(f"Saved class weights plot → {output_dir}/")
 
     # ── Inner training function ───────────────────────────────────────────────
     def _train(use_weighted_loss, suffix):
@@ -437,247 +425,18 @@ def run_discrete_evaluation():
         )
 
     def _save(results):
-        suffix    = results['suffix']
-        loss_type = results['loss_type']
-        val_acc   = results['val_acc_list']
-        tr_acc    = results['train_acc_list']
-        val_f1    = results['val_all_f1_scores']
-        tr_f1     = results['train_all_f1_scores']
-        avg_conf  = results['avg_conf_matrix_val']
-        tr_conf   = results['avg_conf_matrix_train']
-
-        np.savetxt(os.path.join(output_dir, f'acc_list_val_{session_dir}{suffix}.txt'),   val_acc)
-        np.savetxt(os.path.join(output_dir, f'acc_list_train_{session_dir}{suffix}.txt'), tr_acc)
-        np.save(os.path.join(output_dir, f'all_f1_scores_val_{session_dir}{suffix}.npy'),   val_f1)
-        np.save(os.path.join(output_dir, f'all_f1_scores_train_{session_dir}{suffix}.npy'), tr_f1)
-
-        val_f1_means = val_f1.mean(axis=0)
-        tr_f1_means  = tr_f1.mean(axis=0)
-        f1_gap       = tr_f1_means - val_f1_means
-
-        # ── Comprehensive train/val comparison (8 panels) ────────────────────
-        fig = plt.figure(figsize=(24, 16))
-        fig.suptitle(f'{loss_type} Loss Results — {session_dir}', fontsize=18, fontweight='bold', y=1.01)
-
-        # 0: label distribution
-        ax0 = plt.subplot(2, 4, 1)
-        w   = 0.35
-        tc  = [train_label_counts.get(s, 0) for s in state_labels]
-        vc  = [val_label_counts.get(s, 0)   for s in state_labels]
-        ax0.bar(x_pos - w/2, tc, w, label='Train',      color='lightgreen', alpha=0.8)
-        ax0.bar(x_pos + w/2, vc, w, label='Validation', color='skyblue',    alpha=0.8)
-        ax0.set_xticks(x_pos); ax0.set_xticklabels([b_labels_dict.get(s, f'S{s}') for s in state_labels], rotation=45, ha='right')
-        ax0.set_title('Label Distribution', fontweight='bold'); ax0.legend(); ax0.grid(True, alpha=0.3, axis='y')
-
-        # 1: accuracy boxplot
-        ax1 = plt.subplot(2, 4, 2)
-        bp  = ax1.boxplot([tr_acc, val_acc], positions=[1, 2], widths=0.6, patch_artist=True, showmeans=True,
-                          meanprops=dict(marker='D', markerfacecolor='red', markersize=8))
-        for patch, col in zip(bp['boxes'], ['lightgreen', 'skyblue']): patch.set_facecolor(col)
-        ax1.set_xticks([1, 2]); ax1.set_xticklabels(['Train', 'Validation'])
-        ax1.set_ylabel('Accuracy'); ax1.set_title(f'Accuracy\nGap={tr_acc.mean()-val_acc.mean():.3f}', fontweight='bold')
-        ax1.grid(True, alpha=0.3, axis='y'); ax1.set_ylim([0, 1.05])
-
-        # 2: per-state F1 boxplots
-        ax2 = plt.subplot(2, 4, 3)
-        f1_data = []
-        for si, sl in enumerate(state_labels):
-            for ri in range(val_f1.shape[0]):
-                f1_data += [
-                    {'State': b_labels_dict.get(sl, f'S{sl}'), 'F1': val_f1[ri, si],   'Set': 'Validation'},
-                    {'State': b_labels_dict.get(sl, f'S{sl}'), 'F1': tr_f1[ri,  si],   'Set': 'Train'},
-                ]
-        sns.boxplot(data=pd.DataFrame(f1_data), x='State', y='F1', hue='Set', ax=ax2,
-                    palette={'Train': 'lightgreen', 'Validation': 'skyblue'})
-        ax2.set_title('Per-State F1', fontweight='bold'); ax2.tick_params(axis='x', rotation=45)
-        ax2.grid(True, alpha=0.3, axis='y')
-
-        # 3: confusion matrix (val)
-        ax3 = plt.subplot(2, 4, 4)
-        sns.heatmap(avg_conf, annot=True, fmt='.1f', cmap='Blues', ax=ax3,
-                    xticklabels=[b_labels_dict.get(s, f'S{s}') for s in state_labels],
-                    yticklabels=[b_labels_dict.get(s, f'S{s}') for s in state_labels])
-        ax3.set_title('Confusion Matrix (Val)', fontweight='bold')
-
-        # 4: confusion matrix (train)
-        ax4 = plt.subplot(2, 4, 5)
-        sns.heatmap(tr_conf, annot=True, fmt='.1f', cmap='Greens', ax=ax4,
-                    xticklabels=[b_labels_dict.get(s, f'S{s}') for s in state_labels],
-                    yticklabels=[b_labels_dict.get(s, f'S{s}') for s in state_labels])
-        ax4.set_title('Confusion Matrix (Train)', fontweight='bold')
-
-        # 5: F1 bar
-        ax5 = plt.subplot(2, 4, 6)
-        ax5.bar(x_pos - w/2, tr_f1_means,  w, label='Train',      color='lightgreen', alpha=0.8)
-        ax5.bar(x_pos + w/2, val_f1_means, w, label='Validation',  color='skyblue',    alpha=0.8)
-        ax5.set_xticks(x_pos); ax5.set_xticklabels([b_labels_dict.get(s, f'S{s}') for s in state_labels], rotation=45, ha='right')
-        ax5.set_title('F1 Score', fontweight='bold'); ax5.legend(); ax5.grid(True, alpha=0.3, axis='y'); ax5.set_ylim([0, 1.05])
-
-        # 6: F1 gap
-        ax6 = plt.subplot(2, 4, 7)
-        ax6.bar(x_pos, f1_gap, color=['green' if g > 0 else 'red' for g in f1_gap], alpha=0.7)
-        ax6.axhline(0, color='black', linewidth=0.5)
-        ax6.axhline(f1_gap.mean(), color='red', linestyle='--', label=f'Mean: {f1_gap.mean():.3f}')
-        ax6.set_xticks(x_pos); ax6.set_xticklabels([b_labels_dict.get(s, f'S{s}') for s in state_labels], rotation=45, ha='right')
-        ax6.set_title('F1 Gap (Train−Val)', fontweight='bold'); ax6.legend(); ax6.grid(True, alpha=0.3, axis='y')
-
-        # 7: F1 vs sample count
-        ax7 = plt.subplot(2, 4, 8)
-        vc_arr = np.array([val_label_counts.get(s, 0) for s in state_labels])
-        ax7.scatter(vc_arr, val_f1_means, s=100, c='skyblue', edgecolors='blue', alpha=0.8)
-        for i, (x_, y_) in enumerate(zip(vc_arr, val_f1_means)):
-            ax7.annotate(b_labels_dict.get(state_labels[i], f'S{state_labels[i]}'), (x_, y_), xytext=(5,5), textcoords='offset points', fontsize=9)
-        ax7.set_xlabel('Val sample count'); ax7.set_ylabel('F1'); ax7.set_title('F1 vs Sample Count', fontweight='bold'); ax7.grid(True, alpha=0.3)
-        corr = np.corrcoef(vc_arr, val_f1_means)[0, 1]
-        ax7.text(0.05, 0.95, f'r={corr:.3f}', transform=ax7.transAxes, va='top', fontsize=11,
-                 bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-
-        plt.tight_layout()
-        plt.savefig(os.path.join(output_dir, f'train_validation_comparison_{session_dir}{suffix}.png'), dpi=300, bbox_inches='tight')
-        plt.savefig(os.path.join(output_dir, f'train_validation_comparison_{session_dir}{suffix}.pdf'), bbox_inches='tight')
-        plt.close()
-        print(f"  Saved train/validation comparison ({loss_type})")
-
-        # ── Normalized confusion + precision/recall (detailed) ────────────────
-        fig_d, axs_d = plt.subplots(2, 3, figsize=(20, 12))
-        fig_d.suptitle(f'{loss_type} Loss — Detailed Analysis', fontsize=16, fontweight='bold', y=1.01)
-
-        ax = axs_d[0, 0]; sns.boxplot(y=val_acc, ax=ax, color='skyblue')
-        ax.axhline(val_acc.mean(), color='red', linestyle='--', label=f'Mean: {val_acc.mean():.3f}')
-        ax.set_ylabel('Accuracy'); ax.set_title('Val Accuracy Distribution', fontweight='bold'); ax.legend(); ax.grid(True, alpha=0.3)
-
-        ax = axs_d[0, 1]
-        f1_df_val = pd.DataFrame([{'State': b_labels_dict.get(sl, f'S{sl}'), 'F1': val_f1[ri, si]}
-                                   for si, sl in enumerate(state_labels) for ri in range(val_f1.shape[0])])
-        sns.boxplot(data=f1_df_val, x='State', y='F1', ax=ax, palette='Set2')
-        ax.set_title('Per-State F1 (Val)', fontweight='bold'); ax.tick_params(axis='x', rotation=45); ax.grid(True, alpha=0.3, axis='y')
-
-        ax = axs_d[0, 2]; sns.heatmap(avg_conf, annot=True, fmt='.1f', cmap='Blues', ax=ax,
-                                       xticklabels=[b_labels_dict.get(s, f'S{s}') for s in state_labels],
-                                       yticklabels=[b_labels_dict.get(s, f'S{s}') for s in state_labels])
-        ax.set_title('Average Confusion Matrix', fontweight='bold')
-
-        ax = axs_d[1, 0]
-        norm_conf = avg_conf / avg_conf.sum(axis=1, keepdims=True) * 100
-        sns.heatmap(norm_conf, annot=True, fmt='.1f', cmap='RdYlGn', ax=ax,
-                    xticklabels=[b_labels_dict.get(s, f'S{s}') for s in state_labels],
-                    yticklabels=[b_labels_dict.get(s, f'S{s}') for s in state_labels],
-                    cbar_kws={'label': '%'})
-        ax.set_title('Normalized Confusion Matrix (%)', fontweight='bold')
-
-        ax = axs_d[1, 1]
-        avg_prec, avg_rec, avg_f1_per = [], [], []
-        for si, sl in enumerate(state_labels):
-            precs, recs = [], []
-            for pred, true in zip(results['val_all_predictions'], results['val_true_labels']):
-                p, r, _, _ = precision_recall_fscore_support(
-                    np.asarray(true, dtype=np.int64).ravel(),
-                    np.asarray(pred, dtype=np.int64).ravel(),
-                    labels=state_labels, zero_division=0, average=None)
-                precs.append(p[si]); recs.append(r[si])
-            avg_prec.append(np.mean(precs)); avg_rec.append(np.mean(recs))
-            avg_f1_per.append(val_f1_means[si])
-        w_ = 0.25
-        ax.bar(x_pos - w_, avg_prec,  w_, label='Precision', alpha=0.8)
-        ax.bar(x_pos,      avg_rec,   w_, label='Recall',    alpha=0.8)
-        ax.bar(x_pos + w_, avg_f1_per,w_, label='F1',        alpha=0.8)
-        ax.set_xticks(x_pos); ax.set_xticklabels([b_labels_dict.get(s, f'S{s}') for s in state_labels], rotation=45, ha='right')
-        ax.set_title('Precision / Recall / F1 (Val)', fontweight='bold'); ax.legend(); ax.grid(True, alpha=0.3, axis='y'); ax.set_ylim([0, 1.05])
-
-        ax = axs_d[1, 2]
-        ax.errorbar(state_labels, val_f1_means, yerr=val_f1.std(axis=0), fmt='o-', capsize=5, capthick=2, markersize=8, linewidth=2)
-        ax.set_title('F1 per State (mean ± std)', fontweight='bold'); ax.grid(True, alpha=0.3); ax.set_ylim([0, 1.05])
-
-        plt.tight_layout()
-        plt.savefig(os.path.join(output_dir, f'detailed_analysis_{session_dir}{suffix}.png'), dpi=300, bbox_inches='tight')
-        plt.savefig(os.path.join(output_dir, f'detailed_analysis_{session_dir}{suffix}.pdf'), bbox_inches='tight')
-        plt.close()
-        print(f"  Saved detailed analysis ({loss_type})")
-
-        return output_dir
+        """Save data files only — figures are produced once after both variants finish."""
+        suffix = results['suffix']
+        np.savetxt(os.path.join(output_dir, f'acc_list_val_{session_dir}{suffix}.txt'),   results['val_acc_list'])
+        np.savetxt(os.path.join(output_dir, f'acc_list_train_{session_dir}{suffix}.txt'), results['train_acc_list'])
+        np.save(os.path.join(output_dir, f'all_f1_scores_val_{session_dir}{suffix}.npy'),   results['val_all_f1_scores'])
+        np.save(os.path.join(output_dir, f'all_f1_scores_train_{session_dir}{suffix}.npy'), results['train_all_f1_scores'])
 
     # ── Run both loss variants ───────────────────────────────────────────────
     res_uw = _train(use_weighted_loss=False, suffix='_unweighted')
     _save(res_uw)
     res_w  = _train(use_weighted_loss=True,  suffix='_weighted')
     _save(res_w)
-
-    # ── Weighted vs unweighted comparison ────────────────────────────────────
-    print("\nGenerating weighted vs unweighted comparison...")
-    fig_c = plt.figure(figsize=(20, 12))
-    fig_c.suptitle('Weighted vs Unweighted Loss Comparison', fontsize=18, fontweight='bold')
-
-    uw_f1 = res_uw['val_all_f1_scores'].mean(axis=0)
-    w_f1  = res_w['val_all_f1_scores'].mean(axis=0)
-    f1_imp = w_f1 - uw_f1
-
-    ax1c = plt.subplot(2, 3, 1)
-    bp = ax1c.boxplot([res_uw['val_acc_list'], res_w['val_acc_list']], positions=[1, 2], widths=0.6,
-                      patch_artist=True, showmeans=True, meanprops=dict(marker='D', markerfacecolor='red', markersize=8))
-    for p, c in zip(bp['boxes'], ['lightcoral', 'lightgreen']): p.set_facecolor(c)
-    ax1c.set_xticks([1, 2]); ax1c.set_xticklabels(['Unweighted', 'Weighted'])
-    ax1c.set_ylabel('Val Accuracy'); ax1c.set_title('Val Accuracy Comparison', fontweight='bold')
-    ax1c.grid(True, alpha=0.3, axis='y'); ax1c.set_ylim([0, 1.05])
-
-    ax2c = plt.subplot(2, 3, 2)
-    ax2c.bar(x_pos - 0.175, uw_f1, 0.35, label='Unweighted', color='lightcoral', alpha=0.8)
-    ax2c.bar(x_pos + 0.175, w_f1,  0.35, label='Weighted',   color='lightgreen', alpha=0.8)
-    ax2c.set_xticks(x_pos); ax2c.set_xticklabels([b_labels_dict.get(s, f'S{s}') for s in state_labels], rotation=45, ha='right')
-    ax2c.set_title('Per-State Val F1', fontweight='bold'); ax2c.legend(); ax2c.grid(True, alpha=0.3, axis='y'); ax2c.set_ylim([0, 1.05])
-
-    ax3c = plt.subplot(2, 3, 3)
-    ax3c.bar(x_pos, f1_imp, color=['green' if v > 0 else 'red' for v in f1_imp], alpha=0.7)
-    ax3c.axhline(0, color='black', linewidth=0.5)
-    ax3c.axhline(f1_imp.mean(), color='blue', linestyle='--', label=f'Mean: {f1_imp.mean():.3f}')
-    ax3c.set_xticks(x_pos); ax3c.set_xticklabels([b_labels_dict.get(s, f'S{s}') for s in state_labels], rotation=45, ha='right')
-    ax3c.set_title('F1 Improvement (W − UW)', fontweight='bold'); ax3c.legend(); ax3c.grid(True, alpha=0.3, axis='y')
-
-    ax4c = plt.subplot(2, 3, 4)
-    tc_arr = np.array([train_label_counts.get(s, 0) for s in state_labels])
-    ax4c.scatter(tc_arr, f1_imp, s=100, c='purple', edgecolors='black', alpha=0.8)
-    for i, (x_, y_) in enumerate(zip(tc_arr, f1_imp)):
-        ax4c.annotate(b_labels_dict.get(state_labels[i], f'S{state_labels[i]}'), (x_, y_), xytext=(5,5), textcoords='offset points', fontsize=9)
-    ax4c.axhline(0, color='black', linestyle='--', alpha=0.5)
-    ax4c.set_xlabel('Train sample count'); ax4c.set_ylabel('F1 improvement')
-    ax4c.set_title('F1 Improvement vs Frequency', fontweight='bold'); ax4c.grid(True, alpha=0.3)
-    corr_c = np.corrcoef(tc_arr, f1_imp)[0, 1]
-    ax4c.text(0.05, 0.95, f'r={corr_c:.3f}', transform=ax4c.transAxes, va='top', fontsize=11,
-              bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-
-    ax5c = plt.subplot(2, 3, 5)
-    cmp_data = []
-    for si, sl in enumerate(state_labels):
-        sn = b_labels_dict.get(sl, f'S{sl}')
-        for ri in range(res_uw['val_all_f1_scores'].shape[0]):
-            cmp_data += [
-                {'State': sn, 'F1': res_uw['val_all_f1_scores'][ri, si], 'Loss': 'Unweighted'},
-                {'State': sn, 'F1': res_w['val_all_f1_scores'][ri,  si], 'Loss': 'Weighted'},
-            ]
-    sns.boxplot(data=pd.DataFrame(cmp_data), x='State', y='F1', hue='Loss', ax=ax5c,
-                palette={'Unweighted': 'lightcoral', 'Weighted': 'lightgreen'})
-    ax5c.set_title('Per-State F1 Distribution Comparison', fontweight='bold')
-    ax5c.tick_params(axis='x', rotation=45); ax5c.grid(True, alpha=0.3, axis='y')
-
-    ax6c = plt.subplot(2, 3, 6); ax6c.axis('off')
-    summary_t = (
-        f"SUMMARY\n{'='*40}\n\n"
-        f"Val Accuracy\n"
-        f"  Unweighted: {res_uw['val_acc_list'].mean():.3f} ± {res_uw['val_acc_list'].std():.3f}\n"
-        f"  Weighted:   {res_w['val_acc_list'].mean():.3f}  ± {res_w['val_acc_list'].std():.3f}\n"
-        f"  Diff:       {res_w['val_acc_list'].mean() - res_uw['val_acc_list'].mean():+.3f}\n\n"
-        f"Macro F1\n"
-        f"  Unweighted: {uw_f1.mean():.3f}\n"
-        f"  Weighted:   {w_f1.mean():.3f}\n"
-        f"  Diff:       {w_f1.mean() - uw_f1.mean():+.3f}\n"
-    )
-    ax6c.text(0.05, 0.95, summary_t, transform=ax6c.transAxes, fontsize=11,
-              va='top', family='monospace', bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.8))
-
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, f'weighted_vs_unweighted_comparison_{session_dir}.png'), dpi=300, bbox_inches='tight')
-    plt.savefig(os.path.join(output_dir, f'weighted_vs_unweighted_comparison_{session_dir}.pdf'), bbox_inches='tight')
-    plt.close()
-    print(f"  Saved weighted vs unweighted comparison.")
 
     # ── Chance accuracy ───────────────────────────────────────────────────────
     print(f"\nEstimating chance accuracy ({NUM_PERMUTATIONS} permutations)...")
@@ -689,26 +448,119 @@ def run_discrete_evaluation():
     ])
     print(f"Chance accuracy: {chance_acc.mean():.3f} ± {chance_acc.std():.3f}")
     np.savetxt(os.path.join(output_dir, f'acc_list_chance_{session_dir}.txt'), chance_acc)
+    t_uw, p_uw = stats.ttest_ind(res_uw['val_acc_list'], chance_acc)
+    t_w,  p_w  = stats.ttest_ind(res_w['val_acc_list'],  chance_acc)
 
-    fig_ch, ax_ch = plt.subplots(figsize=(12, 6))
-    bp_ch = ax_ch.boxplot(
+    # ── Derived quantities for figure ────────────────────────────────────────
+    uw_f1_means = res_uw['val_all_f1_scores'].mean(axis=0)
+    uw_f1_std   = res_uw['val_all_f1_scores'].std(axis=0)
+    w_f1_means  = res_w['val_all_f1_scores'].mean(axis=0)
+    w_f1_std    = res_w['val_all_f1_scores'].std(axis=0)
+
+    uw_conf = res_uw['avg_conf_matrix_val']
+    w_conf  = res_w['avg_conf_matrix_val']
+    norm_conf_uw = uw_conf / uw_conf.sum(axis=1, keepdims=True) * 100
+    norm_conf_w  = w_conf  / w_conf.sum(axis=1, keepdims=True)  * 100
+
+    avg_prec, avg_rec = [], []
+    for si in range(len(state_labels)):
+        precs, recs = [], []
+        for pred, true in zip(res_uw['val_all_predictions'], res_uw['val_true_labels']):
+            p, r, _, _ = precision_recall_fscore_support(
+                np.asarray(true, dtype=np.int64).ravel(),
+                np.asarray(pred, dtype=np.int64).ravel(),
+                labels=state_labels, zero_division=0, average=None)
+            precs.append(p[si]); recs.append(r[si])
+        avg_prec.append(np.mean(precs)); avg_rec.append(np.mean(recs))
+
+    state_names = [b_labels_dict.get(s, f'S{s}') for s in state_labels]
+
+    # ── Single summary figure (2 × 3, PDF only) ──────────────────────────────
+    print("\nGenerating summary figure...")
+    fig, axs = plt.subplots(2, 3, figsize=(20, 12))
+    fig.suptitle(f'Discrete Decoder Summary — {session_dir}', fontsize=15, fontweight='bold')
+
+    # (0,0) Accuracy: UW / W / Chance
+    ax = axs[0, 0]
+    bp = ax.boxplot(
         [res_uw['val_acc_list'], res_w['val_acc_list'], chance_acc],
         positions=[1, 2, 3], widths=0.6, patch_artist=True, showmeans=True,
         meanprops=dict(marker='D', markerfacecolor='red', markersize=8))
-    for p, c in zip(bp_ch['boxes'], ['lightcoral', 'lightgreen', 'lightgray']): p.set_facecolor(c)
-    ax_ch.set_xticks([1, 2, 3]); ax_ch.set_xticklabels(['Unweighted', 'Weighted', 'Chance'])
-    ax_ch.set_ylabel('Accuracy', fontsize=14); ax_ch.set_title('Decoder vs Chance', fontsize=16, fontweight='bold')
-    ax_ch.grid(True, alpha=0.3, axis='y'); ax_ch.set_ylim([0, 1.0])
-    t_uw, p_uw = stats.ttest_ind(res_uw['val_acc_list'], chance_acc)
-    t_w,  p_w  = stats.ttest_ind(res_w['val_acc_list'],  chance_acc)
-    ax_ch.text(0.5, 0.95, f'UW vs Chance: t={t_uw:.2f} p={p_uw:.2e}\nW vs Chance: t={t_w:.2f} p={p_w:.2e}',
-               transform=ax_ch.transAxes, ha='center', va='top',
-               bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5), fontsize=11)
+    for patch, col in zip(bp['boxes'], ['#4C9BE8', '#6BBF6B', '#AAAAAA']):
+        patch.set_facecolor(col); patch.set_alpha(0.8)
+    ax.set_xticks([1, 2, 3]); ax.set_xticklabels(['Unweighted', 'Weighted', 'Chance'])
+    ax.set_ylabel('Validation Accuracy', fontsize=12)
+    ax.set_title('Decoder Accuracy vs Chance', fontweight='bold')
+    ax.grid(True, alpha=0.3, axis='y'); ax.set_ylim([0, 1.0])
+    ax.text(0.5, 0.98,
+            f'UW: t={t_uw:.1f}, p={p_uw:.1e}\nW:  t={t_w:.1f}, p={p_w:.1e}',
+            transform=ax.transAxes, ha='center', va='top', fontsize=10,
+            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.6))
+
+    # (0,1) Normalised confusion matrix — Unweighted
+    ax = axs[0, 1]
+    sns.heatmap(norm_conf_uw, annot=True, fmt='.1f', cmap='RdYlGn', ax=ax,
+                xticklabels=state_names, yticklabels=state_names,
+                cbar_kws={'label': '%'}, vmin=0, vmax=100)
+    ax.set_title('Confusion Matrix — Unweighted (%)', fontweight='bold')
+    ax.tick_params(axis='x', rotation=45); ax.tick_params(axis='y', rotation=0)
+
+    # (0,2) Normalised confusion matrix — Weighted
+    ax = axs[0, 2]
+    sns.heatmap(norm_conf_w, annot=True, fmt='.1f', cmap='RdYlGn', ax=ax,
+                xticklabels=state_names, yticklabels=state_names,
+                cbar_kws={'label': '%'}, vmin=0, vmax=100)
+    ax.set_title('Confusion Matrix — Weighted (%)', fontweight='bold')
+    ax.tick_params(axis='x', rotation=45); ax.tick_params(axis='y', rotation=0)
+
+    # (1,0) Per-state F1 — UW vs W (mean ± std bars)
+    ax = axs[1, 0]
+    bw = 0.35
+    ax.bar(x_pos - bw/2, uw_f1_means, bw, yerr=uw_f1_std, label='Unweighted',
+           color='#4C9BE8', alpha=0.85, capsize=4, error_kw=dict(elinewidth=1.2))
+    ax.bar(x_pos + bw/2, w_f1_means,  bw, yerr=w_f1_std,  label='Weighted',
+           color='#6BBF6B', alpha=0.85, capsize=4, error_kw=dict(elinewidth=1.2))
+    ax.set_xticks(x_pos); ax.set_xticklabels(state_names, rotation=45, ha='right')
+    ax.set_ylabel('F1', fontsize=12); ax.set_title('Per-State F1 — UW vs W (mean ± std)', fontweight='bold')
+    ax.legend(fontsize=10); ax.grid(True, alpha=0.3, axis='y'); ax.set_ylim([0, 1.05])
+
+    # (1,1) Precision / Recall / F1 per state — Unweighted
+    ax = axs[1, 1]
+    pw = 0.25
+    ax.bar(x_pos - pw,   avg_prec,    pw, label='Precision', color='#5B8DD9', alpha=0.85)
+    ax.bar(x_pos,        avg_rec,     pw, label='Recall',    color='#E8864C', alpha=0.85)
+    ax.bar(x_pos + pw,   uw_f1_means, pw, label='F1',        color='#6BBF6B', alpha=0.85)
+    ax.set_xticks(x_pos); ax.set_xticklabels(state_names, rotation=45, ha='right')
+    ax.set_title('Precision / Recall / F1 — Unweighted', fontweight='bold')
+    ax.legend(fontsize=10); ax.grid(True, alpha=0.3, axis='y'); ax.set_ylim([0, 1.05])
+
+    # (1,2) Summary text
+    ax = axs[1, 2]; ax.axis('off')
+    summary_t = (
+        f"SUMMARY — {session_dir}\n{'─'*36}\n\n"
+        f"Val Accuracy\n"
+        f"  Unweighted : {res_uw['val_acc_list'].mean():.3f} ± {res_uw['val_acc_list'].std():.3f}\n"
+        f"  Weighted   : {res_w['val_acc_list'].mean():.3f} ± {res_w['val_acc_list'].std():.3f}\n"
+        f"  Chance     : {chance_acc.mean():.3f} ± {chance_acc.std():.3f}\n"
+        f"  W − UW     : {res_w['val_acc_list'].mean() - res_uw['val_acc_list'].mean():+.3f}\n\n"
+        f"Macro F1 (val, mean)\n"
+        f"  Unweighted : {uw_f1_means.mean():.3f}\n"
+        f"  Weighted   : {w_f1_means.mean():.3f}\n"
+        f"  W − UW     : {w_f1_means.mean() - uw_f1_means.mean():+.3f}\n\n"
+        f"vs Chance (t-test)\n"
+        f"  UW : t={t_uw:.2f}, p={p_uw:.2e}\n"
+        f"  W  : t={t_w:.2f}, p={p_w:.2e}\n\n"
+        f"Folds: {num_folds}  ×  Runs/fold: {NUM_DECODER_RUNS}\n"
+        f"Window: {WINDOW_SIZE}  ·  Permutations: {NUM_PERMUTATIONS}"
+    )
+    ax.text(0.05, 0.97, summary_t, transform=ax.transAxes, fontsize=11,
+            va='top', family='monospace',
+            bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.85))
+
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, f'decoder_vs_chance_{session_dir}.png'), dpi=300, bbox_inches='tight')
-    plt.savefig(os.path.join(output_dir, f'decoder_vs_chance_{session_dir}.pdf'), bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, f'summary_{session_dir}.pdf'), bbox_inches='tight')
     plt.close()
-    print(f"  Saved decoder vs chance comparison.")
+    print(f"  Saved summary → {output_dir}/summary_{session_dir}.pdf")
 
     print(f"\nDiscrete evaluation done. Results → {output_dir}/")
     return {
@@ -805,28 +657,6 @@ def run_hybrid_evaluation():
     output_dir = os.path.join(run_dir, 'hybrid')
     x_pos = np.arange(len(state_labels))
 
-    # ── Class-weights plot ────────────────────────────────────────────────────
-    fig_w, ax_w = plt.subplots(figsize=(10, 6))
-    bars = ax_w.bar(x_pos, weights_list, alpha=0.8, edgecolor='black')
-    mn, mx = min(weights_list), max(weights_list)
-    for bar, w in zip(bars, weights_list):
-        nrm = (w - mn) / (mx - mn) if mx != mn else 0.5
-        bar.set_color(plt.cm.RdYlGn_r(nrm))
-    ax_w.axhline(1.0, color='black', linestyle='--', linewidth=1.5, label='weight=1.0')
-    ax_w.set_xticks(x_pos)
-    ax_w.set_xticklabels([b_labels_dict.get(s, f'S{s}') for s in state_labels], rotation=45, ha='right')
-    ax_w.set_ylabel('Class Weight'); ax_w.set_xlabel('Behavioral State')
-    ax_w.set_title('Class Weights for Weighted Loss (Hybrid)', fontweight='bold')
-    ax_w.legend(); ax_w.grid(True, alpha=0.3, axis='y')
-    for bar, w in zip(bars, weights_list):
-        ax_w.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.02,
-                  f'{w:.2f}', ha='center', va='bottom', fontsize=10, fontweight='bold')
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, f'class_weights_{session_dir}.png'), dpi=300, bbox_inches='tight')
-    plt.savefig(os.path.join(output_dir, f'class_weights_{session_dir}.pdf'), bbox_inches='tight')
-    plt.close()
-    print(f"Saved class weights plot → {output_dir}/")
-
     # ── Inner training function ───────────────────────────────────────────────
     def _train(use_weighted_loss, suffix):
         loss_type = "WEIGHTED" if use_weighted_loss else "UNWEIGHTED"
@@ -904,240 +734,18 @@ def run_hybrid_evaluation():
         )
 
     def _save(results):
-        suffix    = results['suffix']
-        loss_type = results['loss_type']
-        val_acc   = results['val_acc_list']
-        tr_acc    = results['train_acc_list']
-        val_f1    = results['val_all_f1_scores']
-        tr_f1     = results['train_all_f1_scores']
-        avg_conf  = results['avg_conf_matrix_val']
-        tr_conf   = results['avg_conf_matrix_train']
-
-        np.savetxt(os.path.join(output_dir, f'acc_list_val_{session_dir}{suffix}.txt'),   val_acc)
-        np.savetxt(os.path.join(output_dir, f'acc_list_train_{session_dir}{suffix}.txt'), tr_acc)
-        np.save(os.path.join(output_dir, f'all_f1_scores_val_{session_dir}{suffix}.npy'),   val_f1)
-        np.save(os.path.join(output_dir, f'all_f1_scores_train_{session_dir}{suffix}.npy'), tr_f1)
-
-        val_f1_means = val_f1.mean(axis=0)
-        tr_f1_means  = tr_f1.mean(axis=0)
-        f1_gap       = tr_f1_means - val_f1_means
-
-        # ── 8-panel train/val comparison ──────────────────────────────────────
-        fig = plt.figure(figsize=(24, 16))
-        fig.suptitle(f'{loss_type} Results — {session_dir}', fontsize=18, fontweight='bold', y=1.01)
-
-        ax0 = plt.subplot(2, 4, 1)
-        w   = 0.35
-        tc  = [train_label_counts.get(s, 0) for s in state_labels]
-        vc  = [val_label_counts.get(s, 0)   for s in state_labels]
-        ax0.bar(x_pos - w/2, tc, w, label='Train',      color='lightgreen', alpha=0.8)
-        ax0.bar(x_pos + w/2, vc, w, label='Validation', color='skyblue',    alpha=0.8)
-        ax0.set_xticks(x_pos); ax0.set_xticklabels([b_labels_dict.get(s, f'S{s}') for s in state_labels], rotation=45, ha='right')
-        ax0.set_title('Label Distribution', fontweight='bold'); ax0.legend(); ax0.grid(True, alpha=0.3, axis='y')
-
-        ax1 = plt.subplot(2, 4, 2)
-        bp  = ax1.boxplot([tr_acc, val_acc], positions=[1, 2], widths=0.6, patch_artist=True, showmeans=True,
-                          meanprops=dict(marker='D', markerfacecolor='red', markersize=8))
-        for patch, col in zip(bp['boxes'], ['lightgreen', 'skyblue']): patch.set_facecolor(col)
-        ax1.set_xticks([1, 2]); ax1.set_xticklabels(['Train', 'Validation'])
-        ax1.set_ylabel('Accuracy'); ax1.set_title(f'Accuracy\nGap={tr_acc.mean()-val_acc.mean():.3f}', fontweight='bold')
-        ax1.grid(True, alpha=0.3, axis='y'); ax1.set_ylim([0, 1.05])
-
-        ax2 = plt.subplot(2, 4, 3)
-        f1_data = []
-        for si, sl in enumerate(state_labels):
-            for ri in range(val_f1.shape[0]):
-                f1_data += [
-                    {'State': b_labels_dict.get(sl, f'S{sl}'), 'F1': val_f1[ri, si], 'Set': 'Validation'},
-                    {'State': b_labels_dict.get(sl, f'S{sl}'), 'F1': tr_f1[ri,  si], 'Set': 'Train'},
-                ]
-        sns.boxplot(data=pd.DataFrame(f1_data), x='State', y='F1', hue='Set', ax=ax2,
-                    palette={'Train': 'lightgreen', 'Validation': 'skyblue'})
-        ax2.set_title('Per-State F1', fontweight='bold'); ax2.tick_params(axis='x', rotation=45)
-        ax2.grid(True, alpha=0.3, axis='y')
-
-        ax3 = plt.subplot(2, 4, 4)
-        sns.heatmap(avg_conf, annot=True, fmt='.1f', cmap='Blues', ax=ax3,
-                    xticklabels=[b_labels_dict.get(s, f'S{s}') for s in state_labels],
-                    yticklabels=[b_labels_dict.get(s, f'S{s}') for s in state_labels])
-        ax3.set_title('Confusion Matrix (Val)', fontweight='bold')
-
-        ax4 = plt.subplot(2, 4, 5)
-        sns.heatmap(tr_conf, annot=True, fmt='.1f', cmap='Greens', ax=ax4,
-                    xticklabels=[b_labels_dict.get(s, f'S{s}') for s in state_labels],
-                    yticklabels=[b_labels_dict.get(s, f'S{s}') for s in state_labels])
-        ax4.set_title('Confusion Matrix (Train)', fontweight='bold')
-
-        ax5 = plt.subplot(2, 4, 6)
-        ax5.bar(x_pos - w/2, tr_f1_means,  w, label='Train',     color='lightgreen', alpha=0.8)
-        ax5.bar(x_pos + w/2, val_f1_means, w, label='Validation', color='skyblue',    alpha=0.8)
-        ax5.set_xticks(x_pos); ax5.set_xticklabels([b_labels_dict.get(s, f'S{s}') for s in state_labels], rotation=45, ha='right')
-        ax5.set_title('F1 Score', fontweight='bold'); ax5.legend(); ax5.grid(True, alpha=0.3, axis='y'); ax5.set_ylim([0, 1.05])
-
-        ax6 = plt.subplot(2, 4, 7)
-        ax6.bar(x_pos, f1_gap, color=['green' if g > 0 else 'red' for g in f1_gap], alpha=0.7)
-        ax6.axhline(0, color='black', linewidth=0.5)
-        ax6.axhline(f1_gap.mean(), color='red', linestyle='--', label=f'Mean: {f1_gap.mean():.3f}')
-        ax6.set_xticks(x_pos); ax6.set_xticklabels([b_labels_dict.get(s, f'S{s}') for s in state_labels], rotation=45, ha='right')
-        ax6.set_title('F1 Gap (Train−Val)', fontweight='bold'); ax6.legend(); ax6.grid(True, alpha=0.3, axis='y')
-
-        ax7 = plt.subplot(2, 4, 8)
-        vc_arr = np.array([val_label_counts.get(s, 0) for s in state_labels])
-        ax7.scatter(vc_arr, val_f1_means, s=100, c='skyblue', edgecolors='blue', alpha=0.8)
-        for i, (x_, y_) in enumerate(zip(vc_arr, val_f1_means)):
-            ax7.annotate(b_labels_dict.get(state_labels[i], f'S{state_labels[i]}'), (x_, y_), xytext=(5,5), textcoords='offset points', fontsize=9)
-        ax7.set_xlabel('Val sample count'); ax7.set_ylabel('F1'); ax7.set_title('F1 vs Sample Count', fontweight='bold'); ax7.grid(True, alpha=0.3)
-        corr = np.corrcoef(vc_arr, val_f1_means)[0, 1]
-        ax7.text(0.05, 0.95, f'r={corr:.3f}', transform=ax7.transAxes, va='top', fontsize=11,
-                 bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-
-        plt.tight_layout()
-        plt.savefig(os.path.join(output_dir, f'train_validation_comparison_{session_dir}{suffix}.png'), dpi=300, bbox_inches='tight')
-        plt.savefig(os.path.join(output_dir, f'train_validation_comparison_{session_dir}{suffix}.pdf'), bbox_inches='tight')
-        plt.close()
-        print(f"  Saved train/validation comparison ({loss_type})")
-
-        # ── Detailed analysis ─────────────────────────────────────────────────
-        fig_d, axs_d = plt.subplots(2, 3, figsize=(20, 12))
-        fig_d.suptitle(f'{loss_type} — Detailed Analysis', fontsize=16, fontweight='bold', y=1.01)
-
-        ax = axs_d[0, 0]; sns.boxplot(y=val_acc, ax=ax, color='skyblue')
-        ax.axhline(val_acc.mean(), color='red', linestyle='--', label=f'Mean: {val_acc.mean():.3f}')
-        ax.set_ylabel('Accuracy'); ax.set_title('Val Accuracy Distribution', fontweight='bold'); ax.legend(); ax.grid(True, alpha=0.3)
-
-        ax = axs_d[0, 1]
-        f1_df_val = pd.DataFrame([{'State': b_labels_dict.get(sl, f'S{sl}'), 'F1': val_f1[ri, si]}
-                                   for si, sl in enumerate(state_labels) for ri in range(val_f1.shape[0])])
-        sns.boxplot(data=f1_df_val, x='State', y='F1', ax=ax, palette='Set2')
-        ax.set_title('Per-State F1 (Val)', fontweight='bold'); ax.tick_params(axis='x', rotation=45); ax.grid(True, alpha=0.3, axis='y')
-
-        ax = axs_d[0, 2]; sns.heatmap(avg_conf, annot=True, fmt='.1f', cmap='Blues', ax=ax,
-                                       xticklabels=[b_labels_dict.get(s, f'S{s}') for s in state_labels],
-                                       yticklabels=[b_labels_dict.get(s, f'S{s}') for s in state_labels])
-        ax.set_title('Average Confusion Matrix', fontweight='bold')
-
-        ax = axs_d[1, 0]
-        norm_conf = avg_conf / avg_conf.sum(axis=1, keepdims=True) * 100
-        sns.heatmap(norm_conf, annot=True, fmt='.1f', cmap='RdYlGn', ax=ax,
-                    xticklabels=[b_labels_dict.get(s, f'S{s}') for s in state_labels],
-                    yticklabels=[b_labels_dict.get(s, f'S{s}') for s in state_labels],
-                    cbar_kws={'label': '%'})
-        ax.set_title('Normalized Confusion Matrix (%)', fontweight='bold')
-
-        ax = axs_d[1, 1]
-        avg_prec, avg_rec, avg_f1_per = [], [], []
-        for si, sl in enumerate(state_labels):
-            precs, recs = [], []
-            for pred, true in zip(results['val_all_predictions'], results['val_true_labels']):
-                p, r, _, _ = precision_recall_fscore_support(
-                    np.asarray(true, dtype=np.int64).ravel(),
-                    np.asarray(pred, dtype=np.int64).ravel(),
-                    labels=state_labels, zero_division=0, average=None)
-                precs.append(p[si]); recs.append(r[si])
-            avg_prec.append(np.mean(precs)); avg_rec.append(np.mean(recs))
-            avg_f1_per.append(val_f1_means[si])
-        w_ = 0.25
-        ax.bar(x_pos - w_, avg_prec,  w_, label='Precision', alpha=0.8)
-        ax.bar(x_pos,      avg_rec,   w_, label='Recall',    alpha=0.8)
-        ax.bar(x_pos + w_, avg_f1_per,w_, label='F1',        alpha=0.8)
-        ax.set_xticks(x_pos); ax.set_xticklabels([b_labels_dict.get(s, f'S{s}') for s in state_labels], rotation=45, ha='right')
-        ax.set_title('Precision / Recall / F1 (Val)', fontweight='bold'); ax.legend(); ax.grid(True, alpha=0.3, axis='y'); ax.set_ylim([0, 1.05])
-
-        ax = axs_d[1, 2]
-        ax.errorbar(state_labels, val_f1_means, yerr=val_f1.std(axis=0), fmt='o-', capsize=5, capthick=2, markersize=8, linewidth=2)
-        ax.set_title('F1 per State (mean ± std)', fontweight='bold'); ax.grid(True, alpha=0.3); ax.set_ylim([0, 1.05])
-
-        plt.tight_layout()
-        plt.savefig(os.path.join(output_dir, f'detailed_analysis_{session_dir}{suffix}.png'), dpi=300, bbox_inches='tight')
-        plt.savefig(os.path.join(output_dir, f'detailed_analysis_{session_dir}{suffix}.pdf'), bbox_inches='tight')
-        plt.close()
-        print(f"  Saved detailed analysis ({loss_type})")
-
-        return output_dir
+        """Save data files only — figure produced once after both variants finish."""
+        suffix = results['suffix']
+        np.savetxt(os.path.join(output_dir, f'acc_list_val_{session_dir}{suffix}.txt'),   results['val_acc_list'])
+        np.savetxt(os.path.join(output_dir, f'acc_list_train_{session_dir}{suffix}.txt'), results['train_acc_list'])
+        np.save(os.path.join(output_dir, f'all_f1_scores_val_{session_dir}{suffix}.npy'),   results['val_all_f1_scores'])
+        np.save(os.path.join(output_dir, f'all_f1_scores_train_{session_dir}{suffix}.npy'), results['train_all_f1_scores'])
 
     # ── Run both loss variants ───────────────────────────────────────────────
     res_uw = _train(use_weighted_loss=False, suffix='_unweighted')
     _save(res_uw)
     res_w  = _train(use_weighted_loss=True,  suffix='_weighted')
     _save(res_w)
-
-    # ── Weighted vs unweighted comparison ────────────────────────────────────
-    print("\nGenerating weighted vs unweighted comparison...")
-    fig_c = plt.figure(figsize=(20, 12))
-    fig_c.suptitle('Hybrid: Weighted vs Unweighted Loss Comparison', fontsize=18, fontweight='bold')
-
-    uw_f1 = res_uw['val_all_f1_scores'].mean(axis=0)
-    w_f1  = res_w['val_all_f1_scores'].mean(axis=0)
-    f1_imp = w_f1 - uw_f1
-
-    ax1c = plt.subplot(2, 3, 1)
-    bp = ax1c.boxplot([res_uw['val_acc_list'], res_w['val_acc_list']], positions=[1, 2], widths=0.6,
-                      patch_artist=True, showmeans=True, meanprops=dict(marker='D', markerfacecolor='red', markersize=8))
-    for p, c in zip(bp['boxes'], ['lightcoral', 'lightgreen']): p.set_facecolor(c)
-    ax1c.set_xticks([1, 2]); ax1c.set_xticklabels(['Unweighted', 'Weighted'])
-    ax1c.set_ylabel('Val Accuracy'); ax1c.set_title('Val Accuracy Comparison', fontweight='bold')
-    ax1c.grid(True, alpha=0.3, axis='y'); ax1c.set_ylim([0, 1.05])
-
-    ax2c = plt.subplot(2, 3, 2)
-    ax2c.bar(x_pos - 0.175, uw_f1, 0.35, label='Unweighted', color='lightcoral', alpha=0.8)
-    ax2c.bar(x_pos + 0.175, w_f1,  0.35, label='Weighted',   color='lightgreen', alpha=0.8)
-    ax2c.set_xticks(x_pos); ax2c.set_xticklabels([b_labels_dict.get(s, f'S{s}') for s in state_labels], rotation=45, ha='right')
-    ax2c.set_title('Per-State Val F1', fontweight='bold'); ax2c.legend(); ax2c.grid(True, alpha=0.3, axis='y'); ax2c.set_ylim([0, 1.05])
-
-    ax3c = plt.subplot(2, 3, 3)
-    ax3c.bar(x_pos, f1_imp, color=['green' if v > 0 else 'red' for v in f1_imp], alpha=0.7)
-    ax3c.axhline(0, color='black', linewidth=0.5)
-    ax3c.axhline(f1_imp.mean(), color='blue', linestyle='--', label=f'Mean: {f1_imp.mean():.3f}')
-    ax3c.set_xticks(x_pos); ax3c.set_xticklabels([b_labels_dict.get(s, f'S{s}') for s in state_labels], rotation=45, ha='right')
-    ax3c.set_title('F1 Improvement (W − UW)', fontweight='bold'); ax3c.legend(); ax3c.grid(True, alpha=0.3, axis='y')
-
-    ax4c = plt.subplot(2, 3, 4)
-    tc_arr = np.array([train_label_counts.get(s, 0) for s in state_labels])
-    ax4c.scatter(tc_arr, f1_imp, s=100, c='purple', edgecolors='black', alpha=0.8)
-    for i, (x_, y_) in enumerate(zip(tc_arr, f1_imp)):
-        ax4c.annotate(b_labels_dict.get(state_labels[i], f'S{state_labels[i]}'), (x_, y_), xytext=(5,5), textcoords='offset points', fontsize=9)
-    ax4c.axhline(0, color='black', linestyle='--', alpha=0.5)
-    ax4c.set_xlabel('Train sample count'); ax4c.set_ylabel('F1 improvement')
-    ax4c.set_title('F1 Improvement vs Frequency', fontweight='bold'); ax4c.grid(True, alpha=0.3)
-    corr_c = np.corrcoef(tc_arr, f1_imp)[0, 1]
-    ax4c.text(0.05, 0.95, f'r={corr_c:.3f}', transform=ax4c.transAxes, va='top', fontsize=11,
-              bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-
-    ax5c = plt.subplot(2, 3, 5)
-    cmp_data = []
-    for si, sl in enumerate(state_labels):
-        sn = b_labels_dict.get(sl, f'S{sl}')
-        for ri in range(res_uw['val_all_f1_scores'].shape[0]):
-            cmp_data += [
-                {'State': sn, 'F1': res_uw['val_all_f1_scores'][ri, si], 'Loss': 'Unweighted'},
-                {'State': sn, 'F1': res_w['val_all_f1_scores'][ri,  si], 'Loss': 'Weighted'},
-            ]
-    sns.boxplot(data=pd.DataFrame(cmp_data), x='State', y='F1', hue='Loss', ax=ax5c,
-                palette={'Unweighted': 'lightcoral', 'Weighted': 'lightgreen'})
-    ax5c.set_title('Per-State F1 Distribution Comparison', fontweight='bold')
-    ax5c.tick_params(axis='x', rotation=45); ax5c.grid(True, alpha=0.3, axis='y')
-
-    ax6c = plt.subplot(2, 3, 6); ax6c.axis('off')
-    summary_t = (
-        f"HYBRID SUMMARY\n{'='*40}\n\n"
-        f"Alpha = {HYBRID_ALPHA}  (CE_norm + MSE)\n\n"
-        f"Val Accuracy\n"
-        f"  Unweighted: {res_uw['val_acc_list'].mean():.3f} ± {res_uw['val_acc_list'].std():.3f}\n"
-        f"  Weighted:   {res_w['val_acc_list'].mean():.3f}  ± {res_w['val_acc_list'].std():.3f}\n"
-        f"  Diff:       {res_w['val_acc_list'].mean() - res_uw['val_acc_list'].mean():+.3f}\n\n"
-        f"Macro F1\n"
-        f"  Unweighted: {uw_f1.mean():.3f}\n"
-        f"  Weighted:   {w_f1.mean():.3f}\n"
-        f"  Diff:       {w_f1.mean() - uw_f1.mean():+.3f}\n"
-    )
-    ax6c.text(0.05, 0.95, summary_t, transform=ax6c.transAxes, fontsize=11,
-              va='top', family='monospace', bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.8))
-
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, f'weighted_vs_unweighted_comparison_{session_dir}.png'), dpi=300, bbox_inches='tight')
-    plt.savefig(os.path.join(output_dir, f'weighted_vs_unweighted_comparison_{session_dir}.pdf'), bbox_inches='tight')
-    plt.close()
-    print(f"  Saved weighted vs unweighted comparison.")
 
     # ── Chance accuracy ───────────────────────────────────────────────────────
     print(f"\nEstimating chance accuracy ({NUM_PERMUTATIONS} permutations)...")
@@ -1149,26 +757,120 @@ def run_hybrid_evaluation():
     ])
     print(f"Chance accuracy: {chance_acc.mean():.3f} ± {chance_acc.std():.3f}")
     np.savetxt(os.path.join(output_dir, f'acc_list_chance_{session_dir}.txt'), chance_acc)
+    t_uw, p_uw = stats.ttest_ind(res_uw['val_acc_list'], chance_acc)
+    t_w,  p_w  = stats.ttest_ind(res_w['val_acc_list'],  chance_acc)
 
-    fig_ch, ax_ch = plt.subplots(figsize=(12, 6))
-    bp_ch = ax_ch.boxplot(
+    # ── Derived quantities for figure ────────────────────────────────────────
+    uw_f1_means = res_uw['val_all_f1_scores'].mean(axis=0)
+    uw_f1_std   = res_uw['val_all_f1_scores'].std(axis=0)
+    w_f1_means  = res_w['val_all_f1_scores'].mean(axis=0)
+    w_f1_std    = res_w['val_all_f1_scores'].std(axis=0)
+
+    uw_conf = res_uw['avg_conf_matrix_val']
+    w_conf  = res_w['avg_conf_matrix_val']
+    norm_conf_uw = uw_conf / uw_conf.sum(axis=1, keepdims=True) * 100
+    norm_conf_w  = w_conf  / w_conf.sum(axis=1, keepdims=True)  * 100
+
+    avg_prec, avg_rec = [], []
+    for si in range(len(state_labels)):
+        precs, recs = [], []
+        for pred, true in zip(res_uw['val_all_predictions'], res_uw['val_true_labels']):
+            p, r, _, _ = precision_recall_fscore_support(
+                np.asarray(true, dtype=np.int64).ravel(),
+                np.asarray(pred, dtype=np.int64).ravel(),
+                labels=state_labels, zero_division=0, average=None)
+            precs.append(p[si]); recs.append(r[si])
+        avg_prec.append(np.mean(precs)); avg_rec.append(np.mean(recs))
+
+    state_names = [b_labels_dict.get(s, f'S{s}') for s in state_labels]
+
+    # ── Single summary figure (2 × 3, PDF only) ──────────────────────────────
+    print("\nGenerating summary figure...")
+    fig, axs = plt.subplots(2, 3, figsize=(20, 12))
+    fig.suptitle(f'Hybrid Decoder Summary (α={HYBRID_ALPHA}) — {session_dir}', fontsize=15, fontweight='bold')
+
+    # (0,0) Accuracy: UW / W / Chance
+    ax = axs[0, 0]
+    bp = ax.boxplot(
         [res_uw['val_acc_list'], res_w['val_acc_list'], chance_acc],
         positions=[1, 2, 3], widths=0.6, patch_artist=True, showmeans=True,
         meanprops=dict(marker='D', markerfacecolor='red', markersize=8))
-    for p, c in zip(bp_ch['boxes'], ['lightcoral', 'lightgreen', 'lightgray']): p.set_facecolor(c)
-    ax_ch.set_xticks([1, 2, 3]); ax_ch.set_xticklabels(['Unweighted', 'Weighted', 'Chance'])
-    ax_ch.set_ylabel('Accuracy', fontsize=14); ax_ch.set_title('Hybrid Decoder vs Chance', fontsize=16, fontweight='bold')
-    ax_ch.grid(True, alpha=0.3, axis='y'); ax_ch.set_ylim([0, 1.0])
-    t_uw, p_uw = stats.ttest_ind(res_uw['val_acc_list'], chance_acc)
-    t_w,  p_w  = stats.ttest_ind(res_w['val_acc_list'],  chance_acc)
-    ax_ch.text(0.5, 0.95, f'UW vs Chance: t={t_uw:.2f} p={p_uw:.2e}\nW vs Chance: t={t_w:.2f} p={p_w:.2e}',
-               transform=ax_ch.transAxes, ha='center', va='top',
-               bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5), fontsize=11)
+    for patch, col in zip(bp['boxes'], ['#4C9BE8', '#6BBF6B', '#AAAAAA']):
+        patch.set_facecolor(col); patch.set_alpha(0.8)
+    ax.set_xticks([1, 2, 3]); ax.set_xticklabels(['Unweighted', 'Weighted', 'Chance'])
+    ax.set_ylabel('Validation Accuracy', fontsize=12)
+    ax.set_title('Decoder Accuracy vs Chance', fontweight='bold')
+    ax.grid(True, alpha=0.3, axis='y'); ax.set_ylim([0, 1.0])
+    ax.text(0.5, 0.98,
+            f'UW: t={t_uw:.1f}, p={p_uw:.1e}\nW:  t={t_w:.1f}, p={p_w:.1e}',
+            transform=ax.transAxes, ha='center', va='top', fontsize=10,
+            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.6))
+
+    # (0,1) Normalised confusion matrix — Unweighted
+    ax = axs[0, 1]
+    sns.heatmap(norm_conf_uw, annot=True, fmt='.1f', cmap='RdYlGn', ax=ax,
+                xticklabels=state_names, yticklabels=state_names,
+                cbar_kws={'label': '%'}, vmin=0, vmax=100)
+    ax.set_title('Confusion Matrix — Unweighted (%)', fontweight='bold')
+    ax.tick_params(axis='x', rotation=45); ax.tick_params(axis='y', rotation=0)
+
+    # (0,2) Normalised confusion matrix — Weighted
+    ax = axs[0, 2]
+    sns.heatmap(norm_conf_w, annot=True, fmt='.1f', cmap='RdYlGn', ax=ax,
+                xticklabels=state_names, yticklabels=state_names,
+                cbar_kws={'label': '%'}, vmin=0, vmax=100)
+    ax.set_title('Confusion Matrix — Weighted (%)', fontweight='bold')
+    ax.tick_params(axis='x', rotation=45); ax.tick_params(axis='y', rotation=0)
+
+    # (1,0) Per-state F1 — UW vs W (mean ± std bars)
+    ax = axs[1, 0]
+    bw = 0.35
+    ax.bar(x_pos - bw/2, uw_f1_means, bw, yerr=uw_f1_std, label='Unweighted',
+           color='#4C9BE8', alpha=0.85, capsize=4, error_kw=dict(elinewidth=1.2))
+    ax.bar(x_pos + bw/2, w_f1_means,  bw, yerr=w_f1_std,  label='Weighted',
+           color='#6BBF6B', alpha=0.85, capsize=4, error_kw=dict(elinewidth=1.2))
+    ax.set_xticks(x_pos); ax.set_xticklabels(state_names, rotation=45, ha='right')
+    ax.set_ylabel('F1', fontsize=12); ax.set_title('Per-State F1 — UW vs W (mean ± std)', fontweight='bold')
+    ax.legend(fontsize=10); ax.grid(True, alpha=0.3, axis='y'); ax.set_ylim([0, 1.05])
+
+    # (1,1) Precision / Recall / F1 per state — Unweighted
+    ax = axs[1, 1]
+    pw = 0.25
+    ax.bar(x_pos - pw,   avg_prec,    pw, label='Precision', color='#5B8DD9', alpha=0.85)
+    ax.bar(x_pos,        avg_rec,     pw, label='Recall',    color='#E8864C', alpha=0.85)
+    ax.bar(x_pos + pw,   uw_f1_means, pw, label='F1',        color='#6BBF6B', alpha=0.85)
+    ax.set_xticks(x_pos); ax.set_xticklabels(state_names, rotation=45, ha='right')
+    ax.set_title('Precision / Recall / F1 — Unweighted', fontweight='bold')
+    ax.legend(fontsize=10); ax.grid(True, alpha=0.3, axis='y'); ax.set_ylim([0, 1.05])
+
+    # (1,2) Summary text
+    ax = axs[1, 2]; ax.axis('off')
+    summary_t = (
+        f"HYBRID SUMMARY — {session_dir}\n{'─'*36}\n"
+        f"Alpha = {HYBRID_ALPHA}  (α·CE_norm + (1-α)·MSE)\n\n"
+        f"Val Accuracy\n"
+        f"  Unweighted : {res_uw['val_acc_list'].mean():.3f} ± {res_uw['val_acc_list'].std():.3f}\n"
+        f"  Weighted   : {res_w['val_acc_list'].mean():.3f} ± {res_w['val_acc_list'].std():.3f}\n"
+        f"  Chance     : {chance_acc.mean():.3f} ± {chance_acc.std():.3f}\n"
+        f"  W − UW     : {res_w['val_acc_list'].mean() - res_uw['val_acc_list'].mean():+.3f}\n\n"
+        f"Macro F1 (val, mean)\n"
+        f"  Unweighted : {uw_f1_means.mean():.3f}\n"
+        f"  Weighted   : {w_f1_means.mean():.3f}\n"
+        f"  W − UW     : {w_f1_means.mean() - uw_f1_means.mean():+.3f}\n\n"
+        f"vs Chance (t-test)\n"
+        f"  UW : t={t_uw:.2f}, p={p_uw:.2e}\n"
+        f"  W  : t={t_w:.2f}, p={p_w:.2e}\n\n"
+        f"Folds: {num_folds}  ×  Runs/fold: {NUM_DECODER_RUNS}\n"
+        f"Window: {WINDOW_SIZE}  ·  Permutations: {NUM_PERMUTATIONS}"
+    )
+    ax.text(0.05, 0.97, summary_t, transform=ax.transAxes, fontsize=11,
+            va='top', family='monospace',
+            bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.85))
+
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, f'decoder_vs_chance_{session_dir}.png'), dpi=300, bbox_inches='tight')
-    plt.savefig(os.path.join(output_dir, f'decoder_vs_chance_{session_dir}.pdf'), bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, f'summary_{session_dir}.pdf'), bbox_inches='tight')
     plt.close()
-    print(f"  Saved decoder vs chance comparison.")
+    print(f"  Saved summary → {output_dir}/summary_{session_dir}.pdf")
 
     print(f"\nHybrid evaluation done. Results → {output_dir}/")
     return {
@@ -1178,6 +880,164 @@ def run_hybrid_evaluation():
         'weighted_val_acc_std': float(res_w['val_acc_list'].std()),
         'chance_acc': float(chance_acc.mean()),
         't_weighted_vs_chance': float(t_w), 'p_weighted_vs_chance': float(p_w),
+    }
+
+
+# ===========================================================================
+# CONTINUOUS EVALUATION  (pure belief regression, no behavioral labels)
+# ===========================================================================
+
+def run_continuous_evaluation():
+    """Linear MSE decoder on HGF belief trajectory only.
+
+    Tests whether neuronal activity linearly encodes the animal's belief
+    (as estimated by the HGF model) independently of any behavioral label.
+    Reports R² on held-out validation folds with a permutation baseline.
+    """
+    print(f"\n{'#'*70}")
+    print(f"### CONTINUOUS EVALUATION — HGF BELIEF REGRESSION ###")
+    print(f"{'#'*70}")
+
+    if B_belief is None:
+        print("WARNING: B_belief is None — skipping continuous evaluation.")
+        return {}
+
+    output_dir = os.path.join(run_dir, 'continuous')
+
+    # ── CV splits ────────────────────────────────────────────────────────────
+    cv_splits, B_cont_ = make_cv_splits(B_belief)
+    num_folds = len(cv_splits)
+    print(f"Prepared {num_folds}-fold CV.  Belief range: [{B_cont_.min():.3f}, {B_cont_.max():.3f}]")
+
+    # ── Training loop ────────────────────────────────────────────────────────
+    val_r2_list, train_r2_list = [], []
+    last_val_pred = last_val_true = None   # saved for predicted-vs-true scatter
+
+    mse_loss_fn = nn.MSELoss()
+
+    for fold_idx, (x_tr, x_val, b_tr, b_val) in enumerate(cv_splits):
+        print(f"\nFold {fold_idx+1}/{num_folds}: train={fold_size(x_tr)}, val={fold_size(x_val)}")
+        tr_loader  = make_loaders(x_tr,  b_tr,  'float')
+        val_loader = make_loaders(x_val, b_val, 'float')
+
+        for _ in tqdm(range(NUM_DECODER_RUNS), desc=f'Belief decoder fold {fold_idx+1}', leave=False):
+            model = nn.Linear(input_dim, 1).to(device)
+            opt   = optim.Adam(model.parameters(), lr=0.01)
+
+            for epoch in range(TRAIN_EPOCHS):
+                model.train()
+                for xb, yb in tr_loader:
+                    xb, yb = xb.to(device), yb.to(device)
+                    opt.zero_grad()
+                    mse_loss_fn(model(xb), yb).backward()
+                    opt.step()
+
+            val_pred,   val_true   = predict_all(model, val_loader,   squeeze_pred=True, squeeze_true=True)
+            train_pred, train_true = predict_all(model, tr_loader,    squeeze_pred=True, squeeze_true=True)
+
+            val_r2_list.append(r2_score(val_true, val_pred))
+            train_r2_list.append(r2_score(train_true, train_pred))
+
+            last_val_pred = val_pred
+            last_val_true = val_true
+
+    val_r2_list   = np.array(val_r2_list)
+    train_r2_list = np.array(train_r2_list)
+
+    print(f"\n{'='*60}")
+    print(f"Val R²:   {val_r2_list.mean():.3f} ± {val_r2_list.std():.3f}")
+    print(f"Train R²: {train_r2_list.mean():.3f} ± {train_r2_list.std():.3f}")
+    print(f"Train-Val gap: {train_r2_list.mean() - val_r2_list.mean():.3f}")
+    print(f"{'='*60}")
+
+    np.savetxt(os.path.join(output_dir, f'r2_val_{session_dir}.txt'),   val_r2_list)
+    np.savetxt(os.path.join(output_dir, f'r2_train_{session_dir}.txt'), train_r2_list)
+
+    # ── Permutation baseline ─────────────────────────────────────────────────
+    print(f"\nEstimating chance R² ({NUM_PERMUTATIONS} permutations)...")
+    all_val_beliefs = np.concatenate([split[3] for split in cv_splits])
+    chance_r2 = np.array([
+        r2_score(all_val_beliefs,
+                 np.random.permutation(all_val_beliefs))
+        for _ in tqdm(range(NUM_PERMUTATIONS), desc='Chance R²', leave=False)
+    ])
+    print(f"Chance R²: {chance_r2.mean():.3f} ± {chance_r2.std():.3f}")
+    np.savetxt(os.path.join(output_dir, f'r2_chance_{session_dir}.txt'), chance_r2)
+
+    t_stat, p_val = stats.ttest_ind(val_r2_list, chance_r2)
+    print(f"t-test vs chance: t={t_stat:.2f}, p={p_val:.2e}")
+
+    # ── Plot 1: R² distribution (train vs val) ────────────────────────────────
+    fig1, ax1 = plt.subplots(figsize=(10, 6))
+    bp = ax1.boxplot([train_r2_list, val_r2_list],
+                     positions=[1, 2], widths=0.6, patch_artist=True, showmeans=True,
+                     meanprops=dict(marker='D', markerfacecolor='red', markersize=8))
+    for patch, col in zip(bp['boxes'], ['lightgreen', 'skyblue']):
+        patch.set_facecolor(col)
+    ax1.set_xticks([1, 2]); ax1.set_xticklabels(['Train', 'Validation'])
+    ax1.set_ylabel('R²', fontsize=13)
+    ax1.set_title(f'Belief Decoder R² — {session_dir}', fontsize=15, fontweight='bold')
+    ax1.text(0.98, 0.02,
+             f'Val: {val_r2_list.mean():.3f}±{val_r2_list.std():.3f}\n'
+             f'Train: {train_r2_list.mean():.3f}±{train_r2_list.std():.3f}\n'
+             f'Gap: {train_r2_list.mean()-val_r2_list.mean():.3f}',
+             transform=ax1.transAxes, ha='right', va='bottom', fontsize=11,
+             bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.8))
+    ax1.grid(True, alpha=0.3, axis='y')
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, f'r2_distribution_{session_dir}.pdf'), bbox_inches='tight')
+    plt.close()
+    print(f"Saved R² distribution plot.")
+
+    # ── Plot 2: decoder R² vs chance ─────────────────────────────────────────
+    fig2, ax2 = plt.subplots(figsize=(10, 6))
+    bp2 = ax2.boxplot([val_r2_list, chance_r2],
+                      positions=[1, 2], widths=0.6, patch_artist=True, showmeans=True,
+                      meanprops=dict(marker='D', markerfacecolor='red', markersize=8))
+    for patch, col in zip(bp2['boxes'], ['skyblue', 'lightgray']):
+        patch.set_facecolor(col)
+    ax2.set_xticks([1, 2]); ax2.set_xticklabels(['Belief Decoder', 'Chance (permutation)'])
+    ax2.set_ylabel('R²', fontsize=13)
+    ax2.set_title(f'Belief Decoder vs Chance — {session_dir}', fontsize=15, fontweight='bold')
+    ax2.text(0.5, 0.95,
+             f'Val R² vs Chance: t={t_stat:.2f}, p={p_val:.2e}',
+             transform=ax2.transAxes, ha='center', va='top', fontsize=11,
+             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    ax2.grid(True, alpha=0.3, axis='y')
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, f'decoder_vs_chance_{session_dir}.pdf'), bbox_inches='tight')
+    plt.close()
+    print(f"Saved decoder vs chance plot.")
+
+    # ── Plot 3: predicted vs true belief (last fold, last run) ───────────────
+    if last_val_pred is not None:
+        fig3, ax3 = plt.subplots(figsize=(8, 8))
+        ax3.scatter(last_val_true, last_val_pred, alpha=0.3, s=10, color='steelblue', label='Predictions')
+        lo = min(last_val_true.min(), last_val_pred.min())
+        hi = max(last_val_true.max(), last_val_pred.max())
+        ax3.plot([lo, hi], [lo, hi], 'r--', linewidth=1.5, label='Identity (perfect)')
+        r2_last = r2_score(last_val_true, last_val_pred)
+        ax3.set_xlabel('True HGF belief', fontsize=13)
+        ax3.set_ylabel('Predicted HGF belief', fontsize=13)
+        ax3.set_title(f'Predicted vs True Belief (last fold) — {session_dir}', fontsize=13, fontweight='bold')
+        ax3.text(0.05, 0.95, f'R² = {r2_last:.3f}',
+                 transform=ax3.transAxes, va='top', fontsize=13,
+                 bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.8))
+        ax3.legend(); ax3.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(os.path.join(output_dir, f'predicted_vs_true_{session_dir}.pdf'), bbox_inches='tight')
+        plt.close()
+        print(f"Saved predicted vs true belief plot.")
+
+    print(f"\nContinuous evaluation done. Results → {output_dir}/")
+    return {
+        'val_r2_mean':    float(val_r2_list.mean()),
+        'val_r2_std':     float(val_r2_list.std()),
+        'train_r2_mean':  float(train_r2_list.mean()),
+        'train_r2_std':   float(train_r2_list.std()),
+        'chance_r2_mean': float(chance_r2.mean()),
+        't_vs_chance':    float(t_stat),
+        'p_vs_chance':    float(p_val),
     }
 
 
@@ -1192,6 +1052,9 @@ if RUN_DISCRETE:
 
 if RUN_HYBRID:
     _run_metrics['hybrid'] = run_hybrid_evaluation()
+
+if RUN_CONTINUOUS:
+    _run_metrics['continuous'] = run_continuous_evaluation()
 
 _summary = dict(
     status='completed',
