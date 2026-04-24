@@ -15,6 +15,7 @@ from ncmcm.data_loaders.bandit_task import BanditTaskNeuroPixelsDataset
 from ncmcm.bundlenet.bundlenet import BunDLeNet, train_model, project_into_latent_space, project_into_latent_space_lazy
 from ncmcm.bundlenet.utils import (prep_data, timeseries_train_test_split, prep_data_lazy, timeseries_train_test_split_lazy,
                                      timeseries_train_test_split_cv, timeseries_train_test_split_cv_lazy, make_hybrid_b)
+from ncmcm.bundlenet.initialisations import pca_initialisation
 from sklearn.preprocessing import LabelEncoder
 from ncmcm.visualisers.neuronal_behavioural import plotting_neuronal_behavioural_plotly
 from ncmcm.visualisers.latent_space import LatentSpaceVisualiser
@@ -99,7 +100,20 @@ def parse_args():
                         help='HGF output column to use as continuous behaviour signal')
     parser.add_argument('--alpha', type=float, nargs='+', default=[0.5],
                         help='Discrete CE weight in hybrid loss: alpha*CE + (1-alpha)*MSE. Can specify multiple for grid search.')
-    
+
+    # Model initialisation
+    parser.add_argument('--pca_init', action='store_true',
+                        help='Initialise BunDLeNet tau with PCA before training (improves reproducibility)')
+
+    # Dataset config (not grid-searchable, but should appear in config for reproducibility)
+    parser.add_argument('--choosing_state_mode', type=str, default='side',
+                        choices=['side', 'correctness'],
+                        help='How choosing states are labelled: side (left/right) or correctness (correct/incorrect)')
+    parser.add_argument('--gaussian_sigma_ms', type=float, default=25.0,
+                        help='Gaussian kernel sigma in ms (only used when downsample_method=gaussian)')
+    parser.add_argument('--recompute_cache', action='store_true',
+                        help='Force recompute dataset cache even if one exists')
+
     return parser.parse_args()
 
 
@@ -135,9 +149,17 @@ def create_run_directory(grid_dir, run_idx, params):
     return run_dir
 
 
-def save_config(args, output_dir):
-    """Save configuration to JSON file"""
-    config = vars(args)
+def save_config(args, output_dir, extra=None):
+    """Save configuration to JSON file.
+
+    Args:
+        args: parsed argument namespace
+        output_dir: Path to output directory
+        extra: optional dict of additional runtime fields to merge in
+    """
+    config = {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()}
+    if extra:
+        config.update(extra)
     config_path = output_dir / 'config.json'
     with open(config_path, 'w') as f:
         json.dump(config, f, indent=4)
@@ -194,7 +216,8 @@ def save_comprehensive_config(args, params, output_dir, execution_time, executio
 
 
 def load_data(data_path, downsample_fs, downsample_method, good_neurons_only, apply_hold_transitions='none', normalize_method='none',
-              hgf_model=None, hgf_column=None):
+              hgf_model=None, hgf_column=None, choosing_state_mode='side',
+              gaussian_sigma_ms=25.0, recompute_cache=False):
     """Load and prepare dataset"""
     # Determine state_transitions parameter
     transition_lookup = {
@@ -243,6 +266,9 @@ def load_data(data_path, downsample_fs, downsample_method, good_neurons_only, ap
         good_neurons_only=good_neurons_only,
         state_transitions=state_transitions,
         normalize_method=norm_method,
+        choosing_state_mode=choosing_state_mode,
+        gaussian_sigma_ms=gaussian_sigma_ms,
+        recompute_cache=recompute_cache,
         **(dict(hgf_model=hgf_model, hgf_column=hgf_column) if hgf_model is not None else {})
     )
     # Use float32 to reduce memory usage by 50%
@@ -333,6 +359,7 @@ def train_bundlenet(x_train, b_train, x_test, b_test, x_shape, args, output_dir,
 
     b_type = getattr(args, 'b_type', 'discrete')
     alpha = getattr(args, 'alpha', 0.5)
+    pca_init = getattr(args, 'pca_init', False)
 
     if b_type == 'hybrid':
         if n_classes is None:
@@ -350,9 +377,22 @@ def train_bundlenet(x_train, b_train, x_test, b_test, x_shape, args, output_dir,
         num_behaviour=num_behaviour,
         input_shape=x_shape
     )
-    
+
     device = torch.device(args.device)
-    print(f"Training on {device} for {args.n_epochs} epochs (b_type='{b_type}')...")
+
+    if pca_init:
+        print("Running PCA initialisation of tau...")
+        # pca_initialisation requires eager numpy array — materialise if lazy
+        if hasattr(x_train, 'dataset'):  # Subset (lazy)
+            from torch.utils.data import DataLoader as _DL
+            _dl = _DL(x_train, batch_size=len(x_train), shuffle=False)
+            x_train_np = next(iter(_dl)).numpy()
+        else:
+            x_train_np = x_train if isinstance(x_train, np.ndarray) else np.array(x_train)
+        model.tau = pca_initialisation(x_train_np, model.tau, args.latent_dim, device)
+        print("PCA initialisation complete.")
+
+    print(f"Training on {device} for {args.n_epochs} epochs (b_type='{b_type}', pca_init={pca_init})...")
     
     loss_array, test_loss_array = train_model(
         x_train,
@@ -853,13 +893,16 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
         args.apply_hold_transitions, args.normalize_method,
         hgf_model=args.hgf_model if b_type == 'hybrid' else None,
         hgf_column=args.hgf_column if b_type == 'hybrid' else None,
+        choosing_state_mode=getattr(args, 'choosing_state_mode', 'side'),
+        gaussian_sigma_ms=getattr(args, 'gaussian_sigma_ms', 25.0),
+        recompute_cache=getattr(args, 'recompute_cache', False),
     )
     print_step_time("Data loading", run_start_time, step_start)
     
     # Encode behaviour labels and optionally build hybrid b array
     label_encoder = LabelEncoder()
     b_encoded = label_encoder.fit_transform(b)   # int64 class indices
-    n_classes = len(np.unique(b_encoded))
+    n_classes_actual = len(np.unique(b_encoded))
 
     if b_type == 'hybrid':
         if hgf_beliefs is None:
@@ -869,9 +912,18 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
             )
         b_for_bundlenet = make_hybrid_b(b_encoded, hgf_beliefs)
         print(f"Hybrid b array shape: {b_for_bundlenet.shape} (col 0 = class index, cols 1+ = continuous)")
+        n_classes = n_classes_actual
     else:
         b_for_bundlenet = b_encoded
         n_classes = None  # not needed for non-hybrid
+
+    # Re-save config now that we know runtime data dimensions
+    save_config(args, output_dir, extra={
+        'n_timesteps': int(x.shape[1]),
+        'n_neurons': int(x.shape[0]),
+        'n_classes': n_classes_actual,
+        'b_labels': b_labels,
+    })
     
     # Visualize raw data
     step_start = time.time()
