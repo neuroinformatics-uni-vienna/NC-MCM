@@ -100,6 +100,9 @@ if RUN_CONTINUOUS and not USE_HGF:
 # ===========================================================================
 
 data_path   = sys.argv[1]
+# Optional second positional arg overrides SPLIT_MODE from CLI
+if len(sys.argv) > 2 and sys.argv[2] in ('cv', 'test_split'):
+    SPLIT_MODE = sys.argv[2]
 session_dir = os.path.basename(data_path.rstrip('/'))
 
 # ===========================================================================
