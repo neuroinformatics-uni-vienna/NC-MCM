@@ -28,6 +28,7 @@ python scripts/bandit_gridsearch.py \
     --gamma 0.75 \
     --n_epochs 500 \
     --lazy_loading \
+    --pca_init \
     2>&1 | tee -a "$LOG"
 
 # Extract the run directory from gridsearch output

@@ -17,6 +17,7 @@ from ncmcm.bundlenet.utils import (prep_data, timeseries_train_test_split, prep_
                                      timeseries_train_test_split_cv, timeseries_train_test_split_cv_lazy, make_hybrid_b)
 from ncmcm.bundlenet.initialisations import pca_initialisation
 from sklearn.preprocessing import LabelEncoder
+from sklearn.model_selection import KFold
 from ncmcm.visualisers.neuronal_behavioural import plotting_neuronal_behavioural_plotly
 from ncmcm.visualisers.latent_space import LatentSpaceVisualiser
 
