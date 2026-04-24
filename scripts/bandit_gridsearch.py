@@ -87,6 +87,12 @@ def parse_args():
     # Cross-validation
     parser.add_argument('--cv_folds', type=int, default=None,
                         help='Number of cross-validation folds. If not specified, uses single train/test split.')
+
+    # Train/test split (single-split mode, i.e. cv_folds=None)
+    parser.add_argument('--kfold_n_splits', type=int, default=7,
+                        help='Number of KFold splits for the single train/test split (default: 7)')
+    parser.add_argument('--kfold_test_fold', type=int, default=4,
+                        help='Which fold index to use as test set in the single train/test split (default: 4)')
     
     # Behaviour type
     parser.add_argument('--b_type', type=str, nargs='+', default=['discrete'],
@@ -289,7 +295,7 @@ def load_data(data_path, downsample_fs, downsample_method, good_neurons_only, ap
     return x, b, b_labels, b_colors, b_colors_rgb, hgf_beliefs
 
 
-def preprocess_data(x, b, window, lazy_loading=False, cv_folds=None):
+def preprocess_data(x, b, window, lazy_loading=False, cv_folds=None, kfold_n_splits=7, kfold_test_fold=4):
     """Preprocess data for BunDLeNet
     
     Args:
@@ -298,6 +304,8 @@ def preprocess_data(x, b, window, lazy_loading=False, cv_folds=None):
         window: Window size for time delay embedding
         lazy_loading: Use memory-efficient lazy loading
         cv_folds: Number of CV folds (None for single split)
+        kfold_n_splits: Number of KFold splits for single train/test split (default: 7)
+        kfold_test_fold: Which fold index to use as test set in single split (default: 4)
     
     Returns:
         If cv_folds is None:
@@ -332,14 +340,25 @@ def preprocess_data(x, b, window, lazy_loading=False, cv_folds=None):
         
         return x_, b_, splits
     else:
-        # Single train/test split (original behaviour)
-        if lazy_loading:
-            x_train, x_test, b_train, b_test = timeseries_train_test_split_lazy(x_, b_)
-        else:
-            x_train, x_test, b_train, b_test = timeseries_train_test_split(x_, b_)
+        # Single train/test split using configurable KFold
+        from torch.utils.data import Subset
+        total_samples = len(x_) if not hasattr(x_, 'shape') else x_.shape[0]
+        indices = np.arange(total_samples)
+        kf = KFold(n_splits=kfold_n_splits, shuffle=False)
+        for i, (train_index, test_index) in enumerate(kf.split(indices)):
+            if i == kfold_test_fold:
+                if lazy_loading:
+                    x_train = Subset(x_, train_index)
+                    x_test = Subset(x_, test_index)
+                else:
+                    x_train, x_test = x_[train_index], x_[test_index]
+                b_train = b_[train_index]
+                b_test = b_[test_index]
+                break
         
-        print(f"Train shapes - x: {x_train.shape if hasattr(x_train, 'shape') else len(x_train)}, b: {b_train.shape}")
-        print(f"Test shapes - x: {x_test.shape if hasattr(x_test, 'shape') else len(x_test)}, b: {b_test.shape}")
+        train_size = len(x_train) if not hasattr(x_train, 'shape') else x_train.shape[0]
+        test_size = len(x_test) if not hasattr(x_test, 'shape') else x_test.shape[0]
+        print(f"KFold({kfold_n_splits}) fold-{kfold_test_fold} split: train={train_size}, test={test_size}")
         
         return x_, b_, x_train, x_test, b_train, b_test
 
@@ -932,7 +951,7 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
     
     # Preprocess data
     step_start = time.time()
-    preprocess_result = preprocess_data(x, b_for_bundlenet, args.window, lazy_loading=args.lazy_loading, cv_folds=args.cv_folds)
+    preprocess_result = preprocess_data(x, b_for_bundlenet, args.window, lazy_loading=args.lazy_loading, cv_folds=args.cv_folds, kfold_n_splits=args.kfold_n_splits, kfold_test_fold=args.kfold_test_fold)
     
     if args.cv_folds is not None:
         x_, b_, splits = preprocess_result
