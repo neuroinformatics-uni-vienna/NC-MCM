@@ -12,10 +12,10 @@ echo "=== Starting overnight run at $(date) ===" | tee "$LOG"
 echo ">>> [1/3] BunDLeNet training (alpha=0.1, HGF hybrid)" | tee -a "$LOG"
 
 python scripts/bandit_gridsearch.py \
-    --data_path "datasets/raw/twoArmBandit/JPAS_0023_20230922" \
+    --data_path "datasets/raw/twoArmBandit/JPAS_0023_20230927" \
     --output_dir "results/twoArmBandit/hybrid_alpha_search" \
     --b_type hybrid \
-    --alpha 0.1 \
+    --alpha 0.9 \
     --downsample_fs 30 \
     --downsample_method count \
     --good_neurons_only true \
