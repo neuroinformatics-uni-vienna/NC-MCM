@@ -437,6 +437,11 @@ def train_bundlenet(x_train, b_train, x_test, b_test, x_shape, args, output_dir,
     # Save loss arrays
     np.save(output_dir / 'data' / 'loss_array.npy', loss_array)
     np.save(output_dir / 'data' / 'test_loss_array.npy', test_loss_array)
+    if loss_array.shape[1] == 5:
+        np.save(output_dir / 'data' / 'disc_loss_array.npy', loss_array[:, 3])
+        np.save(output_dir / 'data' / 'cont_loss_array.npy', loss_array[:, 4])
+        np.save(output_dir / 'data' / 'disc_test_loss_array.npy', test_loss_array[:, 3])
+        np.save(output_dir / 'data' / 'cont_test_loss_array.npy', test_loss_array[:, 4])
     
     return model, loss_array, test_loss_array
 
@@ -444,13 +449,20 @@ def train_bundlenet(x_train, b_train, x_test, b_test, x_shape, args, output_dir,
 def plot_training_loss(loss_array, test_loss_array, output_dir):
     """Plot and save training and validation loss curves"""
     print("Plotting training loss...")
-    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+    is_hybrid = loss_array.shape[1] == 5
+    n_plots = 5 if is_hybrid else 3
+    fig, axes = plt.subplots(1, n_plots, figsize=(6 * n_plots, 5))
     
     labels = [
         r"$\mathcal{L}_{\mathrm{Markov}}$",
         r"$\mathcal{L}_{\mathrm{Behaviour}}$",
         r"Total loss $\mathcal{L}$"
     ]
+    if is_hybrid:
+        labels += [
+            r"$\mathcal{L}_{\mathrm{Discrete}}$ (CE component)",
+            r"$\mathcal{L}_{\mathrm{Continuous}}$ (MSE component)"
+        ]
     
     for i, (ax, label) in enumerate(zip(axes, labels)):
         ax.semilogy(loss_array[:, i], label='Train', linewidth=2)

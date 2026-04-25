@@ -98,7 +98,7 @@ class BunDLeTrainer:
         # forward pass
         yt1_upper, yt1_lower, bt1_upper = self.model(x_train)
         # loss calculation
-        dcc_loss, behaviour_loss, total_loss = self.bccdcc_loss(yt1_upper, yt1_lower, bt1_upper, b_train_1)
+        dcc_loss, behaviour_loss, total_loss, *_ = self.bccdcc_loss(yt1_upper, yt1_lower, bt1_upper, b_train_1)
 
         total_loss.backward()
         self.optimizer.step()
@@ -113,7 +113,7 @@ class BunDLeTrainer:
             yt1_upper, yt1_lower, bt1_upper = self.model(x_test)
 
         # loss calculation
-        dcc_loss, behaviour_loss, total_loss = self.bccdcc_loss(yt1_upper, yt1_lower, bt1_upper, b_test_1)
+        dcc_loss, behaviour_loss, total_loss, *_ = self.bccdcc_loss(yt1_upper, yt1_lower, bt1_upper, b_test_1)
 
         return dcc_loss.item(), behaviour_loss.item(), total_loss.item()
 

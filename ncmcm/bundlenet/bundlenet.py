@@ -116,12 +116,14 @@ class BunDLeTrainer:
         # forward pass
         yt1_upper, yt1_lower, bt1_upper = self.model(x_train)
         # loss calculation
-        dcc_loss, behaviour_loss, total_loss = self.bccdcc_loss(yt1_upper, yt1_lower, bt1_upper, b_train_1)
+        dcc_loss, behaviour_loss, total_loss, disc_comp, cont_comp = self.bccdcc_loss(yt1_upper, yt1_lower, bt1_upper, b_train_1)
 
         total_loss.backward()
         self.optimizer.step()
 
-        return dcc_loss.item(), behaviour_loss.item(), total_loss.item()
+        disc_val = disc_comp.item() if hasattr(disc_comp, 'item') else float(disc_comp)
+        cont_val = cont_comp.item() if hasattr(cont_comp, 'item') else float(cont_comp)
+        return dcc_loss.item(), behaviour_loss.item(), total_loss.item(), disc_val, cont_val
 
     def test_step(self, x_test, b_test_1):
         self.model.eval()
@@ -131,18 +133,20 @@ class BunDLeTrainer:
             yt1_upper, yt1_lower, bt1_upper = self.model(x_test)
 
         # loss calculation
-        dcc_loss, behaviour_loss, total_loss = self.bccdcc_loss(yt1_upper, yt1_lower, bt1_upper, b_test_1)
+        dcc_loss, behaviour_loss, total_loss, disc_comp, cont_comp = self.bccdcc_loss(yt1_upper, yt1_lower, bt1_upper, b_test_1)
 
-        return dcc_loss.item(), behaviour_loss.item(), total_loss.item()
+        disc_val = disc_comp.item() if hasattr(disc_comp, 'item') else float(disc_comp)
+        cont_val = cont_comp.item() if hasattr(cont_comp, 'item') else float(cont_comp)
+        return dcc_loss.item(), behaviour_loss.item(), total_loss.item(), disc_val, cont_val
 
     def train_loop(self, train_loader):
         """
         Handles the training within a single epoch and logs losses
         """
-        loss_array = np.zeros((0, 3))
+        loss_array = np.zeros((0, 5))
         for x_train, b_train_1 in train_loader:
-            dcc_loss, behaviour_loss, total_loss = self.train_step(x_train, b_train_1)
-            loss_array = np.append(loss_array, [[dcc_loss, behaviour_loss, total_loss]], axis=0)
+            dcc_loss, behaviour_loss, total_loss, disc_comp, cont_comp = self.train_step(x_train, b_train_1)
+            loss_array = np.append(loss_array, [[dcc_loss, behaviour_loss, total_loss, disc_comp, cont_comp]], axis=0)
 
         avg_train_loss = loss_array.mean(axis=0)
 
@@ -152,10 +156,10 @@ class BunDLeTrainer:
         """
         Handles testing within a single epoch and logs losses
         """
-        loss_array = np.zeros((0, 3))
+        loss_array = np.zeros((0, 5))
         for x_test, b_test_1 in test_loader:
-            dcc_loss, behaviour_loss, total_loss = self.test_step(x_test, b_test_1)
-            loss_array = np.append(loss_array, [[dcc_loss, behaviour_loss, total_loss]], axis=0)
+            dcc_loss, behaviour_loss, total_loss, disc_comp, cont_comp = self.test_step(x_test, b_test_1)
+            loss_array = np.append(loss_array, [[dcc_loss, behaviour_loss, total_loss, disc_comp, cont_comp]], axis=0)
 
         avg_test_loss = loss_array.mean(axis=0)
 
