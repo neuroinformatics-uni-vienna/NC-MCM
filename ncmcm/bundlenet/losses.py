@@ -95,11 +95,16 @@ class BccDccLoss:
             cont_loss = self.loss_functions['b_loss_func_continuous'](
                 cont_pred, b_train_1[:, 1:].float()
             )
-            behaviour_loss = self.alpha * disc_loss + (1 - self.alpha) * cont_loss
+            disc_comp = self.alpha * disc_loss
+            cont_comp = (1 - self.alpha) * cont_loss
+            behaviour_loss = disc_comp + cont_comp
+            total_loss = self.gamma * DCC_loss + (1 - self.gamma) * behaviour_loss
+            return (self.gamma * DCC_loss, (1 - self.gamma) * behaviour_loss, total_loss,
+                    (1 - self.gamma) * disc_comp, (1 - self.gamma) * cont_comp)
         else:
             behaviour_loss = self.loss_functions['b_loss_func'](b_train_1.float(), bt1_upper)
         total_loss = self.gamma * DCC_loss + (1 - self.gamma) * behaviour_loss
-        return self.gamma * DCC_loss, (1 - self.gamma) * behaviour_loss, total_loss
+        return self.gamma * DCC_loss, (1 - self.gamma) * behaviour_loss, total_loss, 0.0, 0.0
 
 
 # @tf.function
