@@ -343,10 +343,12 @@ def preprocess_data(x, b, window, lazy_loading=False, cv_folds=None, kfold_n_spl
         if b_labels_dict is None:
             raise ValueError("b_labels_dict must be provided when trial_based=True.")
 
-        # For hybrid b, class indices live in column 0
+        # For hybrid b, class indices live in column 0 — use them for
+        # boundary detection but keep full b (possibly 2-D) in segments
         b_int = b[:, 0].astype(int) if b.ndim > 1 else b.astype(int)
 
-        segments = segment_trials(x, b_int, b_labels_dict, trial_start_state)
+        segments = segment_trials(x, b, b_labels_dict, trial_start_state,
+                                  b_detect=b_int if b.ndim > 1 else None)
         print(f"Segmented into {len(segments)} trials "
               f"(lengths: min={min(len(bt) for _, bt in segments)}, "
               f"max={max(len(bt) for _, bt in segments)})")
