@@ -3,7 +3,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 from ncmcm.data_loaders.bandit_task import BanditTaskNeuroPixelsDataset
 from ncmcm.bundlenet.bundlenet import BunDLeNet, train_model, project_into_latent_space
-from ncmcm.bundlenet.utils import prep_data, make_hybrid_b
+from ncmcm.bundlenet.utils import (
+    prep_data, make_hybrid_b,
+    segment_trials, prep_data_trials, trial_train_test_split,
+)
 from ncmcm.visualisers.neuronal_behavioural import plotting_neuronal_behavioural
 from ncmcm.visualisers.latent_space import LatentSpaceVisualiser
 from sklearn.preprocessing import LabelEncoder
@@ -123,3 +126,49 @@ vis = LatentSpaceVisualiser(
 vis.plot_latent_timeseries()
 vis.plot_phase_space()
 vis.rotating_plot(filename='figures/rotation_bandit_task.gif', show_fig=True)
+
+
+# ── Trial-based training regime ───────────────────────────────────────────────
+# An alternative to the continuous time-series approach above.
+# Benefits:
+#   - Windows never cross trial boundaries (no artificial reward→intertrial pairs)
+#   - Train/test split is trial-level and randomised — no temporal ordering constraint
+#   - Pairs can be freely shuffled within the training set
+
+# 1. Segment the session into trials (each trial starts at 'intertrial')
+trial_segments = segment_trials(X, B_encoded, dataset.b_labels_dict,
+                                trial_start_state='intertrial')
+print(f"Number of trials: {len(trial_segments)}")
+print(f"Trial lengths (timesteps): min={min(len(b) for _, b in trial_segments)}, "
+      f"max={max(len(b) for _, b in trial_segments)}")
+
+# 2. Window each trial independently — no cross-trial pairs
+X_trials, B_trials, trial_ids = prep_data_trials(trial_segments, win=50)
+print(f"Trial-based prepared data: X={X_trials.shape}, B={B_trials.shape}, "
+      f"trial_ids range=[{trial_ids.min()}, {trial_ids.max()}]")
+
+# 3. Random trial-level train/test split (no temporal ordering required)
+(X_train, B_train), (X_test, B_test) = trial_train_test_split(
+    X_trials, B_trials, trial_ids, test_ratio=0.2, random_state=42
+)
+print(f"Train: {X_train.shape[0]} pairs | Test: {X_test.shape[0]} pairs")
+
+# 4. Train BundleNet — API is identical to the continuous-series case
+model_trial = BunDLeNet(
+    latent_dim=3,
+    num_behaviour=len(dataset.b_labels_dict),
+    input_shape=X_train.shape
+)
+
+loss_array_trial, loss_array_test = train_model(
+    X_train,
+    B_train,
+    model_trial,
+    b_type='discrete',
+    n_classes=len(dataset.b_labels_dict),
+    gamma=0.75,
+    learning_rate=0.00005,
+    n_epochs=500,
+    validation_data=(X_test, B_test),
+)
+# ─────────────────────────────────────────────────────────────────────────────

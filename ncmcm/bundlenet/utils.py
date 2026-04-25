@@ -425,3 +425,154 @@ def timeseries_train_test_split_cv_lazy(x_paired, b_1, n_splits=5):
     
     return splits
 
+
+# ---------------------------------------------------------------------------
+# Trial-based utilities
+# ---------------------------------------------------------------------------
+
+
+def segment_trials(X, B, b_labels_dict, trial_start_state='intertrial'):
+    """
+    Segment a full-session time series into individual trials.
+
+    A new trial begins whenever the behavioral state transitions *into*
+    ``trial_start_state``.  Any data before the first such transition (i.e.
+    a partial trial at the start of the session) is discarded.
+
+    Parameters
+    ----------
+    X : np.ndarray, shape (T, N)
+        Neuronal traces for the full session.
+    B : np.ndarray, shape (T,)
+        Behavioral label integers for the full session.
+    b_labels_dict : dict {int: str}
+        Mapping from integer label to state name, as returned by
+        ``BanditTaskNeuroPixelsDataset.b_labels_dict``.
+    trial_start_state : str, optional
+        Name of the behavioral state that marks the beginning of a new trial.
+        Default is ``'intertrial'``.
+
+    Returns
+    -------
+    segments : list of (np.ndarray, np.ndarray)
+        Each element is ``(X_trial, B_trial)`` with shapes ``(t_i, N)`` and
+        ``(t_i,)`` respectively, where ``t_i`` is the length of trial *i*.
+    """
+    label_to_id = {v: k for k, v in b_labels_dict.items()}
+    if trial_start_state not in label_to_id:
+        raise ValueError(
+            f"State '{trial_start_state}' not found in b_labels_dict. "
+            f"Available states: {list(label_to_id.keys())}"
+        )
+    start_label = label_to_id[trial_start_state]
+
+    is_start = B == start_label
+    # Indices where the state transitions INTO start_label
+    transition_points = np.where(is_start[1:] & ~is_start[:-1])[0] + 1
+
+    if is_start[0]:
+        # Session begins with the start state — include t=0
+        boundaries = np.concatenate([[0], transition_points])
+    else:
+        # First partial trial (before the first transition) is discarded
+        boundaries = transition_points
+
+    segments = []
+    for i, start in enumerate(boundaries):
+        end = int(boundaries[i + 1]) if i + 1 < len(boundaries) else len(X)
+        segments.append((X[start:end], B[start:end]))
+
+    return segments
+
+
+def prep_data_trials(trial_segments, win=15):
+    """
+    Window each trial independently and concatenate the results.
+
+    Calls :func:`prep_data` on every trial in *trial_segments*, so windows
+    never cross trial boundaries.  Trials shorter than ``win + 1`` timesteps
+    are silently skipped (they would produce zero pairs).
+
+    Parameters
+    ----------
+    trial_segments : list of (np.ndarray, np.ndarray)
+        Output of :func:`segment_trials`: each element is ``(X_trial, B_trial)``.
+    win : int, optional
+        Window length passed to :func:`prep_data`. Default is 15.
+
+    Returns
+    -------
+    X_paired : np.ndarray, shape (M, 2, win, N)
+        All paired neuronal windows concatenated across trials.
+    B_1 : np.ndarray, shape (M,) or (M, k)
+        Behavioral labels for the next time step, concatenated across trials.
+        Works with both 1-D discrete labels and 2-D hybrid labels.
+    trial_ids : np.ndarray, shape (M,), dtype int64
+        Integer trial index (0-based) for each pair in ``X_paired``.
+    """
+    all_x_paired = []
+    all_b_1 = []
+    all_trial_ids = []
+
+    for trial_id, (X_t, B_t) in enumerate(trial_segments):
+        if len(X_t) <= win:
+            continue  # Too short to produce any pairs
+        x_p, b_1 = prep_data(X_t, B_t, win)
+        all_x_paired.append(x_p)
+        all_b_1.append(b_1)
+        all_trial_ids.append(np.full(len(x_p), trial_id, dtype=np.int64))
+
+    if not all_x_paired:
+        raise ValueError(
+            "No trials produced any pairs. "
+            "Ensure that at least some trials are longer than `win` timesteps."
+        )
+
+    X_paired = np.concatenate(all_x_paired, axis=0)
+    B_1 = np.concatenate(all_b_1, axis=0)
+    trial_ids = np.concatenate(all_trial_ids, axis=0)
+
+    return X_paired, B_1, trial_ids
+
+
+def trial_train_test_split(X_paired, B_1, trial_ids, test_ratio=0.2, random_state=None):
+    """
+    Randomly split pairs into train/test sets at the *trial* level.
+
+    All pairs belonging to a given trial are kept together — a trial is
+    entirely in train or entirely in test, never split across both.  This
+    prevents data leakage between train and test sets and allows free
+    shuffling of pairs within the training set.
+
+    Parameters
+    ----------
+    X_paired : np.ndarray, shape (M, 2, win, N)
+        Paired neuronal traces, e.g. from :func:`prep_data_trials`.
+    B_1 : np.ndarray, shape (M,) or (M, k)
+        Behavioral labels for the next time step.
+    trial_ids : np.ndarray, shape (M,)
+        Trial index for each pair, e.g. from :func:`prep_data_trials`.
+    test_ratio : float, optional
+        Fraction of trials to allocate to the test set. Default is 0.2.
+    random_state : int or None, optional
+        Seed for the random number generator, for reproducibility.
+
+    Returns
+    -------
+    (X_train, B_train) : tuple of np.ndarray
+        Training pairs and corresponding behavioral labels.
+    (X_test, B_test) : tuple of np.ndarray
+        Test pairs and corresponding behavioral labels.
+    """
+    rng = np.random.default_rng(random_state)
+    unique_trials = np.unique(trial_ids).copy()
+    rng.shuffle(unique_trials)
+
+    n_test = max(1, int(np.round(len(unique_trials) * test_ratio)))
+    test_trial_set = set(unique_trials[-n_test:].tolist())
+
+    train_mask = np.array([tid not in test_trial_set for tid in trial_ids])
+    test_mask = ~train_mask
+
+    return (X_paired[train_mask], B_1[train_mask]), (X_paired[test_mask], B_1[test_mask])
+

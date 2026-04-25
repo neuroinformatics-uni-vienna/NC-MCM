@@ -14,7 +14,8 @@ import gc
 from ncmcm.data_loaders.bandit_task import BanditTaskNeuroPixelsDataset
 from ncmcm.bundlenet.bundlenet import BunDLeNet, train_model, project_into_latent_space, project_into_latent_space_lazy
 from ncmcm.bundlenet.utils import (prep_data, timeseries_train_test_split, prep_data_lazy, timeseries_train_test_split_lazy,
-                                     timeseries_train_test_split_cv, timeseries_train_test_split_cv_lazy, make_hybrid_b)
+                                     timeseries_train_test_split_cv, timeseries_train_test_split_cv_lazy, make_hybrid_b,
+                                     segment_trials, prep_data_trials, trial_train_test_split)
 from ncmcm.bundlenet.initialisations import pca_initialisation
 from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import KFold
@@ -120,6 +121,16 @@ def parse_args():
                         help='Gaussian kernel sigma in ms (only used when downsample_method=gaussian)')
     parser.add_argument('--recompute_cache', action='store_true',
                         help='Force recompute dataset cache even if one exists')
+
+    # Trial-based training regime
+    parser.add_argument('--trial_based', action='store_true',
+                        help='Use trial-based regime: windows per trial, random trial-level train/test split')
+    parser.add_argument('--trial_start_state', type=str, default='intertrial',
+                        help='Behavioral state name that marks the start of a new trial (default: intertrial)')
+    parser.add_argument('--trial_test_ratio', type=float, default=0.2,
+                        help='Fraction of trials to hold out as the test set (default: 0.2)')
+    parser.add_argument('--trial_random_state', type=int, default=None,
+                        help='Random seed for the trial-level train/test split')
 
     return parser.parse_args()
 
@@ -296,7 +307,9 @@ def load_data(data_path, downsample_fs, downsample_method, good_neurons_only, ap
     return x, b, b_labels, b_colors, b_colors_rgb, hgf_beliefs
 
 
-def preprocess_data(x, b, window, lazy_loading=False, cv_folds=None, kfold_n_splits=7, kfold_test_fold=4):
+def preprocess_data(x, b, window, lazy_loading=False, cv_folds=None, kfold_n_splits=7, kfold_test_fold=4,
+                    trial_based=False, b_labels_dict=None, trial_start_state='intertrial',
+                    trial_test_ratio=0.2, trial_random_state=None):
     """Preprocess data for BunDLeNet
     
     Args:
@@ -307,15 +320,53 @@ def preprocess_data(x, b, window, lazy_loading=False, cv_folds=None, kfold_n_spl
         cv_folds: Number of CV folds (None for single split)
         kfold_n_splits: Number of KFold splits for single train/test split (default: 7)
         kfold_test_fold: Which fold index to use as test set in single split (default: 4)
+        trial_based: Use trial-based regime (no cross-trial pairs, random trial-level split)
+        b_labels_dict: {int: str} mapping for segment_trials (required when trial_based=True)
+        trial_start_state: state name marking trial start (trial_based mode only)
+        trial_test_ratio: fraction of trials held out as test set (trial_based mode only)
+        trial_random_state: random seed for trial-level split (trial_based mode only)
     
     Returns:
-        If cv_folds is None:
+        If cv_folds is None (or trial_based):
             x_, b_, x_train, x_test, b_train, b_test
         If cv_folds is specified:
             x_, b_, splits (list of tuples)
     """
     print("Preprocessing data...")
-    
+
+    # --- Trial-based regime ---
+    if trial_based:
+        if cv_folds is not None:
+            raise ValueError("--trial_based is not compatible with --cv_folds.")
+        if lazy_loading:
+            raise ValueError("--trial_based is not compatible with --lazy_loading.")
+        if b_labels_dict is None:
+            raise ValueError("b_labels_dict must be provided when trial_based=True.")
+
+        # For hybrid b, class indices live in column 0
+        b_int = b[:, 0].astype(int) if b.ndim > 1 else b.astype(int)
+
+        segments = segment_trials(x, b_int, b_labels_dict, trial_start_state)
+        print(f"Segmented into {len(segments)} trials "
+              f"(lengths: min={min(len(bt) for _, bt in segments)}, "
+              f"max={max(len(bt) for _, bt in segments)})")
+
+        X_paired, B_1, trial_ids = prep_data_trials(segments, win=window)
+        print(f"Trial-based prepared data: X={X_paired.shape}, B={B_1.shape}")
+
+        (x_train, b_train), (x_test, b_test) = trial_train_test_split(
+            X_paired, B_1, trial_ids,
+            test_ratio=trial_test_ratio,
+            random_state=trial_random_state,
+        )
+        n_trials = len(np.unique(trial_ids))
+        n_test_t = max(1, int(np.round(n_trials * trial_test_ratio)))
+        print(f"Trial split ({n_trials - n_test_t} train / {n_test_t} test trials): "
+              f"{x_train.shape[0]} train pairs, {x_test.shape[0]} test pairs")
+        return X_paired, B_1, x_train, x_test, b_train, b_test
+
+    # --- Continuous time-series regime ---
+
     # Prepare data with time delay embedding
     if lazy_loading:
         print("Using lazy loading (memory-efficient)...")
@@ -962,16 +1013,32 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
     visualize_neural_behavioural(x, b, b_labels, b_colors, output_dir)
     print_step_time("Neural-behavioural visualization", run_start_time, step_start)
     
+    # b_labels is a list ordered by sorted state id; after LabelEncoder the mapping
+    # new_int -> state_name is identical (LabelEncoder maps sorted classes to 0, 1, ...)
+    encoded_b_labels_dict = {i: b_labels[i] for i in range(len(b_labels))}
+
     # Preprocess data
     step_start = time.time()
-    preprocess_result = preprocess_data(x, b_for_bundlenet, args.window, lazy_loading=args.lazy_loading, cv_folds=args.cv_folds, kfold_n_splits=args.kfold_n_splits, kfold_test_fold=args.kfold_test_fold)
-    
+    preprocess_result = preprocess_data(
+        x, b_for_bundlenet, args.window,
+        lazy_loading=args.lazy_loading,
+        cv_folds=args.cv_folds,
+        kfold_n_splits=args.kfold_n_splits,
+        kfold_test_fold=args.kfold_test_fold,
+        trial_based=getattr(args, 'trial_based', False),
+        b_labels_dict=encoded_b_labels_dict,
+        trial_start_state=getattr(args, 'trial_start_state', 'intertrial'),
+        trial_test_ratio=getattr(args, 'trial_test_ratio', 0.2),
+        trial_random_state=getattr(args, 'trial_random_state', None),
+    )
+
     if args.cv_folds is not None:
         x_, b_, splits = preprocess_result
         print_step_time("Data preprocessing (CV mode)", run_start_time, step_start)
     else:
         x_, b_, x_train, x_test, b_train, b_test = preprocess_result
-        print_step_time("Data preprocessing", run_start_time, step_start)
+        mode_label = "Data preprocessing (trial-based)" if getattr(args, 'trial_based', False) else "Data preprocessing"
+        print_step_time(mode_label, run_start_time, step_start)
     
     # Free memory from original arrays
     del x, b, b_for_bundlenet
