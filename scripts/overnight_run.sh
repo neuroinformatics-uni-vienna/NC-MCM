@@ -27,7 +27,6 @@ python scripts/bandit_gridsearch.py \
     --learning_rate 5e-05 \
     --gamma 0.75 \
     --n_epochs 500 \
-    # --lazy_loading \   # disabled: incompatible with --trial_based
     --pca_init \
     --trial_based \
     --trial_start_state intertrial \
