@@ -431,7 +431,7 @@ def timeseries_train_test_split_cv_lazy(x_paired, b_1, n_splits=5):
 # ---------------------------------------------------------------------------
 
 
-def segment_trials(X, B, b_labels_dict, trial_start_state='intertrial'):
+def segment_trials(X, B, b_labels_dict, trial_start_state='intertrial', b_detect=None):
     """
     Segment a full-session time series into individual trials.
 
@@ -443,20 +443,26 @@ def segment_trials(X, B, b_labels_dict, trial_start_state='intertrial'):
     ----------
     X : np.ndarray, shape (T, N)
         Neuronal traces for the full session.
-    B : np.ndarray, shape (T,)
-        Behavioral label integers for the full session.
+    B : np.ndarray, shape (T,) or (T, k)
+        Behavioral array for the full session.  Slices of this are returned
+        in the output segments.  May be 2-D for hybrid mode.
     b_labels_dict : dict {int: str}
         Mapping from integer label to state name, as returned by
         ``BanditTaskNeuroPixelsDataset.b_labels_dict``.
     trial_start_state : str, optional
         Name of the behavioral state that marks the beginning of a new trial.
         Default is ``'intertrial'``.
+    b_detect : np.ndarray, shape (T,), optional
+        1-D integer array used *only* for boundary detection.  Pass this when
+        ``B`` is 2-D (e.g. hybrid mode) so that boundaries can still be found
+        from the discrete class column.  If ``None``, ``B`` itself is used
+        (it must then be 1-D integer).
 
     Returns
     -------
     segments : list of (np.ndarray, np.ndarray)
         Each element is ``(X_trial, B_trial)`` with shapes ``(t_i, N)`` and
-        ``(t_i,)`` respectively, where ``t_i`` is the length of trial *i*.
+        ``(t_i, ...)`` respectively, where ``t_i`` is the length of trial *i*.
     """
     label_to_id = {v: k for k, v in b_labels_dict.items()}
     if trial_start_state not in label_to_id:
@@ -466,7 +472,8 @@ def segment_trials(X, B, b_labels_dict, trial_start_state='intertrial'):
         )
     start_label = label_to_id[trial_start_state]
 
-    is_start = B == start_label
+    b_1d = b_detect if b_detect is not None else B
+    is_start = b_1d == start_label
     # Indices where the state transitions INTO start_label
     transition_points = np.where(is_start[1:] & ~is_start[:-1])[0] + 1
 
