@@ -274,3 +274,24 @@ def project_into_latent_space(x_, model):
         y0_ = model.tau(torch.from_numpy(x_[:, 0]).float().to(device)).cpu().numpy()
 
     return y0_
+
+
+def predict_from_latent(y_, model):
+    """
+    Predict labels from latent variables learned by BunDLe-Net
+
+    Args:
+        y_ (np.array): Latent time-series data (time points, latent dimensions)
+        model: Instance of the BunDLeNet class.
+    Returns:
+        numpy.ndarray: Model predictions.
+    """
+    device = next(model.parameters()).device
+    model.eval()
+    
+    with torch.no_grad():
+        yp = model.predictor(torch.from_numpy(y_).float().to(device)).cpu().numpy()
+
+    return yp
+
+
