@@ -11,8 +11,6 @@ from torch.utils.data import DataLoader, TensorDataset
 from sklearn.model_selection import KFold
 from scipy import signal
 
-
-
 def prep_data(x, b, win=15):
     """
     Prepares the data for the BundleNet algorithm by formatting the input neuronal and behavioral traces.
@@ -38,20 +36,19 @@ def prep_data(x, b, win=15):
 
     """
     if x.shape[0] != b.shape[0]:
-        ValueError("The number of time steps in x must match the length of b.")
-
+        raise ValueError("The number of time steps in x must match the length of b.")
     if win > x.shape[0]:
-        ValueError("The window must be smaller than number of time steps.")
+        raise ValueError("The window must be smaller than number of time steps.")
 
-    win += 1
-    x_win = np.zeros((x.shape[0] - win + 1, win, x.shape[1]))
-    for i, _ in enumerate(x_win):
-        x_win[i] = x[i:i + win]
+    w = win  # desired input window length (not including the +1 pairing step)
 
-    xwin0, xwin1 = x_win[:, :-1, :], x_win[:, 1:, :]
-    b_1 = b[win - 1:]
-    x_paired = np.array([xwin0, xwin1])
-    x_paired = np.transpose(x_paired, axes=(1, 0, 2, 3))
+    # sliding_window_view puts the window axis last -> (t-w, n, w+1)
+    xw = np.lib.stride_tricks.sliding_window_view(x, window_shape=w+1, axis=0)
+    # move window axis to the middle -> (t-w, w+1, n)
+    xw = np.moveaxis(xw, -1, 1)
+
+    x_paired = np.stack((xw[:, :w, :], xw[:, 1:, :]), axis=1)  # (t-w, 2, w, n)
+    b_1 = b[w:]
 
     return x_paired, b_1
 
