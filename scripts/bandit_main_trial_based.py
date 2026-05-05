@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from ncmcm.data_loaders.bandit_task import BanditTaskNeuroPixelsDataset
 from ncmcm.bundlenet.bundlenet import BunDLeNet, train_model, project_into_latent_space
-from ncmcm.bundlenet.utils import prep_data, make_hybrid_b
+from ncmcm.bundlenet.utils import segment_trials, prep_data_trials, trial_train_test_split
 from ncmcm.visualisers.neuronal_behavioural import plotting_neuronal_behavioural
 from ncmcm.visualisers.latent_space import LatentSpaceVisualiser
 from sklearn.preprocessing import LabelEncoder
@@ -36,51 +36,43 @@ plotting_neuronal_behavioural(
     show_fig=True
 )
 
-# Prepare data for BunDLeNet
+# Encode behaviour labels
 label_encoder = LabelEncoder()
 B_encoded = label_encoder.fit_transform(B)
-X_, B_ = prep_data(X, B_encoded, win=50)
 
-print(f"Prepared data shape: X_={X_.shape}, B_={B_.shape}")
+# 1. Segment session into trials (each trial starts at 'intertrial')
+trial_segments = segment_trials(X, B_encoded, dataset.b_labels_dict,
+                                trial_start_state='intertrial')
+print(f"Number of trials: {len(trial_segments)}")
+print(f"Trial lengths (timesteps): min={min(len(b) for _, b in trial_segments)}, "
+      f"max={max(len(b) for _, b in trial_segments)}")
 
-# ── Hybrid mode example ──────────────────────────────────────────────────────
-# Uncomment the block below to train with joint discrete + continuous behaviour.
-# Requires that dataset.hgf_beliefs has been computed (pass hgf_model / hgf_column
-# to BanditTaskNeuroPixelsDataset to enable it).
-#
-# n_classes = len(dataset.b_labels_dict)          # number of discrete classes
-# B_hybrid = make_hybrid_b(B_encoded, dataset.hgf_beliefs)  # (T, 1 + n_continuous)
-# X_h, B_h = prep_data(X, B_hybrid, win=50)
-# model_hybrid = BunDLeNet(
-#     latent_dim=3,
-#     num_behaviour=n_classes + 1,                # n_classes logits + 1 continuous output
-#     input_shape=X_h.shape
-# )
-# loss_array_hybrid, _ = train_model(
-#     X_h, B_h, model_hybrid,
-#     b_type='hybrid',
-#     n_classes=n_classes,
-#     gamma=0.75,
-#     learning_rate=0.00005,
-#     n_epochs=500
-# )
-# ─────────────────────────────────────────────────────────────────────────────
+# 2. Window each trial independently — no cross-trial pairs
+X_trials, B_trials, trial_ids = prep_data_trials(trial_segments, win=50)
+print(f"Prepared data: X={X_trials.shape}, B={B_trials.shape}")
+
+# 3. Random trial-level train/test split (no temporal ordering constraint)
+(X_train, B_train), (X_test, B_test) = trial_train_test_split(
+    X_trials, B_trials, trial_ids, test_ratio=0.2, random_state=42
+)
+print(f"Train: {X_train.shape[0]} pairs | Test: {X_test.shape[0]} pairs")
 
 # Deploy BunDLeNet
 model = BunDLeNet(
     latent_dim=3,
     num_behaviour=len(dataset.b_labels_dict),
-    input_shape=X_.shape
+    input_shape=X_train.shape
 )
 
 loss_array, _ = train_model(
-    X_,
-    B_,
+    X_train,
+    B_train,
     model,
     b_type='discrete',
     gamma=0.75,
     learning_rate=0.00005,
-    n_epochs=500
+    n_epochs=500,
+    validation_data=(X_test, B_test),
 )
 
 # Plot training loss
@@ -99,7 +91,7 @@ plt.tight_layout()
 plt.show()
 
 # Project into latent space
-Y0_ = project_into_latent_space(X_, model)
+Y0_ = project_into_latent_space(X_train, model)
 
 # Save results (optional)
 save_results = False
@@ -107,19 +99,19 @@ if save_results:
     output_dir = 'datasets/generated/bandit_task'
     import os
     os.makedirs(output_dir, exist_ok=True)
-    
-    model.save_weights(f'{output_dir}/bundlenet_model_weights.h5')
-    np.savetxt(f'{output_dir}/latent_trajectories.txt', Y0_)
-    np.savetxt(f'{output_dir}/behavior_labels.txt', B_)
+
+    model.save_weights(f'{output_dir}/bundlenet_model_weights_trial_based.h5')
+    np.savetxt(f'{output_dir}/latent_trajectories_trial_based.txt', Y0_)
+    np.savetxt(f'{output_dir}/behavior_labels_trial_based.txt', B_train)
 
 # Visualize latent space dynamics
 vis = LatentSpaceVisualiser(
     Y0_,
-    B_,
+    B_train,
     dataset.b_labels_dict,
     colors=dataset.get_rgb_colors_for_visualizer()
 )
 
 vis.plot_latent_timeseries()
 vis.plot_phase_space()
-vis.rotating_plot(filename='figures/rotation_bandit_task.gif', show_fig=True)
+vis.rotating_plot(filename='figures/rotation_bandit_task_trial_based.gif', show_fig=True)

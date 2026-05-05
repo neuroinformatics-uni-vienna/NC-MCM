@@ -496,9 +496,16 @@ def prep_data_trials(trial_segments, win=15):
     """
     Window each trial independently and concatenate the results.
 
-    Calls :func:`prep_data` on every trial in *trial_segments*, so windows
-    never cross trial boundaries.  Trials shorter than ``win + 1`` timesteps
-    are silently skipped (they would produce zero pairs).
+    Each trial borrows the last ``win`` timesteps of the preceding trial as
+    context for its earliest windows.  This means every trial (except the
+    first) produces ``len(trial)`` pairs instead of ``len(trial) - win``, and
+    short trials that would otherwise be skipped can still contribute data.
+    The behavioural label predicted by every pair always belongs to the current
+    trial (when a full ``win``-step context is available from the predecessor).
+
+    Trial 0 has no predecessor and behaves as before: it produces
+    ``len(trial_0) - win`` pairs.  A trial is only skipped if
+    ``len(context) + len(trial) <= win`` (i.e. effectively empty).
 
     Parameters
     ----------
@@ -521,10 +528,29 @@ def prep_data_trials(trial_segments, win=15):
     all_b_1 = []
     all_trial_ids = []
 
+    prev_X_tail = None  # last `win` timesteps of the previous trial
+    prev_B_tail = None
+
     for trial_id, (X_t, B_t) in enumerate(trial_segments):
-        if len(X_t) <= win:
-            continue  # Too short to produce any pairs
-        x_p, b_1 = prep_data(X_t, B_t, win)
+        if prev_X_tail is not None:
+            # Prepend context from the previous trial.
+            # With len(prev_X_tail) == win, b_1 from prep_data equals B_t[0:],
+            # so all predicted labels belong to the current trial.
+            X_input = np.concatenate([prev_X_tail, X_t], axis=0)
+            B_input = np.concatenate([prev_B_tail, B_t], axis=0)
+        else:
+            X_input = X_t
+            B_input = B_t
+
+        # Stash tail of this trial as context for the next one
+        ctx = min(win, len(X_t))
+        prev_X_tail = X_t[-ctx:]
+        prev_B_tail = B_t[-ctx:]
+
+        if len(X_input) <= win:
+            continue  # Too short to produce any pairs even with context
+
+        x_p, b_1 = prep_data(X_input, B_input, win)
         all_x_paired.append(x_p)
         all_b_1.append(b_1)
         all_trial_ids.append(np.full(len(x_p), trial_id, dtype=np.int64))
