@@ -41,10 +41,11 @@ import seaborn as sns
 
 # ── Config ────────────────────────────────────────────────────────────────────
 N_RUNS       = 10
-N_EPOCHS     = 200
+N_EPOCHS     = 100
 BATCH_SIZE   = 256
 LR           = 0.01
 N_PERMUTATIONS = 200
+HYBRID_ALPHA = 0.1   # α·CE_norm + (1-α)·MSE  (matches BunDLeNet default)
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 # State names matching BanditTaskNeuroPixelsDataset defaults
@@ -402,6 +403,277 @@ def run_hgf_decoding(X_train, hgf_train, X_val, hgf_val, out_dir, session_dir):
     }
 
 
+# ── Hybrid decoder ─────────────────────────────────────────────────────────────
+
+def _run_hybrid_variant(X_train, y_disc_train, hgf_train,
+                         X_val, y_disc_val, hgf_val,
+                         state_labels, class_weights_tensor,
+                         use_weighted, label):
+    import math
+    n_classes  = len(state_labels)
+    latent_dim = X_train.shape[1]
+    output_dim = n_classes + 1
+    ce_norm    = math.log(n_classes)
+    crit_weight = class_weights_tensor if use_weighted else None
+
+    # Build train loader: X, (disc_label, hgf_belief)
+    X_t       = torch.tensor(X_train, dtype=torch.float32)
+    disc_t    = torch.tensor(y_disc_train.astype(np.int64), dtype=torch.long)
+    hgf_t     = torch.tensor(hgf_train.astype(np.float32).reshape(-1, 1), dtype=torch.float32)
+    loader_train = DataLoader(
+        torch.utils.data.TensorDataset(X_t, disc_t, hgf_t),
+        batch_size=BATCH_SIZE, shuffle=True,
+    )
+
+    ce_fn  = nn.CrossEntropyLoss(weight=crit_weight)
+    mse_fn = nn.MSELoss()
+
+    val_acc_list  = []
+    val_f1_list   = []
+    val_conf_sum  = np.zeros((n_classes, n_classes))
+    val_preds_all = []
+    val_true_all  = []
+    val_r2_list   = []
+
+    print(f"\n  [{label}]")
+    for run in range(N_RUNS):
+        model = nn.Linear(latent_dim, output_dim).to(DEVICE)
+        opt   = optim.Adam(model.parameters(), lr=LR)
+
+        model.train()
+        for _ in range(N_EPOCHS):
+            for xb, disc_b, hgf_b in loader_train:
+                xb, disc_b, hgf_b = xb.to(DEVICE), disc_b.to(DEVICE), hgf_b.to(DEVICE)
+                out      = model(xb)
+                logits   = out[:, :n_classes]
+                cont_out = out[:, n_classes:n_classes+1]
+                loss = (HYBRID_ALPHA * ce_fn(logits, disc_b) / ce_norm
+                        + (1 - HYBRID_ALPHA) * mse_fn(cont_out, hgf_b))
+                opt.zero_grad(); loss.backward(); opt.step()
+
+        # Evaluate discrete head
+        model.eval()
+        with torch.no_grad():
+            X_val_t   = torch.tensor(X_val, dtype=torch.float32).to(DEVICE)
+            out_val   = model(X_val_t).cpu().numpy()
+        disc_pred  = out_val[:, :n_classes].argmax(axis=1)
+        disc_true  = y_disc_val.astype(np.int64)
+        cont_pred  = out_val[:, n_classes]
+        cont_true  = hgf_val.astype(np.float32)
+
+        acc = accuracy_score(disc_true, disc_pred)
+        f1  = f1_score(disc_true, disc_pred, average=None, labels=state_labels, zero_division=0)
+        r2  = r2_score(cont_true, cont_pred)
+
+        val_acc_list.append(acc)
+        val_f1_list.append(f1)
+        val_conf_sum += confusion_matrix(disc_true, disc_pred, labels=state_labels)
+        val_preds_all.append(disc_pred)
+        val_true_all.append(disc_true)
+        val_r2_list.append(r2)
+        print(f"    Run {run+1:2d}/{N_RUNS}  acc={acc:.3f}  R²(cont)={r2:.3f}")
+
+    val_acc_list = np.array(val_acc_list)
+    val_f1_list  = np.array(val_f1_list)
+    val_r2_list  = np.array(val_r2_list)
+    avg_conf     = val_conf_sum / N_RUNS
+
+    print(f"  → {label} val acc: {val_acc_list.mean():.3f} ± {val_acc_list.std():.3f} "
+          f"  R²: {val_r2_list.mean():.3f} ± {val_r2_list.std():.3f}")
+    return dict(
+        val_acc_list=val_acc_list,
+        val_f1_list=val_f1_list,
+        avg_conf=avg_conf,
+        val_preds_all=val_preds_all,
+        val_true_all=val_true_all,
+        val_r2_list=val_r2_list,
+    )
+
+
+def run_hybrid_decoding(X_train, y_train, hgf_train,
+                         X_val, y_val, hgf_val,
+                         out_dir, session_dir, state_names_dict):
+    """Joint discrete+continuous decoder on the BunDLeNet latent space.
+
+    Uses α·CE_norm + (1-α)·MSE (identical to BunDLeNet training loss) and
+    reports both:
+      - Discrete metrics (accuracy, F1, confusion) — 2×3 summary PDF
+      - Continuous R² from the shared linear head — saved as txt + in JSON
+    """
+    state_labels = np.array(sorted(np.unique(np.concatenate([y_train, y_val]))))
+    n_classes    = len(state_labels)
+    state_names  = [state_names_dict.get(int(s), f'S{s}') for s in state_labels]
+    x_pos        = np.arange(n_classes)
+
+    print(f"\n{'#'*60}")
+    print(f"### HYBRID DECODING — LATENT SPACE (α={HYBRID_ALPHA}) ###")
+    print(f"{'#'*60}")
+    print(f"Train={len(X_train)}  Val={len(X_val)}  N_runs={N_RUNS}  Epochs={N_EPOCHS}")
+    print(f"α·CE_norm + (1-α)·MSE  (α={HYBRID_ALPHA})")
+
+    total_train = len(y_train)
+    counts = {lbl: int((y_train == lbl).sum()) for lbl in state_labels}
+    class_weights = {
+        lbl: total_train / (n_classes * counts[lbl]) if counts[lbl] > 0 else 1.0
+        for lbl in state_labels
+    }
+    weights_list         = [class_weights[l] for l in state_labels]
+    class_weights_tensor = torch.FloatTensor(weights_list).to(DEVICE)
+
+    res_uw = _run_hybrid_variant(
+        X_train, y_train, hgf_train, X_val, y_val, hgf_val,
+        state_labels, class_weights_tensor, use_weighted=False, label='UNWEIGHTED',
+    )
+    res_w  = _run_hybrid_variant(
+        X_train, y_train, hgf_train, X_val, y_val, hgf_val,
+        state_labels, class_weights_tensor, use_weighted=True,  label='WEIGHTED',
+    )
+
+    # Permutation chance baseline (discrete)
+    print(f"\n  Estimating chance accuracy ({N_PERMUTATIONS} permutations)...")
+    chance_acc = np.array([
+        accuracy_score(y_val, np.random.choice(y_val, size=y_val.shape))
+        for _ in range(N_PERMUTATIONS)
+    ])
+    print(f"  Chance: {chance_acc.mean():.3f} ± {chance_acc.std():.3f}")
+
+    t_uw, p_uw = stats.ttest_ind(res_uw['val_acc_list'], chance_acc)
+    t_w,  p_w  = stats.ttest_ind(res_w['val_acc_list'],  chance_acc)
+
+    # ── Save data files ───────────────────────────────────────────────────────
+    np.savetxt(out_dir / f'acc_list_hybrid_val_{session_dir}_unweighted.txt', res_uw['val_acc_list'])
+    np.savetxt(out_dir / f'acc_list_hybrid_val_{session_dir}_weighted.txt',   res_w['val_acc_list'])
+    np.savetxt(out_dir / f'acc_list_hybrid_chance_{session_dir}.txt',         chance_acc)
+    np.save(out_dir / f'all_f1_scores_hybrid_val_{session_dir}_unweighted.npy', res_uw['val_f1_list'])
+    np.save(out_dir / f'all_f1_scores_hybrid_val_{session_dir}_weighted.npy',   res_w['val_f1_list'])
+    np.savetxt(out_dir / f'r2_hybrid_continuous_val_{session_dir}_unweighted.txt', res_uw['val_r2_list'])
+    np.savetxt(out_dir / f'r2_hybrid_continuous_val_{session_dir}_weighted.txt',   res_w['val_r2_list'])
+
+    # ── Derived quantities ────────────────────────────────────────────────────
+    uw_f1_means = res_uw['val_f1_list'].mean(axis=0)
+    uw_f1_std   = res_uw['val_f1_list'].std(axis=0)
+    w_f1_means  = res_w['val_f1_list'].mean(axis=0)
+    w_f1_std    = res_w['val_f1_list'].std(axis=0)
+
+    norm_conf_uw = res_uw['avg_conf'] / (res_uw['avg_conf'].sum(axis=1, keepdims=True) + 1e-9) * 100
+    norm_conf_w  = res_w['avg_conf']  / (res_w['avg_conf'].sum(axis=1, keepdims=True)  + 1e-9) * 100
+
+    avg_prec, avg_rec = [], []
+    for si in range(n_classes):
+        precs, recs = [], []
+        for pred, true in zip(res_uw['val_preds_all'], res_uw['val_true_all']):
+            p, r, _, _ = precision_recall_fscore_support(
+                true, pred, labels=state_labels, zero_division=0, average=None)
+            precs.append(p[si]); recs.append(r[si])
+        avg_prec.append(np.mean(precs)); avg_rec.append(np.mean(recs))
+
+    # ── 2×3 Summary figure ───────────────────────────────────────────────────
+    fig, axs = plt.subplots(2, 3, figsize=(20, 12))
+    fig.suptitle(f'Latent Hybrid Decoder (α={HYBRID_ALPHA}) — {session_dir}',
+                 fontsize=15, fontweight='bold')
+
+    # (0,0) Accuracy boxplot
+    ax = axs[0, 0]
+    bp = ax.boxplot(
+        [res_uw['val_acc_list'], res_w['val_acc_list'], chance_acc],
+        positions=[1, 2, 3], widths=0.6, patch_artist=True, showmeans=True,
+        meanprops=dict(marker='D', markerfacecolor='red', markersize=8))
+    for patch, col in zip(bp['boxes'], ['#4C9BE8', '#6BBF6B', '#AAAAAA']):
+        patch.set_facecolor(col); patch.set_alpha(0.8)
+    ax.set_xticks([1, 2, 3]); ax.set_xticklabels(['Unweighted', 'Weighted', 'Chance'])
+    ax.set_ylabel('Validation Accuracy', fontsize=12)
+    ax.set_title('Decoder Accuracy vs Chance', fontweight='bold')
+    ax.grid(True, alpha=0.3, axis='y'); ax.set_ylim([0, 1.0])
+    ax.text(0.5, 0.98,
+            f'UW: t={t_uw:.1f}, p={p_uw:.1e}\nW:  t={t_w:.1f}, p={p_w:.1e}',
+            transform=ax.transAxes, ha='center', va='top', fontsize=10,
+            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.6))
+
+    # (0,1) Confusion matrix — Unweighted
+    ax = axs[0, 1]
+    sns.heatmap(norm_conf_uw, annot=True, fmt='.1f', cmap='RdYlGn', ax=ax,
+                xticklabels=state_names, yticklabels=state_names,
+                cbar_kws={'label': '%'}, vmin=0, vmax=100)
+    ax.set_title('Confusion Matrix — Unweighted (%)', fontweight='bold')
+    ax.tick_params(axis='x', rotation=45); ax.tick_params(axis='y', rotation=0)
+
+    # (0,2) Confusion matrix — Weighted
+    ax = axs[0, 2]
+    sns.heatmap(norm_conf_w, annot=True, fmt='.1f', cmap='RdYlGn', ax=ax,
+                xticklabels=state_names, yticklabels=state_names,
+                cbar_kws={'label': '%'}, vmin=0, vmax=100)
+    ax.set_title('Confusion Matrix — Weighted (%)', fontweight='bold')
+    ax.tick_params(axis='x', rotation=45); ax.tick_params(axis='y', rotation=0)
+
+    # (1,0) Per-state F1 UW vs W
+    ax = axs[1, 0]
+    bw = 0.35
+    ax.bar(x_pos - bw/2, uw_f1_means, bw, yerr=uw_f1_std, label='Unweighted',
+           color='#4C9BE8', alpha=0.85, capsize=4, error_kw=dict(elinewidth=1.2))
+    ax.bar(x_pos + bw/2, w_f1_means,  bw, yerr=w_f1_std,  label='Weighted',
+           color='#6BBF6B', alpha=0.85, capsize=4, error_kw=dict(elinewidth=1.2))
+    ax.set_xticks(x_pos); ax.set_xticklabels(state_names, rotation=45, ha='right')
+    ax.set_ylabel('F1', fontsize=12)
+    ax.set_title('Per-State F1 — UW vs W (mean ± std)', fontweight='bold')
+    ax.legend(fontsize=10); ax.grid(True, alpha=0.3, axis='y'); ax.set_ylim([0, 1.05])
+
+    # (1,1) Precision / Recall / F1 — Unweighted
+    ax = axs[1, 1]
+    pw = 0.25
+    ax.bar(x_pos - pw,  avg_prec,    pw, label='Precision', color='#5B8DD9', alpha=0.85)
+    ax.bar(x_pos,       avg_rec,     pw, label='Recall',    color='#E8864C', alpha=0.85)
+    ax.bar(x_pos + pw,  uw_f1_means, pw, label='F1',        color='#6BBF6B', alpha=0.85)
+    ax.set_xticks(x_pos); ax.set_xticklabels(state_names, rotation=45, ha='right')
+    ax.set_title('Precision / Recall / F1 — Unweighted', fontweight='bold')
+    ax.legend(fontsize=10); ax.grid(True, alpha=0.3, axis='y'); ax.set_ylim([0, 1.05])
+
+    # (1,2) Summary text
+    ax = axs[1, 2]; ax.axis('off')
+    summary_t = (
+        f"HYBRID LATENT DECODER — {session_dir}\n{'─'*36}\n"
+        f"(BunDLeNet latent, α={HYBRID_ALPHA}  α·CE_norm + (1-α)·MSE)\n\n"
+        f"Val Accuracy (discrete head)\n"
+        f"  Unweighted : {res_uw['val_acc_list'].mean():.3f} ± {res_uw['val_acc_list'].std():.3f}\n"
+        f"  Weighted   : {res_w['val_acc_list'].mean():.3f} ± {res_w['val_acc_list'].std():.3f}\n"
+        f"  Chance     : {chance_acc.mean():.3f} ± {chance_acc.std():.3f}\n"
+        f"  W − UW     : {res_w['val_acc_list'].mean() - res_uw['val_acc_list'].mean():+.3f}\n\n"
+        f"Val R² (continuous head)\n"
+        f"  Unweighted : {res_uw['val_r2_list'].mean():.3f} ± {res_uw['val_r2_list'].std():.3f}\n"
+        f"  Weighted   : {res_w['val_r2_list'].mean():.3f} ± {res_w['val_r2_list'].std():.3f}\n\n"
+        f"Macro F1 (val, mean)\n"
+        f"  Unweighted : {uw_f1_means.mean():.3f}\n"
+        f"  Weighted   : {w_f1_means.mean():.3f}\n\n"
+        f"vs Chance (t-test)\n"
+        f"  UW : t={t_uw:.2f}, p={p_uw:.2e}\n"
+        f"  W  : t={t_w:.2f}, p={p_w:.2e}\n\n"
+        f"N_runs={N_RUNS}  ·  Epochs={N_EPOCHS}\n"
+        f"Permutations={N_PERMUTATIONS}"
+    )
+    ax.text(0.05, 0.97, summary_t, transform=ax.transAxes, fontsize=11,
+            va='top', family='monospace',
+            bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.85))
+
+    plt.tight_layout()
+    fig_path = out_dir / f'summary_hybrid_{session_dir}.pdf'
+    plt.savefig(fig_path, bbox_inches='tight')
+    plt.close()
+    print(f"\n  Saved hybrid summary figure → {fig_path}")
+
+    return {
+        'unweighted_val_acc':       float(res_uw['val_acc_list'].mean()),
+        'unweighted_val_acc_std':   float(res_uw['val_acc_list'].std()),
+        'weighted_val_acc':         float(res_w['val_acc_list'].mean()),
+        'weighted_val_acc_std':     float(res_w['val_acc_list'].std()),
+        'chance_acc':               float(chance_acc.mean()),
+        't_weighted_vs_chance':     float(t_w),
+        'p_weighted_vs_chance':     float(p_w),
+        'unweighted_cont_r2_mean':  float(res_uw['val_r2_list'].mean()),
+        'unweighted_cont_r2_std':   float(res_uw['val_r2_list'].std()),
+        'weighted_cont_r2_mean':    float(res_w['val_r2_list'].mean()),
+        'weighted_cont_r2_std':     float(res_w['val_r2_list'].std()),
+    }
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -467,11 +739,20 @@ def main():
             out_dir, session_dir,
         )
 
+    # ── Hybrid decoding ───────────────────────────────────────────────────────
+    if has_hgf:
+        metrics['hybrid'] = run_hybrid_decoding(
+            X_train, y_train, hgf_train,
+            X_val, y_val, hgf_val,
+            out_dir, session_dir, _DEFAULT_STATE_NAMES,
+        )
+
     # ── Summary JSON ──────────────────────────────────────────────────────────
     summary = {
         'session_dir': session_dir,
         'n_runs':      N_RUNS,
         'n_epochs':    N_EPOCHS,
+        'hybrid_alpha': HYBRID_ALPHA,
         'latent_dim':  latent_dim,
         'decoder':     'linear (fixed train/val split from BunDLeNet run)',
         'metrics':     metrics,
@@ -490,6 +771,10 @@ def main():
         h = metrics['hgf']
         print(f"  HGF R²            : {h['val_r2_mean']:.3f} ± {h['val_r2_std']:.3f}")
         print(f"  HGF chance R²     : {h['chance_r2_mean']:.3f}")
+        hy = metrics['hybrid']
+        print(f"  Hybrid acc (UW)   : {hy['unweighted_val_acc']:.3f} ± {hy['unweighted_val_acc_std']:.3f}")
+        print(f"  Hybrid acc (W)    : {hy['weighted_val_acc']:.3f} ± {hy['weighted_val_acc_std']:.3f}")
+        print(f"  Hybrid R² (cont,UW): {hy['unweighted_cont_r2_mean']:.3f} ± {hy['unweighted_cont_r2_std']:.3f}")
     print(f"{'='*60}")
 
 
