@@ -171,3 +171,8 @@ results/
 .github/
 AGENTS.md
 .ai/
+
+# Ignore logs and generated figure outputs
+/logs/
+/demos/figures/
+/figures/
