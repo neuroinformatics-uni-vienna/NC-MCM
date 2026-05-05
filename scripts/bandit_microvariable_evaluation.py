@@ -69,9 +69,14 @@ USE_LAZY_LOADING    = True           # True = memory-efficient (required for lar
 NUM_WORKERS         = 4             # DataLoader worker processes for prefetching (USE_LAZY_LOADING only)
 
 # --- Split mode -------------------------------------------------------------
-# 'cv'         : NUM_OF_SPLITS-fold time-series cross-validation (default, thorough)
-# 'test_split' : KFold(n_splits=7) fold-4 — same non-contiguous split used by BunDLeNet
-SPLIT_MODE          = 'cv'          # 'cv' | 'test_split'
+# 'cv'             : NUM_OF_SPLITS-fold time-series cross-validation (default, thorough)
+# 'test_split'     : KFold(n_splits=7) fold-4 — legacy alias, hardcoded 7/4
+# 'bundlenet_split': KFold single split matching bandit_gridsearch.py params
+SPLIT_MODE               = 'cv'   # 'cv' | 'test_split' | 'bundlenet_split'
+BUNDLENET_KFOLD_N_SPLITS = 7     # KFold n_splits when SPLIT_MODE='bundlenet_split'
+                                  # matches bandit_gridsearch.py --kfold_n_splits default
+BUNDLENET_KFOLD_FOLD_IDX = 4     # fold index used as val when SPLIT_MODE='bundlenet_split'
+                                  # matches bandit_gridsearch.py --kfold_test_fold default
 
 # --- Decoder training -------------------------------------------------------
 NUM_DECODER_RUNS    = 10            # independent decoder runs per fold
@@ -101,7 +106,7 @@ if RUN_CONTINUOUS and not USE_HGF:
 
 data_path   = sys.argv[1]
 # Optional second positional arg overrides SPLIT_MODE from CLI
-if len(sys.argv) > 2 and sys.argv[2] in ('cv', 'test_split'):
+if len(sys.argv) > 2 and sys.argv[2] in ('cv', 'test_split', 'bundlenet_split'):
     SPLIT_MODE = sys.argv[2]
 session_dir = os.path.basename(data_path.rstrip('/'))
 
@@ -154,11 +159,16 @@ B_hybrid = make_hybrid_b(B, B_belief) if (USE_HGF and B_belief is not None) else
 _ts      = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
 
 _active_split_mode = SPLIT_MODE
-_split_suffix = 'cv' if _active_split_mode == 'cv' else 'testsplit'
 if _active_split_mode == 'cv':
-    _split_label = f'{NUM_OF_SPLITS}-fold CV'
-else:
-    _split_label = 'KFold-7 fold-4 (BunDLeNet-style)'
+    _split_suffix = 'cv'
+    _split_label  = f'{NUM_OF_SPLITS}-fold CV'
+elif _active_split_mode == 'bundlenet_split':
+    _split_suffix = 'bundlenet'
+    _split_label  = (f'KFold-{BUNDLENET_KFOLD_N_SPLITS} fold-{BUNDLENET_KFOLD_FOLD_IDX}'
+                     ' (BunDLeNet-style)')
+else:  # 'test_split' — legacy alias, hardcoded 7/4
+    _split_suffix = 'testsplit'
+    _split_label  = 'KFold-7 fold-4 (BunDLeNet-style)'
 run_dir  = os.path.join('results', 'twoArmBandit', 'microvariable_evaluation',
                         f'{session_dir}_{_ts}_{_split_suffix}')
 for _sub in ('discrete', 'hybrid', 'continuous'):
@@ -181,6 +191,8 @@ _config = dict(
     # pipeline
     window_size=WINDOW_SIZE, num_of_splits=NUM_OF_SPLITS,
     split_mode=_active_split_mode,
+    bundlenet_kfold_n_splits=BUNDLENET_KFOLD_N_SPLITS,
+    bundlenet_kfold_fold_idx=BUNDLENET_KFOLD_FOLD_IDX,
     use_lazy_loading=USE_LAZY_LOADING, num_workers=NUM_WORKERS,
     # training
     num_decoder_runs=NUM_DECODER_RUNS, train_epochs=TRAIN_EPOCHS,
@@ -202,8 +214,11 @@ def make_cv_splits(label_array):
     """Return CV splits for a given label array using the configured pipeline.
 
     Returns a list of (x_tr, x_val, b_tr, b_val) tuples and the processed B.
-    In 'cv' mode: NUM_OF_SPLITS folds.
-    In 'test_split' mode: a single-element list with one temporal split.
+    In 'cv' mode: NUM_OF_SPLITS folds (TimeSeriesSplit).
+    In 'bundlenet_split' mode: single KFold split using BUNDLENET_KFOLD_N_SPLITS /
+        BUNDLENET_KFOLD_FOLD_IDX (matches bandit_gridsearch.py defaults).
+    In 'test_split' mode: legacy alias — same as bundlenet_split but hardcoded
+        to KFold(7) fold-4 regardless of BUNDLENET_* params.
     """
     if _active_split_mode == 'cv':
         if USE_LAZY_LOADING:
@@ -213,13 +228,18 @@ def make_cv_splits(label_array):
             X_, B_ = prep_data(X, label_array, win=WINDOW_SIZE)
             return timeseries_train_test_split_cv(X_, B_, NUM_OF_SPLITS), B_
     else:
-        # KFold(n_splits=7, shuffle=False) fold-4 — same split used by BunDLeNet
+        # Single KFold split — 'bundlenet_split' uses BUNDLENET_* params,
+        # 'test_split' (legacy) uses hardcoded 7/4.
+        _n_splits = (BUNDLENET_KFOLD_N_SPLITS if _active_split_mode == 'bundlenet_split'
+                     else 7)
+        _fold_idx = (BUNDLENET_KFOLD_FOLD_IDX if _active_split_mode == 'bundlenet_split'
+                     else 4)
         if USE_LAZY_LOADING:
             from torch.utils.data import Subset
             X_, B_ = prep_data_lazy(X, label_array, win=WINDOW_SIZE)
-            kf = KFold(n_splits=7, shuffle=False)
+            kf = KFold(n_splits=_n_splits, shuffle=False)
             for i, (train_idx, test_idx) in enumerate(kf.split(range(len(X_)))):
-                if i == 4:
+                if i == _fold_idx:
                     x_tr  = Subset(X_, train_idx)
                     x_val = Subset(X_, test_idx)
                     b_tr  = B_[train_idx]
@@ -227,9 +247,9 @@ def make_cv_splits(label_array):
                     return [(x_tr, x_val, b_tr, b_val)], B_
         else:
             X_, B_ = prep_data(X, label_array, win=WINDOW_SIZE)
-            kf = KFold(n_splits=7, shuffle=False)
+            kf = KFold(n_splits=_n_splits, shuffle=False)
             for i, (train_idx, test_idx) in enumerate(kf.split(X_)):
-                if i == 4:
+                if i == _fold_idx:
                     x_tr  = X_[train_idx]
                     x_val = X_[test_idx]
                     b_tr  = B_[train_idx]
