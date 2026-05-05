@@ -15,7 +15,7 @@ import matplotlib.animation as anim  # FuncAnimation
 from tqdm import tqdm
 
 class LatentSpaceVisualiser:
-    def __init__(self, y, b, b_names, show_points=False, legend=True, colors=None):
+    def __init__(self, y, b, b_names, show_points=False, legend=True, colors=None, segment_ids=None):
         """
         Initialize the LatentSpaceVisualiser.
 
@@ -33,6 +33,11 @@ class LatentSpaceVisualiser:
             Whether to display a legend in the plot. Default is True.
         colors: numpy.ndarray, optional
                 If given, defines colors of behaviors.
+        segment_ids : np.ndarray or None, optional
+            Integer array of shape (T,) assigning each point to a segment
+            (e.g. trial index). When provided, arrows / line segments that
+            cross segment boundaries are NOT drawn, preventing spurious
+            inter-trial connections in trial-based runs. Default is None.
         """
         self.y = y
         self.b = b
@@ -40,6 +45,7 @@ class LatentSpaceVisualiser:
         self.show_points = show_points
         self.legend = legend
         self.colors = colors
+        self.segment_ids = np.asarray(segment_ids) if segment_ids is not None else None
 
         if isinstance(self.b_names, (list, np.ndarray)):
             self.b_names = {i: str(name) for i, name in enumerate(self.b_names)}
@@ -378,6 +384,9 @@ class LatentSpaceVisualiser:
             raise ValueError("Y and b must have the same number of time steps")
 
         for i in range(len(self.y) - 1):
+            # Skip connections that cross segment (e.g. trial) boundaries
+            if self.segment_ids is not None and self.segment_ids[i] != self.segment_ids[i + 1]:
+                continue
             d = (self.y[i + 1] - self.y[i])
             kwargs.setdefault('arrow_length_ratio', 0.01 / np.linalg.norm(d))
             kwargs.setdefault('linewidths', 1)
@@ -502,6 +511,9 @@ class LatentSpaceVisualiser:
         
         # Create line segments for each transition
         for i in range(len(self.y) - 1):
+            # Skip connections that cross segment (e.g. trial) boundaries
+            if self.segment_ids is not None and self.segment_ids[i] != self.segment_ids[i + 1]:
+                continue
             color = self.color_dict[self.b[i]]
             fig.add_trace(go.Scatter3d(
                 x=[self.y[i, 0], self.y[i + 1, 0]],

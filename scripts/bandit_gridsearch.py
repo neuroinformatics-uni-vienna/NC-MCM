@@ -359,7 +359,15 @@ def preprocess_data(x, b, window, lazy_loading=False, cv_folds=None, kfold_n_spl
             test_size = len(x_test)
             print(f"Trial split ({n_trials - n_test_t} train / {n_test_t} test trials): "
                   f"{train_size} train pairs, {test_size} test pairs")
-            return x_, B_1, x_train, x_test, b_train, b_test
+            # Derive per-split trial IDs (same RNG state as split above)
+            rng = np.random.default_rng(trial_random_state)
+            _unique = np.unique(trial_ids).copy()
+            rng.shuffle(_unique)
+            _test_set = set(_unique[-n_test_t:].tolist())
+            _train_mask = np.array([tid not in _test_set for tid in trial_ids])
+            trial_ids_train = trial_ids[_train_mask]
+            trial_ids_test  = trial_ids[~_train_mask]
+            return x_, B_1, x_train, x_test, b_train, b_test, trial_ids_train, trial_ids_test
 
         # Eager (default) trial-based path
         # For hybrid b, class indices live in column 0 — use them for
@@ -384,7 +392,15 @@ def preprocess_data(x, b, window, lazy_loading=False, cv_folds=None, kfold_n_spl
         n_test_t = max(1, int(np.round(n_trials * trial_test_ratio)))
         print(f"Trial split ({n_trials - n_test_t} train / {n_test_t} test trials): "
               f"{x_train.shape[0]} train pairs, {x_test.shape[0]} test pairs")
-        return X_paired, B_1, x_train, x_test, b_train, b_test
+        # Derive per-split trial IDs (same RNG state as trial_train_test_split)
+        rng = np.random.default_rng(trial_random_state)
+        _unique = np.unique(trial_ids).copy()
+        rng.shuffle(_unique)
+        _test_set = set(_unique[-n_test_t:].tolist())
+        _train_mask = np.array([tid not in _test_set for tid in trial_ids])
+        trial_ids_train = trial_ids[_train_mask]
+        trial_ids_test  = trial_ids[~_train_mask]
+        return X_paired, B_1, x_train, x_test, b_train, b_test, trial_ids_train, trial_ids_test
 
     # --- Continuous time-series regime ---
 
@@ -563,12 +579,15 @@ def visualize_neural_behavioural(x, b, b_labels, b_colors, output_dir):
     print(f"Neural-behavioural plot saved to {plot_path}")
 
 
-def visualize_latent_space(y, b, b_labels, output_dir, vis_range, data_split='train', generate_gif=False, generate_3d_html=False, colors=None, continuous_vars=None):
+def visualize_latent_space(y, b, b_labels, output_dir, vis_range, data_split='train', generate_gif=False, generate_3d_html=False, colors=None, continuous_vars=None, segment_ids=None):
     """Create all latent space visualizations
     
     Args:
         continuous_vars: Optional dict of {label: array} for continuous-variable coloured
                          phase space plots (e.g. {'HGF belief': hgf_beliefs_split}).
+        segment_ids: Optional np.ndarray of shape (M,) assigning each latent point to a
+                     segment (trial). When provided, arrows between points from different
+                     trials are suppressed, preventing spurious inter-trial connections.
     """
     print(f"Creating latent space visualizations for {data_split} data...")
     
@@ -589,13 +608,20 @@ def visualize_latent_space(y, b, b_labels, output_dir, vis_range, data_split='tr
     np.save(output_dir / 'data' / f'latent_trajectories_{data_split}.npy', y)
     np.save(output_dir / 'data' / f'behaviour_labels_{data_split}.npy', b)
 
+    # Save segment (trial) IDs when present
+    if segment_ids is not None:
+        np.save(output_dir / 'data' / f'trial_ids_{data_split}.npy', segment_ids)
+
     # Save continuous variables (e.g. HGF belief) when present
     if continuous_vars is not None:
         for var_name, var_array in continuous_vars.items():
             safe_name = var_name.lower().replace(' ', '_')
             np.save(output_dir / 'data' / f'{safe_name}_{data_split}.npy', var_array)
 
-    vis = LatentSpaceVisualiser(y_vis, b_vis, b_labels, show_points=True, colors=colors)
+    # Slice segment_ids to the same range
+    seg_ids_vis = segment_ids[start:end] if segment_ids is not None else None
+
+    vis = LatentSpaceVisualiser(y_vis, b_vis, b_labels, show_points=True, colors=colors, segment_ids=seg_ids_vis)
     
     # Time series plot
     print("  - Latent time series...")
@@ -1056,8 +1082,13 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
     if args.cv_folds is not None:
         x_, b_, splits = preprocess_result
         print_step_time("Data preprocessing (CV mode)", run_start_time, step_start)
+        trial_ids_train = trial_ids_test = None
     else:
-        x_, b_, x_train, x_test, b_train, b_test = preprocess_result
+        if getattr(args, 'trial_based', False):
+            x_, b_, x_train, x_test, b_train, b_test, trial_ids_train, trial_ids_test = preprocess_result
+        else:
+            x_, b_, x_train, x_test, b_train, b_test = preprocess_result
+            trial_ids_train = trial_ids_test = None
         mode_label = "Data preprocessing (trial-based)" if getattr(args, 'trial_based', False) else "Data preprocessing"
         print_step_time(mode_label, run_start_time, step_start)
     
@@ -1149,7 +1180,7 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
         continuous_train = {'HGF belief': b_train[:, 1]} if hasattr(b_train, 'ndim') and b_train.ndim > 1 else None
         visualize_latent_space(y_train, b_train_vis, b_labels, output_dir, args.vis_samples, 
                               data_split='train', generate_gif=args.generate_gif, generate_3d_html=args.generate_3d_html, colors=b_colors_rgb,
-                              continuous_vars=continuous_train)
+                              continuous_vars=continuous_train, segment_ids=trial_ids_train)
         print_step_time("Training latent space visualization", run_start_time, step_start)
         
         # Training recurrence plot
@@ -1174,7 +1205,7 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
         continuous_test = {'HGF belief': b_test[:, 1]} if hasattr(b_test, 'ndim') and b_test.ndim > 1 else None
         visualize_latent_space(y_test, b_test_vis, b_labels, output_dir, args.vis_samples,
                               data_split='validation', generate_gif=args.generate_gif, generate_3d_html=args.generate_3d_html, colors=b_colors_rgb,
-                              continuous_vars=continuous_test)
+                              continuous_vars=continuous_test, segment_ids=trial_ids_test)
         print_step_time("Validation latent space visualization", run_start_time, step_start)
         
         # Validation recurrence plot
