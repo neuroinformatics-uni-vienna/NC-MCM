@@ -609,3 +609,236 @@ def trial_train_test_split(X_paired, B_1, trial_ids, test_ratio=0.2, random_stat
 
     return (X_paired[train_mask], B_1[train_mask]), (X_paired[test_mask], B_1[test_mask])
 
+
+# ---------------------------------------------------------------------------
+# Lazy trial-based utilities
+# ---------------------------------------------------------------------------
+
+
+def segment_trial_boundaries(B_1d, b_labels_dict, trial_start_state='intertrial'):
+    """Return raw ``(start, end)`` index pairs for each trial — no data copied.
+
+    Lightweight companion to :func:`segment_trials` that works on integer
+    indices only, making it cheap to call before any windowing.
+
+    Parameters
+    ----------
+    B_1d : np.ndarray, shape (T,)
+        1-D integer behavioural label array for the full session.
+    b_labels_dict : dict {int: str}
+        Mapping from integer label to state name.
+    trial_start_state : str, optional
+        State name that marks the beginning of a new trial. Default ``'intertrial'``.
+
+    Returns
+    -------
+    boundaries : list of (int, int)
+        Each element is ``(start, end)`` — exclusive end index — covering
+        exactly one trial's timesteps in ``B_1d``.
+    """
+    label_to_id = {v: k for k, v in b_labels_dict.items()}
+    if trial_start_state not in label_to_id:
+        raise ValueError(
+            f"State '{trial_start_state}' not found in b_labels_dict. "
+            f"Available states: {list(label_to_id.keys())}"
+        )
+    start_label = label_to_id[trial_start_state]
+
+    is_start = B_1d == start_label
+    transition_points = np.where(is_start[1:] & ~is_start[:-1])[0] + 1
+
+    if is_start[0]:
+        starts = np.concatenate([[0], transition_points])
+    else:
+        starts = transition_points
+
+    ends = np.concatenate([starts[1:], [len(B_1d)]])
+    return list(zip(starts.tolist(), ends.tolist()))
+
+
+class LazyTrialWindowDataset(Dataset):
+    """Memory-efficient Dataset for trial-based windowing.
+
+    Identical window format to :class:`LazyWindowedDataset` — each item is
+    ``(2, win, N)`` float32 — but pairs never cross trial boundaries and
+    context borrowing (the same logic as :func:`prep_data_trials`) is
+    applied on-the-fly.
+
+    Precomputes only three small integer arrays (``pair_offsets``,
+    ``B_1``, ``trial_ids``) and holds raw ``X`` and ``B`` by reference so
+    no large copies are ever made.
+
+    Parameters
+    ----------
+    X : np.ndarray, shape (T, N)
+        Full-session neuronal traces.
+    B : np.ndarray, shape (T,) or (T, k)
+        Full-session behavioural array (discrete or hybrid).
+    trial_boundaries : list of (int, int)
+        Output of :func:`segment_trial_boundaries`.
+    win : int
+        Window length (same semantics as :func:`prep_data`).
+    """
+
+    def __init__(self, X, B, trial_boundaries, win):
+        self.X = X
+        self.B = B
+        self.win = win
+        self._N = X.shape[1]
+
+        # Build flat index arrays by mimicking prep_data_trials logic
+        pair_offsets = []   # (abs_context_start, step_offset) per pair
+        b_1_rows = []
+        trial_id_rows = []
+
+        prev_t_len = None  # length of previous trial (determines context size)
+        for trial_id, (t_start, t_end) in enumerate(trial_boundaries):
+            t_len = t_end - t_start
+            # Determine context window prepended from previous trial.
+            # Matches prep_data_trials: ctx = min(win, len(prev_trial)).
+            if prev_t_len is not None:
+                ctx = min(win, prev_t_len)
+                context_start = t_start - ctx
+                total_len = ctx + t_len
+            else:
+                context_start = t_start
+                total_len = t_len
+
+            prev_t_len = t_len
+
+            if total_len <= win:
+                continue  # too short
+
+            # Number of pairs this trial produces (matches prep_data_trials exactly)
+            n_pairs = total_len - win  # prep_data uses win+1 internally → win steps
+            abs_start = context_start
+
+            for step in range(n_pairs):
+                pair_offsets.append((abs_start, step))
+                # b_1 index: abs_start + step + win  (the label at the next step)
+                b_idx = abs_start + step + win
+                b_1_rows.append(b_idx)
+                trial_id_rows.append(trial_id)
+
+        if not pair_offsets:
+            raise ValueError(
+                "No trials produced any pairs. "
+                "Ensure that at least some trials are longer than `win` timesteps."
+            )
+
+        self._pair_offsets = np.array(pair_offsets, dtype=np.int64)  # (M, 2)
+        self.trial_ids = np.array(trial_id_rows, dtype=np.int64)      # (M,)
+
+        # B_1: precompute labels — tiny compared to X_paired
+        b_idx_arr = np.array(b_1_rows, dtype=np.int64)
+        self.B_1 = B[b_idx_arr]  # (M,) or (M, k)
+
+    def __len__(self):
+        return len(self._pair_offsets)
+
+    @property
+    def shape(self):
+        """Emulate the shape of the materialised X_paired array."""
+        return (len(self._pair_offsets), 2, self.win, self._N)
+
+    def __getitem__(self, idx):
+        if isinstance(idx, (int, np.integer)):
+            if idx < 0:
+                idx = len(self) + idx
+            abs_start, step = self._pair_offsets[idx]
+            i = abs_start + step
+            x0 = self.X[i:i + self.win]        # (win, N)
+            x1 = self.X[i + 1:i + 1 + self.win]  # (win, N)
+            return np.stack([x0, x1], axis=0).astype(np.float32)  # (2, win, N)
+        elif isinstance(idx, (list, np.ndarray)):
+            return np.array([self[i] for i in idx])
+        elif isinstance(idx, slice):
+            return np.array([self[i] for i in range(*idx.indices(len(self)))])
+        else:
+            raise TypeError(f"Invalid index type: {type(idx)}")
+
+    def __array__(self):
+        """Materialise all windows — use only for debugging."""
+        return np.array([self[i] for i in range(len(self))])
+
+
+def prep_data_trials_lazy(X, B, b_labels_dict, trial_start_state='intertrial', win=15):
+    """Memory-efficient variant of :func:`prep_data_trials`.
+
+    Returns a :class:`LazyTrialWindowDataset` instead of a materialised
+    ``X_paired`` array.  The dataset generates windows on-the-fly during
+    training so peak RAM is dominated by raw ``X`` (``T × N × 4B``) rather
+    than ``X_paired`` (``M × 2 × win × N × 4B``).
+
+    Parameters
+    ----------
+    X : np.ndarray, shape (T, N)
+        Full-session neuronal traces (float32 recommended).
+    B : np.ndarray, shape (T,) or (T, k)
+        Full-session behavioural array.
+    b_labels_dict : dict {int: str}
+        Label mapping from :attr:`BanditTaskNeuroPixelsDataset.b_labels_dict`.
+    trial_start_state : str, optional
+        State that marks the start of a new trial. Default ``'intertrial'``.
+    win : int, optional
+        Window length. Default 15.
+
+    Returns
+    -------
+    dataset : LazyTrialWindowDataset
+        Lazy dataset; ``dataset.B_1`` and ``dataset.trial_ids`` carry the
+        precomputed label and trial-id arrays.
+    B_1 : np.ndarray
+        Alias for ``dataset.B_1`` — behavioural labels per pair.
+    trial_ids : np.ndarray
+        Alias for ``dataset.trial_ids`` — trial index per pair.
+    """
+    B_1d = B[:, 0].astype(int) if B.ndim > 1 else B.astype(int)
+    boundaries = segment_trial_boundaries(B_1d, b_labels_dict, trial_start_state)
+    dataset = LazyTrialWindowDataset(X, B, boundaries, win)
+    return dataset, dataset.B_1, dataset.trial_ids
+
+
+def trial_train_test_split_lazy(dataset, B_1, trial_ids, test_ratio=0.2, random_state=None):
+    """Trial-level train/test split for a :class:`LazyTrialWindowDataset`.
+
+    Identical split logic to :func:`trial_train_test_split` but returns
+    ``torch.utils.data.Subset`` objects instead of numpy arrays so that the
+    split sets remain lazy.
+
+    Parameters
+    ----------
+    dataset : LazyTrialWindowDataset
+        The full lazy dataset returned by :func:`prep_data_trials_lazy`.
+    B_1 : np.ndarray, shape (M,) or (M, k)
+        Behavioural labels (``dataset.B_1``).
+    trial_ids : np.ndarray, shape (M,)
+        Trial indices (``dataset.trial_ids``).
+    test_ratio : float, optional
+        Fraction of trials held out as test set. Default 0.2.
+    random_state : int or None, optional
+        RNG seed for reproducibility.
+
+    Returns
+    -------
+    (train_subset, B_train) : (Subset, np.ndarray)
+    (test_subset, B_test) : (Subset, np.ndarray)
+    """
+    from torch.utils.data import Subset
+
+    rng = np.random.default_rng(random_state)
+    unique_trials = np.unique(trial_ids).copy()
+    rng.shuffle(unique_trials)
+
+    n_test = max(1, int(np.round(len(unique_trials) * test_ratio)))
+    test_trial_set = set(unique_trials[-n_test:].tolist())
+
+    all_indices = np.arange(len(dataset))
+    train_mask = np.array([tid not in test_trial_set for tid in trial_ids])
+    test_mask = ~train_mask
+
+    train_subset = Subset(dataset, all_indices[train_mask].tolist())
+    test_subset = Subset(dataset, all_indices[test_mask].tolist())
+
+    return (train_subset, B_1[train_mask]), (test_subset, B_1[test_mask])
+
