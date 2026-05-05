@@ -15,7 +15,8 @@ from ncmcm.data_loaders.bandit_task import BanditTaskNeuroPixelsDataset
 from ncmcm.bundlenet.bundlenet import BunDLeNet, train_model, project_into_latent_space, project_into_latent_space_lazy
 from ncmcm.bundlenet.utils import (prep_data, timeseries_train_test_split, prep_data_lazy, timeseries_train_test_split_lazy,
                                      timeseries_train_test_split_cv, timeseries_train_test_split_cv_lazy, make_hybrid_b,
-                                     segment_trials, prep_data_trials, trial_train_test_split)
+                                     segment_trials, prep_data_trials, trial_train_test_split,
+                                     prep_data_trials_lazy, trial_train_test_split_lazy)
 from ncmcm.bundlenet.initialisations import pca_initialisation
 from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import KFold
@@ -338,11 +339,29 @@ def preprocess_data(x, b, window, lazy_loading=False, cv_folds=None, kfold_n_spl
     if trial_based:
         if cv_folds is not None:
             raise ValueError("--trial_based is not compatible with --cv_folds.")
-        if lazy_loading:
-            raise ValueError("--trial_based is not compatible with --lazy_loading.")
         if b_labels_dict is None:
             raise ValueError("b_labels_dict must be provided when trial_based=True.")
 
+        if lazy_loading:
+            print("Using lazy trial-based loading (memory-efficient)...")
+            x_, B_1, trial_ids = prep_data_trials_lazy(
+                x, b, b_labels_dict, trial_start_state, win=window
+            )
+            print(f"Lazy trial dataset: {x_.shape[0]} pairs, {len(np.unique(trial_ids))} trials")
+            (x_train, b_train), (x_test, b_test) = trial_train_test_split_lazy(
+                x_, B_1, trial_ids,
+                test_ratio=trial_test_ratio,
+                random_state=trial_random_state,
+            )
+            n_trials = len(np.unique(trial_ids))
+            n_test_t = max(1, int(np.round(n_trials * trial_test_ratio)))
+            train_size = len(x_train)
+            test_size = len(x_test)
+            print(f"Trial split ({n_trials - n_test_t} train / {n_test_t} test trials): "
+                  f"{train_size} train pairs, {test_size} test pairs")
+            return x_, B_1, x_train, x_test, b_train, b_test
+
+        # Eager (default) trial-based path
         # For hybrid b, class indices live in column 0 — use them for
         # boundary detection but keep full b (possibly 2-D) in segments
         b_int = b[:, 0].astype(int) if b.ndim > 1 else b.astype(int)
