@@ -200,10 +200,13 @@ _FIGURE_CAPTIONS = {
         "differ in their pre-choice population state."
     ),
     "28_decoder.html": (
-        "Time-resolved linear decoder: for each 33-ms bin in a -0.5 to +1.5 s window around choice, "
-        "a logistic regression is trained on the full population vector to predict left vs right arm choice "
-        "using 5-fold stratified cross-validation (activity z-scored per neuron before training). "
-        "The accuracy curve shows when the choice signal first emerges above the 50% chance baseline (grey dashed)."
+        "Normalized inter-trial decoder: can the population predict left vs right choice across the full "
+        "interval between trials? The x-axis runs from the previous choice (\u03c4=0) through the current "
+        "choice (\u03c4=0.5, always) to the next choice (\u03c4=1). The left half [0, 0.5] is independently "
+        "normalized to the prev\u2192curr ITI; the right half [0.5, 1] to the curr\u2192next ITI. "
+        "At each of 100 grid points, a logistic regression decodes left/right from the full population "
+        "vector (z-scored, 5-fold stratified CV). The curve reveals when (relative to neighboring choices) "
+        "the choice signal first becomes decodable above the 50% chance baseline."
     ),
 }
 
@@ -2026,11 +2029,17 @@ write_html_with_caption(fig, OUT_DIR / "27_singletrial_psth.html")
 
 # %% [markdown]
 # ---
-# ## 17 · Linear Decoder
+# ## 17 · Normalized Inter-Trial Decoder
 # 
-# Can the population vector at each moment in time predict which arm the animal chose?  
-# A logistic regression is trained at every time bin of the PSTH window using 5-fold cross-validation.  
-# The resulting accuracy curve reveals **when** the choice signal first emerges in the population.
+# **Question:** Across the full interval between the previous and next choice, when does the
+# population start encoding which way the animal will go *this* trial?
+# 
+# **X-axis (τ):** 0 = previous choice · 0.5 = this trial's choice (always) · 1 = next choice  
+# The left half [0, 0.5] is independently normalized to the prev→curr ITI;  
+# the right half [0.5, 1] to the curr→next ITI.
+# 
+# At each of 100 τ grid points, logistic regression decodes left vs right from the full
+# population vector using 5-fold stratified CV.
 # 
 
 # %%
@@ -2038,13 +2047,12 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import StratifiedKFold
 
-# Decode left (0) vs right (1) choice from population at each PSTH time bin
-# choice field in metrics.json is 'l'/'r' (single char)
 CHOICE_MAP = {0: 0, 1: 1, 0.0: 0, 1.0: 1, "l": 0, "r": 1, "left": 0, "right": 1}
+GRID_N   = 100   # 50 points per half
+tau_grid = np.linspace(0.0, 1.0, GRID_N)
 
-trial_data    = []
-trial_choices = []
-
+# ── Pass 1: extract valid (center_bin, choice_int) for every trial ────────────
+valid_trials_dec = []   # list of (center_bin, choice_int)
 for trial in trials:
     t_choice = trial.get("t chosen")
     choice   = trial.get("choice")
@@ -2054,75 +2062,112 @@ for trial in trials:
     choice_int = CHOICE_MAP.get(choice_raw)
     if choice_int is None:
         continue
-    t_rel_s    = (t_choice - t0_ms) / 1000
-    center_bin = int(t_rel_s * fs30)
-    ts = center_bin - n_pre
-    te = center_bin + n_post
-    if ts < 0 or te > T:
+    center_bin = int((t_choice - t0_ms) / 1000 * fs30)
+    if center_bin < 0 or center_bin >= T:
         continue
-    trial_data.append(x30[:, ts:te])
-    trial_choices.append(choice_int)
+    valid_trials_dec.append((center_bin, choice_int))
 
-trial_data    = np.array(trial_data)      # (n_trials, n_neurons, n_bins)
-trial_choices = np.array(trial_choices)
+# ── Pass 2: build triplets (prev, curr, next) — interior trials only ─────────
+triplets = []   # (b_prev, b_curr, b_next, choice_int)
+for i in range(1, len(valid_trials_dec) - 1):
+    b_prev, _          = valid_trials_dec[i - 1]
+    b_curr, choice_int = valid_trials_dec[i]
+    b_next, _          = valid_trials_dec[i + 1]
+    if b_curr <= b_prev or b_next <= b_curr:
+        continue   # guard against zero-length intervals
+    triplets.append((b_prev, b_curr, b_next, choice_int))
 
-n_trial_dec = trial_data.shape[0]
-print(f"Decoder: {n_trial_dec} trials | choices: {dict(zip(*np.unique(trial_choices, return_counts=True)))}")
+n_trip       = len(triplets)
+choices_norm = np.array([ch for *_, ch in triplets], dtype=np.int32)
+counts_norm  = dict(zip(*np.unique(choices_norm, return_counts=True))) if n_trip > 0 else {}
+left_cnt     = int(counts_norm.get(0, 0))
+right_cnt    = int(counts_norm.get(1, 0))
+print(f"Inter-trial decoder: {n_trip} triplets | left={left_cnt}, right={right_cnt}")
 
-decoder_acc = np.full(n_bins, np.nan)
+# ── Pass 3: sample x30 at each τ grid point for every triplet ────────────────
+# X_norm shape: (n_trip, n_neurons, GRID_N)
+X_norm = np.empty((n_trip, n_neurons, GRID_N), dtype=np.float32)
+for j, (b_prev, b_curr, b_next, _) in enumerate(triplets):
+    for k, tau in enumerate(tau_grid):
+        if tau <= 0.5:
+            b = b_prev + (tau / 0.5) * (b_curr - b_prev)
+        else:
+            b = b_curr + ((tau - 0.5) / 0.5) * (b_next - b_curr)
+        X_norm[j, :, k] = x30[:, int(np.clip(round(b), 0, T - 1))]
 
-if len(np.unique(trial_choices)) >= 2:
-    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-    for bin_idx in range(n_bins):
-        X_bin = trial_data[:, :, bin_idx]
+# ── Decode at each τ using 5-fold stratified CV ───────────────────────────────
+decoder_acc_norm = np.full(GRID_N, np.nan)
+
+if len(np.unique(choices_norm)) >= 2:
+    cv_norm     = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    splits_norm = list(cv_norm.split(X_norm[:, :, 0], choices_norm))
+
+    for k in range(GRID_N):
+        X_bin = X_norm[:, :, k].astype(float)
         fold_accs = []
-        for train_idx, test_idx in cv.split(X_bin, trial_choices):
+        for train_idx, test_idx in splits_norm:
             scaler = StandardScaler()
             X_tr = scaler.fit_transform(X_bin[train_idx])
             X_te = scaler.transform(X_bin[test_idx])
             clf  = LogisticRegression(max_iter=300, C=1.0, solver="lbfgs")
-            clf.fit(X_tr, trial_choices[train_idx])
-            fold_accs.append(clf.score(X_te, trial_choices[test_idx]))
-        decoder_acc[bin_idx] = np.mean(fold_accs)
-    print(f"Accuracy: min={np.nanmin(decoder_acc):.3f}  max={np.nanmax(decoder_acc):.3f}  chance≈0.5")
+            clf.fit(X_tr, choices_norm[train_idx])
+            fold_accs.append(clf.score(X_te, choices_norm[test_idx]))
+        decoder_acc_norm[k] = np.mean(fold_accs)
+
+    print(f"Accuracy: min={np.nanmin(decoder_acc_norm):.3f}  max={np.nanmax(decoder_acc_norm):.3f}  chance=0.5")
 else:
     print("Only one choice class found — decoder skipped")
-    decoder_acc[:] = 0.5
+    decoder_acc_norm[:] = 0.5
 
-chance = 1 / max(len(np.unique(trial_choices)), 2)
+# ── Median ITI for subtitle ───────────────────────────────────────────────────
+iti_prev_s = float(np.median([(b_curr - b_prev) / fs30 for b_prev, b_curr, b_next, _ in triplets]))
+iti_next_s = float(np.median([(b_next - b_curr) / fs30 for b_prev, b_curr, b_next, _ in triplets]))
 
 fig = go.Figure()
 fig.add_trace(go.Scatter(
-    x=time_axis_psth, y=decoder_acc,
-    mode="lines", line=dict(color="darkorchid", width=2.5),
+    x=tau_grid, y=decoder_acc_norm,
+    mode="lines",
+    line=dict(color="darkorchid", width=2.5),
     name="5-fold CV accuracy",
+    hovertemplate="τ=%{x:.2f}  acc=%{y:.3f}<extra></extra>",
 ))
-fig.add_hline(y=chance, line_dash="dash", line_color="grey", line_width=1.5,
-              annotation_text=f"Chance ({chance:.2f})", annotation_position="right")
-fig.add_vline(x=0, line_dash="dash", line_color="red", line_width=1.5)
-fig.add_annotation(x=0.01, y=1.06, xref="x", yref="paper", text="Choice",
-                   showarrow=False, font=dict(color="red", size=11))
+fig.add_hline(y=0.5, line_dash="dash", line_color="grey", line_width=1.5,
+              annotation_text="Chance (0.50)", annotation_position="right")
+
+for tau_v, label, col in [
+    (0.0, "Prev choice", "steelblue"),
+    (0.5, "This choice", "crimson"),
+    (1.0, "Next choice", "steelblue"),
+]:
+    fig.add_vline(x=tau_v, line_dash="dash", line_color=col, line_width=1.5)
+    fig.add_annotation(
+        x=tau_v, y=1.06, xref="x", yref="paper",
+        text=label, showarrow=False,
+        font=dict(color=col, size=10),
+    )
+
 fig.update_layout(
-    title=f"Linear Decoder — Left/Right choice ({n_trial_dec} trials × {n_neurons} neurons)",
-    xaxis_title="Time relative to choice (s)",
-    yaxis_title="Decoding accuracy",
+    title=(
+        f"Normalized Inter-Trial Decoder — {n_trip} trials × {n_neurons} neurons<br>"
+        f"<sup>Median ITI: {iti_prev_s:.1f}s (prev→curr)  ·  {iti_next_s:.1f}s (curr→next)</sup>"
+    ),
+    xaxis=dict(
+        title="Normalized inter-trial position (τ)",
+        tickvals=[0, 0.25, 0.5, 0.75, 1.0],
+        ticktext=["0 · prev", "0.25", "0.5 · choice", "0.75", "1 · next"],
+    ),
+    yaxis_title="Decoding accuracy (5-fold CV)",
     yaxis=dict(range=[0.3, 1.0]),
-    height=380,
+    height=420,
     template="plotly_white",
     hovermode="x unified",
 )
-# Update the figure caption with actual trial counts and class balance
-try:
-    counts = dict(zip(*np.unique(trial_choices, return_counts=True))) if n_trial_dec > 0 else {}
-    left_cnt = int(counts.get(0, 0))
-    right_cnt = int(counts.get(1, 0))
-except Exception:
-    left_cnt = right_cnt = 0
+
 orig_caption = _FIGURE_CAPTIONS.get("28_decoder.html", "")
 extra = (
-    f" This analysis used {n_trial_dec} trials (left={left_cnt}, right={right_cnt})."
-    f" Window: {PRE_S:.1f}s before to {POST_S:.1f}s after choice; bin ≈ {BIN_S*1000:.1f} ms."
-    " 5-fold stratified CV; classifier: LogisticRegression (lbfgs, C=1.0)."
+    f" {n_trip} trials used (left={left_cnt}, right={right_cnt})."
+    f" Median ITI: {iti_prev_s:.1f}s (prev→curr), {iti_next_s:.1f}s (curr→next)."
+    " 5-fold stratified CV; LogisticRegression (lbfgs, C=1.0); activity z-scored per fold."
 )
 _FIGURE_CAPTIONS["28_decoder.html"] = (orig_caption + " " + extra).strip()
 write_html_with_caption(fig, OUT_DIR / "28_decoder.html")
