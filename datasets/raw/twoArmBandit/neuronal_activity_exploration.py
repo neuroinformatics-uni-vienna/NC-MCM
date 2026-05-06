@@ -2111,6 +2111,20 @@ fig.update_layout(
     template="plotly_white",
     hovermode="x unified",
 )
+# Update the figure caption with actual trial counts and class balance
+try:
+    counts = dict(zip(*np.unique(trial_choices, return_counts=True))) if n_trial_dec > 0 else {}
+    left_cnt = int(counts.get(0, 0))
+    right_cnt = int(counts.get(1, 0))
+except Exception:
+    left_cnt = right_cnt = 0
+orig_caption = _FIGURE_CAPTIONS.get("28_decoder.html", "")
+extra = (
+    f" This analysis used {n_trial_dec} trials (left={left_cnt}, right={right_cnt})."
+    f" Window: {PRE_S:.1f}s before to {POST_S:.1f}s after choice; bin ≈ {BIN_S*1000:.1f} ms."
+    " 5-fold stratified CV; classifier: LogisticRegression (lbfgs, C=1.0)."
+)
+_FIGURE_CAPTIONS["28_decoder.html"] = (orig_caption + " " + extra).strip()
 write_html_with_caption(fig, OUT_DIR / "28_decoder.html")
 print("Saved 28_decoder.html")
 
