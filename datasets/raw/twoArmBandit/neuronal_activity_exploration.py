@@ -2172,6 +2172,127 @@ extra = (
 _FIGURE_CAPTIONS["28_decoder.html"] = (orig_caption + " " + extra).strip()
 write_html_with_caption(fig, OUT_DIR / "28_decoder.html")
 print("Saved 28_decoder.html")
+# %% [markdown]
+# ---
+# ## 18 · Normalized Inter-Trial Reward Decoder
+# 
+# Can the population vector predict whether a trial will be rewarded (vs not rewarded)?
+# Time is normalized between the previous and next choice (τ=0..1) with the current
+# trial's choice pinned at τ=0.5. Each half is independently rescaled to the
+# prev→curr and curr→next ITIs. A logistic regression decodes rewarded (True)
+# vs not rewarded (False) at 100 τ grid points using 5-fold stratified CV.
+# 
+
+# %%
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import StratifiedKFold
+
+GRID_N = 100
+tau_grid = np.linspace(0.0, 1.0, GRID_N)
+
+# Gather valid trials with a choice time and a defined 'rewarded' flag
+valid_trials_reward = []  # list of (center_bin, rewarded_int)
+for trial in trials:
+    t_choice = trial.get("t chosen")
+    outcome  = trial.get("rewarded")
+    if t_choice is None or outcome is None:
+        continue
+    center_bin = int((t_choice - t0_ms) / 1000 * fs30)
+    if center_bin < 0 or center_bin >= T:
+        continue
+    valid_trials_reward.append((center_bin, int(bool(outcome))))
+
+# Build triplets (prev, curr, next) — interior trials only
+triplets_reward = []  # (b_prev, b_curr, b_next, rewarded_int)
+for i in range(1, len(valid_trials_reward) - 1):
+    b_prev, _          = valid_trials_reward[i - 1]
+    b_curr, rewarded   = valid_trials_reward[i]
+    b_next, _          = valid_trials_reward[i + 1]
+    if b_curr <= b_prev or b_next <= b_curr:
+        continue
+    triplets_reward.append((b_prev, b_curr, b_next, rewarded))
+
+n_trip_r = len(triplets_reward)
+labels_r = np.array([lbl for *_, lbl in triplets_reward], dtype=np.int32) if n_trip_r > 0 else np.array([], dtype=np.int32)
+counts_r = dict(zip(*np.unique(labels_r, return_counts=True))) if n_trip_r > 0 else {}
+no_reward_cnt = int(counts_r.get(0, 0))
+reward_cnt    = int(counts_r.get(1, 0))
+
+print(f"Inter-trial reward decoder: {n_trip_r} triplets | reward={reward_cnt}, no_reward={no_reward_cnt}")
+
+# Sample population vector at each τ grid point
+X_reward = np.empty((n_trip_r, n_neurons, GRID_N), dtype=np.float32)
+for j, (b_prev, b_curr, b_next, _) in enumerate(triplets_reward):
+    for k, tau in enumerate(tau_grid):
+        if tau <= 0.5:
+            b = b_prev + (tau / 0.5) * (b_curr - b_prev)
+        else:
+            b = b_curr + ((tau - 0.5) / 0.5) * (b_next - b_curr)
+        b_idx = int(np.clip(round(b), 0, T - 1))
+        X_reward[j, :, k] = x30[:, b_idx]
+
+decoder_acc_reward = np.full(GRID_N, np.nan)
+if len(np.unique(labels_r)) >= 2:
+    cv_r = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    splits_r = list(cv_r.split(X_reward[:, :, 0], labels_r))
+    for k in range(GRID_N):
+        X_bin = X_reward[:, :, k].astype(float)
+        fold_accs = []
+        for train_idx, test_idx in splits_r:
+            scaler = StandardScaler()
+            X_tr = scaler.fit_transform(X_bin[train_idx])
+            X_te = scaler.transform(X_bin[test_idx])
+            clf = LogisticRegression(max_iter=300, C=1.0, solver="lbfgs")
+            clf.fit(X_tr, labels_r[train_idx])
+            fold_accs.append(clf.score(X_te, labels_r[test_idx]))
+        decoder_acc_reward[k] = np.mean(fold_accs)
+    print(f"Reward accuracy: min={np.nanmin(decoder_acc_reward):.3f}  max={np.nanmax(decoder_acc_reward):.3f}  chance=0.5")
+else:
+    print("Only one reward class found — reward decoder skipped")
+    decoder_acc_reward[:] = 0.5
+
+chance = 0.5
+
+# Plot
+fig = go.Figure()
+fig.add_trace(go.Scatter(
+    x=tau_grid, y=decoder_acc_reward,
+    mode="lines", line=dict(color="seagreen", width=2.5),
+    name="5-fold CV accuracy",
+    hovertemplate="τ=%{x:.2f}  acc=%{y:.3f}<extra></extra>",
+))
+fig.add_hline(y=chance, line_dash="dash", line_color="grey", line_width=1.5,
+              annotation_text="Chance (0.50)", annotation_position="right")
+for tau_v, label, col in [
+    (0.0, "Prev choice", "steelblue"),
+    (0.5, "This choice", "crimson"),
+    (1.0, "Next choice", "steelblue"),
+]:
+    fig.add_vline(x=tau_v, line_dash="dash", line_color=col, line_width=1.5)
+    fig.add_annotation(x=tau_v, y=1.06, xref="x", yref="paper", text=label, showarrow=False,
+                       font=dict(color=col, size=10))
+
+iti_prev_s_r = float(np.median([(b_curr - b_prev) / fs30 for b_prev, b_curr, b_next, _ in triplets_reward])) if n_trip_r > 0 else 0.0
+iti_next_s_r = float(np.median([(b_next - b_curr) / fs30 for b_prev, b_curr, b_next, _ in triplets_reward])) if n_trip_r > 0 else 0.0
+
+fig.update_layout(
+    title=(f"Normalized Inter-Trial Reward Decoder — {n_trip_r} trials × {n_neurons} neurons<br>"
+           f"<sup>Median ITI: {iti_prev_s_r:.1f}s (prev→curr) · {iti_next_s_r:.1f}s (curr→next)</sup>"),
+    xaxis=dict(title="Normalized inter-trial position (τ)", tickvals=[0, 0.25, 0.5, 0.75, 1.0],
+               ticktext=["0 · prev", "0.25", "0.5 · choice", "0.75", "1 · next"],),
+    yaxis_title="Decoding accuracy (5-fold CV)",
+    yaxis=dict(range=[0.3, 1.0]),
+    height=420, template="plotly_white", hovermode="x unified",
+)
+
+orig_caption = _FIGURE_CAPTIONS.get("29_reward_decoder.html", "")
+extra = (f" {n_trip_r} triplets used (reward={reward_cnt}, no_reward={no_reward_cnt})."
+         f" Median ITI: {iti_prev_s_r:.1f}s (prev→curr), {iti_next_s_r:.1f}s (curr→next)."
+         " 5-fold stratified CV; LogisticRegression (lbfgs, C=1.0); activity z-scored per fold.")
+_FIGURE_CAPTIONS["29_reward_decoder.html"] = (orig_caption + " " + extra).strip()
+write_html_with_caption(fig, OUT_DIR / "29_reward_decoder.html")
+print("Saved 29_reward_decoder.html")
 
 
 # %%
@@ -2241,6 +2362,7 @@ SECTIONS = [
     ]),
     ("17 · Linear Decoder", [
         ("28_decoder.html", "Linear Decoder — left/right choice decoded from population at each time bin"),
+        ("29_reward_decoder.html", "Normalized Inter-Trial Reward Decoder — rewarded vs not rewarded decoded from population"),
     ]),
 ]
 
