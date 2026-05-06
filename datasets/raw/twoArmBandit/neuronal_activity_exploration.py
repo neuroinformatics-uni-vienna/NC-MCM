@@ -2294,6 +2294,313 @@ _FIGURE_CAPTIONS["29_reward_decoder.html"] = (orig_caption + " " + extra).strip(
 write_html_with_caption(fig, OUT_DIR / "29_reward_decoder.html")
 print("Saved 29_reward_decoder.html")
 
+# %% [markdown]
+# ---
+# ## 19 · Absolute-Time vs Normalized TI-decoder Checks
+#
+# Quick checks to compare the normalized-τ decoder above with an absolute-time
+# decoder (fixed seconds relative to the current choice) and with ITI-stratified
+# normalized decoders. Also compute a permutation null (default `N_PERM=200`) to
+# assess significance per τ (Benjamini-Hochberg FDR across τ).
+
+# %%
+from sklearn.metrics import balanced_accuracy_score
+
+# Parameters for absolute-time decoder
+PRE_S_ABS = 5.0   # seconds before choice
+POST_S_ABS = 1.0  # seconds after choice
+GRID_N_ABS = 100
+abs_time_grid = np.linspace(-PRE_S_ABS, POST_S_ABS, GRID_N_ABS)
+
+# Use the same triplets and labels as the normalized reward decoder (ensures comparability)
+if n_trip_r > 0:
+    # Filter triplets so the absolute window fits inside recording
+    abs_valid_idx = []
+    for j, (b_prev, b_curr, b_next, lbl) in enumerate(triplets_reward):
+        ts = int(round(b_curr + abs_time_grid[0] * fs30))
+        te = int(round(b_curr + abs_time_grid[-1] * fs30))
+        if ts >= 0 and te < T:
+            abs_valid_idx.append(j)
+
+    if len(abs_valid_idx) == 0:
+        print("Absolute-time decoder: no triplets fit the requested window; skipping")
+        decoder_acc_abs = np.full(GRID_N_ABS, 0.5)
+    else:
+        X_abs = np.empty((len(abs_valid_idx), n_neurons, GRID_N_ABS), dtype=np.float32)
+        y_abs = np.empty((len(abs_valid_idx),), dtype=np.int32)
+        for ii, j in enumerate(abs_valid_idx):
+            b_prev, b_curr, b_next, lbl = triplets_reward[j]
+            y_abs[ii] = lbl
+            for k, t_rel in enumerate(abs_time_grid):
+                b_idx = int(np.clip(round(b_curr + t_rel * fs30), 0, T - 1))
+                X_abs[ii, :, k] = x30[:, b_idx]
+
+        # Helper to compute per-τ decoding accuracy with stratified CV (adapt n_splits if needed)
+        def decode_time_series(X_all, y_all, grid_n=GRID_N_ABS, n_splits=5):
+            n_samples = X_all.shape[0]
+            decoder_acc = np.full(grid_n, np.nan)
+            if len(np.unique(y_all)) < 2:
+                print("Only one class present — decoder skipped")
+                return np.full(grid_n, 0.5)
+            class_counts = np.bincount(y_all)
+            max_splits = int(np.min(class_counts))
+            n_splits_eff = min(n_splits, max_splits) if max_splits >= 2 else 0
+            if n_splits_eff < 2:
+                print("Too few samples per class for StratifiedKFold — skipping")
+                return np.full(grid_n, 0.5)
+            cv = StratifiedKFold(n_splits=n_splits_eff, shuffle=True, random_state=42)
+            splits = list(cv.split(X_all[:, :, 0], y_all))
+            for k in range(grid_n):
+                X_bin = X_all[:, :, k]
+                fold_accs = []
+                for train_idx, test_idx in splits:
+                    scaler = StandardScaler()
+                    X_tr = scaler.fit_transform(X_bin[train_idx])
+                    X_te = scaler.transform(X_bin[test_idx])
+                    clf = LogisticRegression(max_iter=300, C=1.0, solver="lbfgs")
+                    clf.fit(X_tr, y_all[train_idx])
+                    fold_accs.append(clf.score(X_te, y_all[test_idx]))
+                decoder_acc[k] = np.mean(fold_accs)
+            return decoder_acc
+
+        decoder_acc_abs = decode_time_series(X_abs, y_abs, grid_n=GRID_N_ABS)
+        print(f"Absolute-time decoder computed on {len(abs_valid_idx)} triplets")
+
+    # Compute majority and balanced baselines for reporting
+    try:
+        majority_baseline = max(np.bincount(y_abs)) / float(len(y_abs))
+    except Exception:
+        majority_baseline = 0.5
+else:
+    decoder_acc_abs = np.full(GRID_N_ABS, 0.5)
+    majority_baseline = 0.5
+
+# ── ITI-stratified normalized decoder (split by prev→curr ITI tertiles) ─────
+iti_prev_s = np.array([(b_curr - b_prev) / fs30 for b_prev, b_curr, b_next, _ in triplets_reward]) if n_trip_r > 0 else np.array([])
+if n_trip_r > 0 and len(iti_prev_s) > 0:
+    # compute tertile edges
+    q1, q2 = np.percentile(iti_prev_s, [33.333, 66.666])
+    groups = {
+        'short': np.where(iti_prev_s <= q1)[0].tolist(),
+        'medium': np.where((iti_prev_s > q1) & (iti_prev_s <= q2))[0].tolist(),
+        'long': np.where(iti_prev_s > q2)[0].tolist(),
+    }
+else:
+    groups = {'short': [], 'medium': [], 'long': []}
+
+decoder_acc_iti = {}
+for name, idxs in groups.items():
+    if len(idxs) == 0:
+        decoder_acc_iti[name] = np.full(GRID_N, 0.5)
+        continue
+    X_grp = X_reward[np.array(idxs), :, :]
+    y_grp = labels_r[np.array(idxs)]
+    decoder_acc_iti[name] = decode_time_series(X_grp, y_grp, grid_n=GRID_N)
+    print(f"ITI group '{name}': {len(idxs)} triplets — decoding done")
+
+# ── Permutation test (on normalized reward decoder across all triplets) ─────
+N_PERM = 200
+perm_acc = None
+pvals = None
+significant_mask = None
+if n_trip_r > 0 and len(np.unique(labels_r)) >= 2:
+    # use same splitting logic as above
+    class_counts = np.bincount(labels_r)
+    max_splits = int(np.min(class_counts))
+    n_splits_eff = min(5, max_splits) if max_splits >= 2 else 0
+    if n_splits_eff >= 2:
+        cv_perm = StratifiedKFold(n_splits=n_splits_eff, shuffle=True, random_state=42)
+        splits_perm = list(cv_perm.split(X_reward[:, :, 0], labels_r))
+        perm_acc = np.empty((N_PERM, GRID_N), dtype=np.float32)
+        rng = np.random.default_rng(42)
+        for p in range(N_PERM):
+            y_perm = rng.permutation(labels_r)
+            fold_means = np.full(GRID_N, np.nan)
+            # compute per-τ accuracy for this perm using the same splits
+            for k in range(GRID_N):
+                X_bin = X_reward[:, :, k]
+                fold_accs = []
+                for train_idx, test_idx in splits_perm:
+                    scaler = StandardScaler()
+                    X_tr = scaler.fit_transform(X_bin[train_idx])
+                    X_te = scaler.transform(X_bin[test_idx])
+                    clf = LogisticRegression(max_iter=300, C=1.0, solver="lbfgs")
+                    clf.fit(X_tr, y_perm[train_idx])
+                    fold_accs.append(clf.score(X_te, y_perm[test_idx]))
+                perm_acc[p, k] = np.mean(fold_accs)
+        # p-values (one-sided: how often perm >= real)
+        pvals = (np.sum(perm_acc >= decoder_acc_norm[None, :], axis=0) + 1) / (N_PERM + 1)
+        # Benjamini-Hochberg FDR
+        alpha = 0.05
+        m = len(pvals)
+        order = np.argsort(pvals)
+        sorted_p = pvals[order]
+        thresh = np.arange(1, m + 1) * alpha / m
+        below = np.where(sorted_p <= thresh)[0]
+        if below.size > 0:
+            k_max = below[-1]
+            p_crit = sorted_p[k_max]
+            significant_mask = pvals <= p_crit
+        else:
+            significant_mask = np.zeros_like(pvals, dtype=bool)
+        print(f"Permutation test done (N={N_PERM}); significant τ count: {np.sum(significant_mask)}")
+    else:
+        print("Too few samples per class to run permuted StratifiedKFold; skipping permutation test")
+else:
+    print("No triplets or single-class labels; skipping permutation test")
+
+# ── Save comparison plots
+# Absolute-time figure
+fig_abs = go.Figure()
+fig_abs.add_trace(go.Scatter(x=abs_time_grid, y=decoder_acc_abs, mode='lines', line=dict(color='darkorange', width=2.5), name='5-fold CV acc'))
+fig_abs.add_hline(y=majority_baseline, line_dash='dash', line_color='grey', line_width=1.5, annotation_text=f'Majority ({majority_baseline:.2f})', annotation_position='right')
+fig_abs.update_layout(title=f'Absolute-Time Reward Decoder — {len(abs_valid_idx) if n_trip_r>0 else 0} triplets', xaxis_title='Time relative to choice (s)', yaxis_title='Decoding accuracy')
+write_html_with_caption(fig_abs, OUT_DIR / '30_abs_time_decoder.html')
+print('Saved 30_abs_time_decoder.html')
+
+# ITI-stratified normalized decoder figure
+fig_iti = go.Figure()
+for name, acc in decoder_acc_iti.items():
+    fig_iti.add_trace(go.Scatter(x=tau_grid, y=acc, mode='lines+markers', name=f'{name} ITI'))
+fig_iti.add_trace(go.Scatter(x=tau_grid, y=decoder_acc_norm, mode='lines', line=dict(color='black', width=2), name='all triplets'))
+if significant_mask is not None:
+    sig_x = tau_grid[significant_mask]
+    sig_y = np.clip(decoder_acc_norm[significant_mask] + 0.02, 0.5, 0.99)
+    fig_iti.add_trace(go.Scatter(x=sig_x, y=sig_y, mode='markers', marker=dict(color='black', size=6), name='FDR p<0.05'))
+fig_iti.update_layout(title='ITI-stratified Normalized Reward Decoder', xaxis_title='τ', yaxis_title='Decoding accuracy')
+write_html_with_caption(fig_iti, OUT_DIR / '31_iti_stratified_decoder.html')
+print('Saved 31_iti_stratified_decoder.html')
+
+
+# %% [markdown]
+# ---
+# ## 18b · Absolute-Time Choice Decoder
+#
+# Use the mean distance between consecutive choice times (ms) + 1s as an absolute
+# window. We sample `GRID_N` points from `-window` .. `+window` around each trial's
+# choice time (in seconds) and train a separate linear decoder per timepoint.
+# This complements the normalized inter-trial decoder by testing absolute-time-locked
+# signals that do not scale with the ITI.
+
+
+# %%
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import StratifiedKFold
+
+CHOICE_MAP = {0: 0, 1: 1, 0.0: 0, 1.0: 1, "l": 0, "r": 1, "left": 0, "right": 1}
+
+# Collect valid choice times (ms) and compute mean inter-choice distance
+choice_times = []
+choice_pairs = []  # (t_choice_ms, choice_int)
+for trial in trials:
+    t_choice = trial.get("t chosen")
+    choice = trial.get("choice")
+    if t_choice is None or choice is None:
+        continue
+    choice_raw = choice.lower() if isinstance(choice, str) else choice
+    choice_int = CHOICE_MAP.get(choice_raw)
+    if choice_int is None:
+        continue
+    choice_times.append(t_choice)
+    choice_pairs.append((t_choice, choice_int))
+
+if len(choice_times) < 2:
+    mean_iti_s = 2.0
+else:
+    choice_times = np.sort(np.array(choice_times))
+    diffs = np.diff(choice_times)
+    mean_iti_s = float(np.mean(diffs)) / 1000.0
+
+window_s = mean_iti_s + 1.0
+PRE_S = POST_S = window_s
+GRID_N = 100
+time_grid = np.linspace(-PRE_S, POST_S, GRID_N)
+
+print(f"Mean inter-choice distance: {mean_iti_s:.2f}s → window: {window_s:.2f}s (±{window_s:.2f}s)")
+
+# Build trial-level samples: one population vector per trial at each absolute offset
+trial_data = []
+trial_labels = []
+pre_bins = int(np.ceil(PRE_S * fs30))
+post_bins = int(np.ceil(POST_S * fs30))
+n_skipped = 0
+
+for t_choice_ms, choice_int in sorted(choice_pairs, key=lambda x: x[0]):
+    center_bin = int((t_choice_ms - t0_ms) / 1000 * fs30)
+    if center_bin - pre_bins < 0 or center_bin + post_bins >= T:
+        n_skipped += 1
+        continue
+    feat = np.zeros((n_neurons, GRID_N), dtype=np.float32)
+    for k, t_rel in enumerate(time_grid):
+        b_idx = int(np.clip(round(center_bin + t_rel * fs30), 0, T - 1))
+        feat[:, k] = x30[:, b_idx]
+    trial_data.append(feat)
+    trial_labels.append(choice_int)
+
+trial_data = np.array(trial_data, dtype=np.float32)  # (n_trials, n_neurons, GRID_N)
+trial_labels = np.array(trial_labels, dtype=np.int32)
+n_trials_abs = trial_data.shape[0]
+counts_abs = dict(zip(*np.unique(trial_labels, return_counts=True))) if n_trials_abs > 0 else {}
+left_cnt_abs = int(counts_abs.get(0, 0))
+right_cnt_abs = int(counts_abs.get(1, 0))
+
+print(f"Absolute-time decoder: {n_trials_abs} trials used (skipped {n_skipped}) | left={left_cnt_abs} right={right_cnt_abs}")
+
+decoder_acc_abs = np.full(GRID_N, np.nan)
+
+if len(np.unique(trial_labels)) >= 2:
+    cv_abs = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    splits_abs = list(cv_abs.split(trial_data[:, :, 0], trial_labels))
+    for k in range(GRID_N):
+        X_bin = trial_data[:, :, k]
+        fold_accs = []
+        for train_idx, test_idx in splits_abs:
+            scaler = StandardScaler()
+            X_tr = scaler.fit_transform(X_bin[train_idx])
+            X_te = scaler.transform(X_bin[test_idx])
+            clf = LogisticRegression(max_iter=300, C=1.0, solver="lbfgs")
+            clf.fit(X_tr, trial_labels[train_idx])
+            fold_accs.append(clf.score(X_te, trial_labels[test_idx]))
+        decoder_acc_abs[k] = np.mean(fold_accs)
+    print(f"Absolute-time accuracy: min={np.nanmin(decoder_acc_abs):.3f}  max={np.nanmax(decoder_acc_abs):.3f}")
+else:
+    print("Only one choice class found — absolute-time decoder skipped")
+    decoder_acc_abs[:] = 0.5
+
+# Plot absolute-time decoder
+fig = go.Figure()
+fig.add_trace(go.Scatter(
+    x=time_grid, y=decoder_acc_abs,
+    mode="lines", line=dict(color="darkorange", width=2.5),
+    name="5-fold CV accuracy",
+    hovertemplate="t=%{x:.2f}s  acc=%{y:.3f}<extra></extra>",
+))
+chance_line = 0.5
+majority_rate = max(counts_abs.values()) / max(sum(counts_abs.values()), 1) if counts_abs else 0.5
+fig.add_hline(y=chance_line, line_dash="dash", line_color="grey", line_width=1.2,
+              annotation_text=f"Chance ({chance_line:.2f})", annotation_position="right")
+fig.add_hline(y=majority_rate, line_dash="dot", line_color="silver", line_width=1.2,
+              annotation_text=f"Majority ({majority_rate:.2f})", annotation_position="left")
+fig.add_vline(x=0.0, line_dash="dash", line_color="crimson", line_width=1.5)
+
+fig.update_layout(
+    title=(f"Absolute-Time Decoder — Left/Right choice — window={window_s:.1f}s (±{window_s:.1f}s) \n"
+           f"{n_trials_abs} trials × {n_neurons} neurons (skipped {n_skipped})"),
+    xaxis=dict(title="Time relative to choice (s)", tickvals=[-PRE_S, -PRE_S/2, 0, POST_S/2, POST_S],
+               ticktext=[f"-{PRE_S:.1f}s", f"-{PRE_S/2:.1f}s", "0s", f"{POST_S/2:.1f}s", f"{POST_S:.1f}s"]),
+    yaxis_title="Decoding accuracy (5-fold CV)",
+    yaxis=dict(range=[0.3, 1.0]),
+    height=420, template="plotly_white", hovermode="x unified",
+)
+
+orig_caption = _FIGURE_CAPTIONS.get("30_absolute_time_decoder.html", "")
+extra = (f" {n_trials_abs} trials used (left={left_cnt_abs}, right={right_cnt_abs}); skipped {n_skipped}."
+         f" Window: ±{window_s:.1f}s around choice (mean inter-choice {mean_iti_s:.2f}s + 1s)."
+         " 5-fold stratified CV; LogisticRegression (lbfgs, C=1.0); activity z-scored per fold.")
+_FIGURE_CAPTIONS["30_absolute_time_decoder.html"] = (orig_caption + " " + extra).strip()
+write_html_with_caption(fig, OUT_DIR / "30_absolute_time_decoder.html")
+print("Saved 30_absolute_time_decoder.html")
 
 # %%
 
@@ -2363,6 +2670,7 @@ SECTIONS = [
     ("17 · Linear Decoder", [
         ("28_decoder.html", "Linear Decoder — left/right choice decoded from population at each time bin"),
         ("29_reward_decoder.html", "Normalized Inter-Trial Reward Decoder — rewarded vs not rewarded decoded from population"),
+        ("30_absolute_time_decoder.html", "Absolute-Time Decoder — left/right choice decoded in seconds (mean ITI +1s window)"),
     ]),
 ]
 
