@@ -135,11 +135,13 @@ class BanditTaskNeuroPixelsDataset:
                       or pass an explicit range.
             b_mode: Behavioural representation level (default: 'full').
                       'full': per-timepoint state labels (intertrial, hold, choosing left, reward, …).
-                      'decision': every timepoint in a trial is labelled with the trial's decision
-                                  ("choosing left" or "choosing right"). Timepoints outside any trial
-                                  window (reward/no-reward periods, pre-recording gaps) are labelled
-                                  "intertrial". Respects `choosing_state_mode` — when 'correctness',
-                                  labels become "choosing correct" / "choosing wrong" instead.
+                      'decision': each trial's full lifecycle window [trial_start, next_trial_start)
+                                  is labelled with that trial's decision. The window covers the
+                                  entire period from one intertrial onset to the next (intertrial +
+                                  hold + choosing + reward/no-reward). After trimming, the dataset
+                                  contains exactly 2 labels: "choosing left" / "choosing right" in
+                                  side mode, or "choosing correct" / "choosing wrong" in correctness
+                                  mode. Respects `choosing_state_mode`.
             
         Attributes after loading:
             data_path: Path to the dataset directory
@@ -190,6 +192,7 @@ class BanditTaskNeuroPixelsDataset:
         self.b_labels = None # behavioral labels as list
         self.b_continuous = None  # continuous behavioral data (running avg of last 10 decisions)
         self.trial_indices = None  # the trial indices for each timepoint
+        self.trial_start_indices = None  # first timepoint index of each trial (for segmentation)
         self.block_indices = None  # the block indices for each timepoint
         self.block_labels = None  # the block labels/names for each timepoint
         self.behavioral_time = None  # behavioral time array (in ms)
@@ -320,6 +323,9 @@ class BanditTaskNeuroPixelsDataset:
         
         # Sort behavioral labels by their state id (dict keys) and store as list
         self.b_labels = [self.b_labels_dict[k] for k in sorted(self.b_labels_dict.keys())]
+
+        # Derive trial start indices from the final aligned trial_indices array
+        self._build_trial_start_indices()
     
     def _apply_state_transitions(self):
         """
@@ -926,10 +932,20 @@ class BanditTaskNeuroPixelsDataset:
         
     def _create_decision_behavioral_data_matrix(self, metrics, neuronal_length, translation_indices_neuronal_to_behavioral):
         """
-        Build a behavioural state array where every timepoint in a trial is labelled
-        with that trial's decision ("choosing left" / "choosing right", or
-        "choosing correct" / "choosing wrong" when choosing_state_mode='correctness').
-        Timepoints that fall outside any trial window receive the label "intertrial".
+        Build a behavioural state array for b_mode='decision'.
+
+        Each trial's full lifecycle window [trial_start, next_trial_start) is labelled
+        with that trial's decision.  The window spans the entire period from one
+        intertrial onset to the next, covering intertrial + hold + choosing +
+        reward/no-reward phases.  For the last trial the window extends to
+        last_timestamp_ms.
+
+        Timepoints before the first trial and after the last trial's window are
+        filled with "waiting" so that _trim_waiting_periods() crops the array to
+        the same bounds as b_mode='full'.  After trimming, the dataset contains
+        exactly two labels:
+            side mode      → "choosing left" / "choosing right"
+            correctness    → "choosing correct" / "choosing wrong"
 
         Args:
             metrics: behavioral metrics from JSON
@@ -941,21 +957,24 @@ class BanditTaskNeuroPixelsDataset:
                    _create_behavioral_data_matrix.
         """
         trials = metrics['metrics']['trials']
+        states = metrics['metrics']['states']
         blocks = metrics['metrics'].get('blocks', [])
 
+        max_state_time = max([s[0] for s in states], default=0)
         max_trial_time = max([t.get('t chosen', 0) for t in trials if 't chosen' in t], default=0)
-        last_timestamp_ms = int(max_trial_time)
+        last_timestamp_ms = int(max(max_state_time, max_trial_time))
 
-        # Vocabulary depends on choosing_state_mode
+        # Vocabulary: "waiting" sentinel (id=0) + 2 choosing labels.
+        # "waiting" is trimmed away by _trim_waiting_periods after loading.
         if self.choosing_state_mode == 'correctness':
-            unique_state_names = ["intertrial", "choosing correct", "choosing wrong"]
+            unique_state_names = ["waiting", "choosing correct", "choosing wrong"]
         else:
-            unique_state_names = ["intertrial", "choosing left", "choosing right"]
+            unique_state_names = ["waiting", "choosing left", "choosing right"]
 
         state_name_to_id = {name: idx for idx, name in enumerate(unique_state_names)}
         state_labels = {idx: name for name, idx in state_name_to_id.items()}
 
-        # Default: everything is "intertrial" (id=0)
+        # Default: "waiting" everywhere (id=0) — trimmed away by _trim_waiting_periods.
         state_array_ms = np.zeros(last_timestamp_ms + 1, dtype=np.int8)
 
         # Build block-side map for correctness mode
@@ -976,17 +995,35 @@ class BanditTaskNeuroPixelsDataset:
                 better_side = 'l' if 'left' in label else ('r' if 'right' in label else None)
                 block_side_ms[start_time:end_time + 1] = better_side
 
-        # Broadcast each trial's decision across its full window [start, t_chosen]
-        for trial in sorted(trials, key=lambda t: t.get('start', 0)):
-            start_time = trial.get('start')
-            end_time = trial.get('t chosen')
-            choice = trial.get('choice', '').lower()
-            if start_time is None or end_time is None or choice not in ['l', 'r']:
-                continue
+        # Filter to usable trials and sort chronologically
+        usable_trials = [
+            t for t in trials
+            if t.get('start') is not None
+            and t.get('t chosen') is not None
+            and t.get('choice', '').lower() in ['l', 'r']
+        ]
+        usable_trials.sort(key=lambda t: t['start'])
+
+        # Broadcast each trial's decision across its full lifecycle window
+        # [trial_start, next_trial_start), i.e. up to (but not including) the
+        # next trial's intertrial onset.  For the last trial, extend to
+        # last_timestamp_ms (inclusive).
+        for i, trial in enumerate(usable_trials):
+            start_time = int(trial['start'])
+            choice = trial['choice'].lower()
+
+            if i < len(usable_trials) - 1:
+                end_time = int(usable_trials[i + 1]['start']) - 1
+            else:
+                end_time = last_timestamp_ms
 
             if self.choosing_state_mode == 'correctness':
-                better_side = block_side_ms[start_time] if (block_side_ms is not None and start_time <= last_timestamp_ms) else None
-                if choice in ['l', 'r'] and better_side in ['l', 'r']:
+                better_side = (
+                    block_side_ms[start_time]
+                    if (block_side_ms is not None and start_time <= last_timestamp_ms)
+                    else None
+                )
+                if better_side in ['l', 'r']:
                     state_name = "choosing correct" if choice == better_side else "choosing wrong"
                 else:
                     state_name = "choosing left" if choice == 'l' else "choosing right"
@@ -1135,7 +1172,26 @@ class BanditTaskNeuroPixelsDataset:
             trial_indices_neuronal[neuronal_idx] = trial_indices_ms[behavioral_ms]
         
         return trial_indices_neuronal
-    
+
+    def _build_trial_start_indices(self):
+        """Derive the first timepoint of each trial from the final ``trial_indices`` array.
+
+        Populates ``self.trial_start_indices`` with a sorted int64 array whose
+        length equals the number of trials present after all post-processing
+        (downsampling, trimming, relabelling).  Each value is the index into
+        ``self.x`` / ``self.b`` where that trial begins.
+
+        This is computed purely from ``self.trial_indices`` and is therefore
+        independent of ``self.b_mode`` — it works for both ``'full'`` and
+        ``'decision'`` representations, and does not rely on any behavioral
+        label name such as ``'intertrial'`` being present in ``self.b``.
+        """
+        ti = self.trial_indices
+        prev = np.concatenate([[-1], ti[:-1]])
+        # Every position where trial_indices first takes a new non-negative value
+        starts = np.where((ti >= 0) & (prev != ti))[0]
+        self.trial_start_indices = starts.astype(np.int64)
+
     def _create_block_indices(self, metrics, neuronal_length, translation_indices_neuronal_to_behavioral):
         """
         Create block index array aligned with neuronal data.
@@ -1487,6 +1543,7 @@ class BanditTaskNeuroPixelsDataset:
                 'b_labels': self.b_labels,
                 'b_continuous': self.b_continuous,
                 'trial_indices': self.trial_indices,
+                'trial_start_indices': self.trial_start_indices,
                 'block_indices': self.block_indices,
                 'block_labels': self.block_labels,
                 'behavioral_time': self.behavioral_time,
@@ -1560,6 +1617,10 @@ class BanditTaskNeuroPixelsDataset:
             self.b_labels = cache_data['b_labels']
             self.b_continuous = cache_data['b_continuous']
             self.trial_indices = cache_data['trial_indices']
+            self.trial_start_indices = cache_data.get('trial_start_indices')
+            if self.trial_start_indices is None:
+                # Rebuild from trial_indices when loading a pre-existing cache
+                self._build_trial_start_indices()
             self.block_indices = cache_data['block_indices']
             self.block_labels = cache_data['block_labels']
             self.behavioral_time = cache_data['behavioral_time']
