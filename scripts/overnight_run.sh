@@ -29,7 +29,6 @@ python scripts/bandit_gridsearch.py \
     --n_epochs 500 \
     --pca_init \
     --trial_based \
-    --trial_start_state intertrial \
     --trial_test_ratio 0.2 \
     --trial_random_state 42 \
     2>&1 | tee -a "$LOG"
