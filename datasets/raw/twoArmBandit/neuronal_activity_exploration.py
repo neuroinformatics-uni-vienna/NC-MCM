@@ -2671,11 +2671,15 @@ SECTIONS = [
         ("28_decoder.html", "Linear Decoder — left/right choice decoded from population at each time bin"),
         ("29_reward_decoder.html", "Normalized Inter-Trial Reward Decoder — rewarded vs not rewarded decoded from population"),
         ("30_absolute_time_decoder.html", "Absolute-Time Decoder — left/right choice decoded in seconds (mean ITI +1s window)"),
+        ("30_abs_time_decoder.html", "Absolute-Time Decoder (alternate) — compact absolute-time summary"),
+        ("31_iti_stratified_decoder.html", "ITI-stratified Normalized Decoder — short/medium/long ITI comparisons"),
     ]),
 ]
-
+ 
 html_parts = []
-html_parts.append("""<!DOCTYPE html>
+# Compute number of figures from SECTIONS so header stays in sync
+n_figs = sum(len(figs) for _, figs in SECTIONS)
+html_parts.append(f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -2756,7 +2760,7 @@ html_parts.append("""<!DOCTYPE html>
 <body>
 <header>
   <h1>Neuronal Activity Exploration</h1>
-  <p>Primary session: <strong>JPAS_0023_20230922</strong> &nbsp;·&nbsp; 28 interactive figures</p>
+    <p>Primary session: <strong>JPAS_0023_20230922</strong> &nbsp;·&nbsp; {n_figs} interactive figures</p>
 </header>
 """)
 
