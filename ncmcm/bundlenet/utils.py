@@ -762,14 +762,19 @@ class LazyTrialWindowDataset(Dataset):
         return np.array([self[i] for i in range(len(self))])
 
 
-def prep_data_trials_lazy(X, B, b_labels_dict=None, trial_start_state='intertrial', win=15,
-                          trial_start_indices=None):
+def prep_data_trials_lazy(X, B, b_labels_dict=None, win=15, trial_start_indices=None):
     """Memory-efficient variant of :func:`prep_data_trials`.
 
     Returns a :class:`LazyTrialWindowDataset` instead of a materialised
-    ``X_paired`` array.  The dataset generates windows on-the-fly during
+    ``X_paired`` array. The dataset generates windows on-the-fly during
     training so peak RAM is dominated by raw ``X`` (``T × N × 4B``) rather
     than ``X_paired`` (``M × 2 × win × N × 4B``).
+
+    NOTE: Label-name based segmentation (``trial_start_state`` / ``intertrial``)
+    has been removed to avoid ambiguity between `b_mode='full'` and
+    `b_mode='decision'`. When using trial-based workflows, pass
+    ``trial_start_indices`` (from the dataloader) which is the canonical
+    source of trial boundaries.
 
     Parameters
     ----------
@@ -778,20 +783,15 @@ def prep_data_trials_lazy(X, B, b_labels_dict=None, trial_start_state='intertria
     B : np.ndarray, shape (T,) or (T, k)
         Full-session behavioural array.
     b_labels_dict : dict {int: str} or None
-        Label mapping from :attr:`BanditTaskNeuroPixelsDataset.b_labels_dict`.
-        Required when ``trial_start_indices`` is ``None``; ignored otherwise.
-    trial_start_state : str, optional
-        State that marks the start of a new trial. Used only when
-        ``trial_start_indices`` is ``None``. Default ``'intertrial'``.
+        Optional label mapping. Kept for compatibility but ignored when
+        ``trial_start_indices`` is supplied.
     win : int, optional
         Window length. Default 15.
     trial_start_indices : array-like of int or None, optional
         Explicit trial start indices from the dataloader
-        (``BanditTaskNeuroPixelsDataset.trial_start_indices``).  When provided,
-        label-name boundary detection is skipped entirely — ``b_labels_dict``
-        and ``trial_start_state`` are ignored.  This is the preferred path for
-        ``b_mode='decision'`` and any other mode where ``'intertrial'`` may not
-        be present as a label.
+        (``BanditTaskNeuroPixelsDataset.trial_start_indices``). This is now
+        required for trial-based windowing; a ValueError is raised when it is
+        not provided.
 
     Returns
     -------
@@ -803,15 +803,13 @@ def prep_data_trials_lazy(X, B, b_labels_dict=None, trial_start_state='intertria
     trial_ids : np.ndarray
         Alias for ``dataset.trial_ids`` — trial index per pair.
     """
-    if trial_start_indices is not None:
-        boundaries = boundaries_from_trial_starts(trial_start_indices, len(X))
-    else:
-        if b_labels_dict is None:
-            raise ValueError(
-                "Either trial_start_indices or b_labels_dict must be provided."
-            )
-        B_1d = B[:, 0].astype(int) if B.ndim > 1 else B.astype(int)
-        boundaries = segment_trial_boundaries(B_1d, b_labels_dict, trial_start_state)
+    if trial_start_indices is None:
+        raise ValueError(
+            "prep_data_trials_lazy requires 'trial_start_indices' (BanditTaskNeuroPixelsDataset.trial_start_indices)."
+            " Label-based segmentation has been removed to avoid ambiguity."
+        )
+
+    boundaries = boundaries_from_trial_starts(trial_start_indices, len(X))
     dataset = LazyTrialWindowDataset(X, B, boundaries, win)
     return dataset, dataset.B_1, dataset.trial_ids
 

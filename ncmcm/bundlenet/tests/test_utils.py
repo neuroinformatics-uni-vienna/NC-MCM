@@ -136,17 +136,20 @@ def _make_toy_trial_data(n_neurons=4, rng_seed=0):
 
 def test_segment_trial_boundaries_count():
     X, B, b_labels_dict = _make_toy_trial_data()
-    boundaries = segment_trial_boundaries(B, b_labels_dict, 'intertrial')
+    # Trial starts are known for this toy dataset: 0 and 25
+    starts = np.array([0, 25], dtype=np.int64)
+    boundaries = boundaries_from_trial_starts(starts, total_length=len(B))
     # Two trials: [0,25) and [25,50)
     assert len(boundaries) == 2
     assert boundaries[0] == (0, 25)
-    assert boundaries[1] == (25, 50)
+    assert boundaries[1] == (25, len(B))
 
 
 def test_lazy_trial_dataset_shape():
     X, B, b_labels_dict = _make_toy_trial_data()
     win = 5
-    boundaries = segment_trial_boundaries(B, b_labels_dict, 'intertrial')
+    starts = np.array([0, 25], dtype=np.int64)
+    boundaries = boundaries_from_trial_starts(starts, total_length=len(X))
     ds = LazyTrialWindowDataset(X, B, boundaries, win)
     M, two, w, N = ds.shape
     assert two == 2
@@ -161,11 +164,13 @@ def test_lazy_trial_dataset_matches_eager():
     win = 5
 
     # --- Eager path ---
-    segments = segment_trials(X, B, b_labels_dict, 'intertrial')
+    # Known trial starts for this toy dataset
+    starts = np.array([0, 25], dtype=np.int64)
+    segments = segments_from_trial_starts(X, B, starts)
     X_paired_eager, B_1_eager, trial_ids_eager = prep_data_trials(segments, win=win)
 
     # --- Lazy path ---
-    boundaries = segment_trial_boundaries(B, b_labels_dict, 'intertrial')
+    boundaries = boundaries_from_trial_starts(starts, total_length=len(X))
     ds = LazyTrialWindowDataset(X, B, boundaries, win)
 
     assert len(ds) == len(X_paired_eager), (
@@ -186,13 +191,16 @@ def test_prep_data_trials_lazy_matches_eager():
     X, B, b_labels_dict = _make_toy_trial_data()
     win = 5
 
+    # Known trial starts for this toy dataset
+    starts = np.array([0, 25], dtype=np.int64)
+
     # Eager
-    segments = segment_trials(X, B, b_labels_dict, 'intertrial')
+    segments = segments_from_trial_starts(X, B, starts)
     _, B_1_eager, trial_ids_eager = prep_data_trials(segments, win=win)
 
-    # Lazy
+    # Lazy (use explicit trial_start_indices)
     ds, B_1_lazy, trial_ids_lazy = prep_data_trials_lazy(
-        X, B, b_labels_dict, trial_start_state='intertrial', win=win
+        X, B, b_labels_dict=b_labels_dict, win=win, trial_start_indices=starts
     )
     np.testing.assert_array_equal(B_1_lazy, B_1_eager)
     np.testing.assert_array_equal(trial_ids_lazy, trial_ids_eager)
@@ -203,16 +211,19 @@ def test_trial_train_test_split_lazy_sizes():
     X, B, b_labels_dict = _make_toy_trial_data()
     win = 5
 
+    # Known trial starts for this toy dataset
+    starts = np.array([0, 25], dtype=np.int64)
+
     # Eager
-    segments = segment_trials(X, B, b_labels_dict, 'intertrial')
+    segments = segments_from_trial_starts(X, B, starts)
     X_paired, B_1, trial_ids = prep_data_trials(segments, win=win)
     (X_tr, B_tr), (X_te, B_te) = trial_train_test_split(
         X_paired, B_1, trial_ids, test_ratio=0.5, random_state=0
     )
 
-    # Lazy
+    # Lazy (use explicit trial_start_indices)
     ds, B_1_l, trial_ids_l = prep_data_trials_lazy(
-        X, B, b_labels_dict, trial_start_state='intertrial', win=win
+        X, B, b_labels_dict=b_labels_dict, win=win, trial_start_indices=starts
     )
     (tr_sub, B_tr_l), (te_sub, B_te_l) = trial_train_test_split_lazy(
         ds, B_1_l, trial_ids_l, test_ratio=0.5, random_state=0
