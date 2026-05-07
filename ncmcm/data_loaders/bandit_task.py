@@ -92,7 +92,8 @@ class BanditTaskNeuroPixelsDataset:
     def __init__(self, data_path, downsample_fs=None, downsample_method='count', good_neurons_only=True,
                  state_transitions=None, gaussian_sigma_ms=25.0, normalize_method=None,
                  choosing_state_mode='side', recompute_cache=False,
-                 hgf_model='binary2', hgf_column='x_1_expected_mean', hgf_belief_range=None):
+                 hgf_model='binary2', hgf_column='x_1_expected_mean', hgf_belief_range=None,
+                 b_mode='full'):
         """
         Initialize dataset with flexible spike representation options.
 
@@ -132,6 +133,13 @@ class BanditTaskNeuroPixelsDataset:
                       If None, the range is looked up from `KNOWN_HGF_RANGES`; if not found there,
                       a ValueError is raised asking you to either add an entry to `KNOWN_HGF_RANGES`
                       or pass an explicit range.
+            b_mode: Behavioural representation level (default: 'full').
+                      'full': per-timepoint state labels (intertrial, hold, choosing left, reward, …).
+                      'decision': every timepoint in a trial is labelled with the trial's decision
+                                  ("choosing left" or "choosing right"). Timepoints outside any trial
+                                  window (reward/no-reward periods, pre-recording gaps) are labelled
+                                  "intertrial". Respects `choosing_state_mode` — when 'correctness',
+                                  labels become "choosing correct" / "choosing wrong" instead.
             
         Attributes after loading:
             data_path: Path to the dataset directory
@@ -170,6 +178,10 @@ class BanditTaskNeuroPixelsDataset:
         self.hgf_model = hgf_model
         self.hgf_column = hgf_column
         self.hgf_belief_range = hgf_belief_range
+        b_mode = (b_mode or 'full').lower()
+        if b_mode not in ('full', 'decision'):
+            raise ValueError("b_mode must be 'full' or 'decision'")
+        self.b_mode = b_mode
         # Store original parameters for cache key (before any adjustments)
         self._original_downsample_fs = downsample_fs
         self.x = None  # neuronal time-series data (scipy.sparse.csr_matrix)
@@ -784,6 +796,11 @@ class BanditTaskNeuroPixelsDataset:
                 - state_array_sparse: scipy.sparse.csr_matrix of shape (1, neuronal_length)
                 - state_labels: dict mapping state IDs (int) to state names (str)
         """
+        if self.b_mode == 'decision':
+            return self._create_decision_behavioral_data_matrix(
+                metrics, neuronal_length, translation_indices_neuronal_to_behavioral
+            )
+
         trials = metrics['metrics']['trials']
         states = metrics['metrics']['states']
         blocks = metrics['metrics'].get('blocks', [])
@@ -907,6 +924,86 @@ class BanditTaskNeuroPixelsDataset:
 
         return state_array_sparse, state_labels
         
+    def _create_decision_behavioral_data_matrix(self, metrics, neuronal_length, translation_indices_neuronal_to_behavioral):
+        """
+        Build a behavioural state array where every timepoint in a trial is labelled
+        with that trial's decision ("choosing left" / "choosing right", or
+        "choosing correct" / "choosing wrong" when choosing_state_mode='correctness').
+        Timepoints that fall outside any trial window receive the label "intertrial".
+
+        Args:
+            metrics: behavioral metrics from JSON
+            neuronal_length: number of samples in neuronal data (potentially downsampled)
+            translation_indices_neuronal_to_behavioral: mapping from neuronal time to behavioral time
+
+        Returns:
+            tuple: (state_array_sparse, state_labels) — same contract as
+                   _create_behavioral_data_matrix.
+        """
+        trials = metrics['metrics']['trials']
+        blocks = metrics['metrics'].get('blocks', [])
+
+        max_trial_time = max([t.get('t chosen', 0) for t in trials if 't chosen' in t], default=0)
+        last_timestamp_ms = int(max_trial_time)
+
+        # Vocabulary depends on choosing_state_mode
+        if self.choosing_state_mode == 'correctness':
+            unique_state_names = ["intertrial", "choosing correct", "choosing wrong"]
+        else:
+            unique_state_names = ["intertrial", "choosing left", "choosing right"]
+
+        state_name_to_id = {name: idx for idx, name in enumerate(unique_state_names)}
+        state_labels = {idx: name for name, idx in state_name_to_id.items()}
+
+        # Default: everything is "intertrial" (id=0)
+        state_array_ms = np.zeros(last_timestamp_ms + 1, dtype=np.int8)
+
+        # Build block-side map for correctness mode
+        block_side_ms = None
+        if self.choosing_state_mode == 'correctness' and blocks:
+            block_side_ms = np.full(last_timestamp_ms + 1, None, dtype=object)
+            sorted_blocks = sorted(blocks, key=lambda b: b.get('t', 0))
+            for block_idx, block in enumerate(sorted_blocks):
+                start_time = block.get('t')
+                if start_time is None:
+                    continue
+                end_time = (
+                    sorted_blocks[block_idx + 1].get('t', last_timestamp_ms)
+                    if block_idx < len(sorted_blocks) - 1
+                    else last_timestamp_ms
+                )
+                label = str(block.get('block', '')).lower()
+                better_side = 'l' if 'left' in label else ('r' if 'right' in label else None)
+                block_side_ms[start_time:end_time + 1] = better_side
+
+        # Broadcast each trial's decision across its full window [start, t_chosen]
+        for trial in sorted(trials, key=lambda t: t.get('start', 0)):
+            start_time = trial.get('start')
+            end_time = trial.get('t chosen')
+            choice = trial.get('choice', '').lower()
+            if start_time is None or end_time is None or choice not in ['l', 'r']:
+                continue
+
+            if self.choosing_state_mode == 'correctness':
+                better_side = block_side_ms[start_time] if (block_side_ms is not None and start_time <= last_timestamp_ms) else None
+                if choice in ['l', 'r'] and better_side in ['l', 'r']:
+                    state_name = "choosing correct" if choice == better_side else "choosing wrong"
+                else:
+                    state_name = "choosing left" if choice == 'l' else "choosing right"
+            else:
+                state_name = "choosing left" if choice == 'l' else "choosing right"
+
+            state_array_ms[start_time:end_time + 1] = state_name_to_id[state_name]
+
+        # Map neuronal time to behavioral states using translation indices
+        state_array_neuronal = np.zeros(neuronal_length, dtype=np.int8)
+        for neuronal_idx in range(neuronal_length):
+            behavioral_ms = min(int(translation_indices_neuronal_to_behavioral[neuronal_idx]), last_timestamp_ms)
+            state_array_neuronal[neuronal_idx] = state_array_ms[behavioral_ms]
+
+        state_array_sparse = sparse.csr_matrix(state_array_neuronal, shape=(1, neuronal_length))
+        return state_array_sparse, state_labels
+
     def _create_continuous_behavioral_data(self, metrics, neuronal_length, translation_indices_neuronal_to_behavioral):
         """
         Create continuous behavioral data representing the running average of the last 10 trial decisions.
@@ -1338,6 +1435,7 @@ class BanditTaskNeuroPixelsDataset:
             'gaussian_sigma_ms': self.gaussian_sigma_ms,
             'normalize_method': self.normalize_method,
             'choosing_state_mode': self.choosing_state_mode,
+            'b_mode': self.b_mode,
             'hgf_model': self.hgf_model,
             'hgf_column': self.hgf_column,
             'hgf_belief_range': str(self.hgf_belief_range)

@@ -2679,90 +2679,90 @@ SECTIONS = [
 html_parts = []
 # Compute number of figures from SECTIONS so header stays in sync
 n_figs = sum(len(figs) for _, figs in SECTIONS)
-html_parts.append(f"""<!DOCTYPE html>
+html_parts.append("""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Neuronal Activity Exploration — JPAS_0023_20230922</title>
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background: #0f1117;
-    color: #e2e8f0;
-    min-height: 100vh;
-    padding: 2.5rem 1.5rem;
-  }
-  header {
-    max-width: 860px;
-    margin: 0 auto 2.5rem;
-    border-bottom: 1px solid #2d3748;
-    padding-bottom: 1.5rem;
-  }
-  header h1 { font-size: 1.7rem; font-weight: 700; color: #90cdf4; }
-  header p  { margin-top: 0.4rem; color: #a0aec0; font-size: 0.92rem; }
-  .toc {
-    max-width: 860px;
-    margin: 0 auto 2.5rem;
-    background: #1a202c;
-    border: 1px solid #2d3748;
-    border-radius: 8px;
-    padding: 1.2rem 1.5rem;
-  }
-  .toc h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.1em;
-             color: #718096; margin-bottom: 0.8rem; }
-  .toc ol { padding-left: 1.2rem; column-count: 2; column-gap: 2rem; }
-  .toc li { margin: 0.25rem 0; break-inside: avoid; }
-  .toc a  { color: #76e4f7; text-decoration: none; font-size: 0.88rem; }
-  .toc a:hover { text-decoration: underline; }
-  .section {
-    max-width: 860px;
-    margin: 0 auto 2rem;
-  }
-  .section-title {
-    font-size: 1rem;
-    font-weight: 600;
-    color: #fbd38d;
-    margin-bottom: 0.75rem;
-    padding-bottom: 0.4rem;
-    border-bottom: 1px solid #2d3748;
-  }
-  .cards {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-    gap: 0.75rem;
-  }
-  .card {
-    background: #1a202c;
-    border: 1px solid #2d3748;
-    border-radius: 8px;
-    padding: 1rem 1.2rem;
-    transition: border-color 0.15s, background 0.15s;
-    text-decoration: none;
-    display: block;
-  }
-  .card:hover { border-color: #63b3ed; background: #2d3748; }
-  .card-num   { font-size: 0.72rem; color: #718096; font-weight: 600;
-                letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 0.35rem; }
-  .card-title { font-size: 0.9rem; color: #e2e8f0; font-weight: 500; }
-  footer {
-    max-width: 860px;
-    margin: 3rem auto 0;
-    border-top: 1px solid #2d3748;
-    padding-top: 1rem;
-    font-size: 0.78rem;
-    color: #4a5568;
-    text-align: center;
-  }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background: #0f1117;
+        color: #e2e8f0;
+        min-height: 100vh;
+        padding: 2.5rem 1.5rem;
+    }
+    header {
+        max-width: 860px;
+        margin: 0 auto 2.5rem;
+        border-bottom: 1px solid #2d3748;
+        padding-bottom: 1.5rem;
+    }
+    header h1 { font-size: 1.7rem; font-weight: 700; color: #90cdf4; }
+    header p  { margin-top: 0.4rem; color: #a0aec0; font-size: 0.92rem; }
+    .toc {
+        max-width: 860px;
+        margin: 0 auto 2.5rem;
+        background: #1a202c;
+        border: 1px solid #2d3748;
+        border-radius: 8px;
+        padding: 1.2rem 1.5rem;
+    }
+    .toc h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.1em;
+                         color: #718096; margin-bottom: 0.8rem; }
+    .toc ol { padding-left: 1.2rem; column-count: 2; column-gap: 2rem; }
+    .toc li { margin: 0.25rem 0; break-inside: avoid; }
+    .toc a  { color: #76e4f7; text-decoration: none; font-size: 0.88rem; }
+    .toc a:hover { text-decoration: underline; }
+    .section {
+        max-width: 860px;
+        margin: 0 auto 2rem;
+    }
+    .section-title {
+        font-size: 1rem;
+        font-weight: 600;
+        color: #fbd38d;
+        margin-bottom: 0.75rem;
+        padding-bottom: 0.4rem;
+        border-bottom: 1px solid #2d3748;
+    }
+    .cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+        gap: 0.75rem;
+    }
+    .card {
+        background: #1a202c;
+        border: 1px solid #2d3748;
+        border-radius: 8px;
+        padding: 1rem 1.2rem;
+        transition: border-color 0.15s, background 0.15s;
+        text-decoration: none;
+        display: block;
+    }
+    .card:hover { border-color: #63b3ed; background: #2d3748; }
+    .card-num   { font-size: 0.72rem; color: #718096; font-weight: 600;
+                                letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 0.35rem; }
+    .card-title { font-size: 0.9rem; color: #e2e8f0; font-weight: 500; }
+    footer {
+        max-width: 860px;
+        margin: 3rem auto 0;
+        border-top: 1px solid #2d3748;
+        padding-top: 1rem;
+        font-size: 0.78rem;
+        color: #4a5568;
+        text-align: center;
+    }
 </style>
 </head>
 <body>
 <header>
-  <h1>Neuronal Activity Exploration</h1>
-    <p>Primary session: <strong>JPAS_0023_20230922</strong> &nbsp;·&nbsp; {n_figs} interactive figures</p>
-</header>
+    <h1>Neuronal Activity Exploration</h1>
 """)
+html_parts.append(f'    <p>Primary session: <strong>JPAS_0023_20230922</strong> &nbsp;·&nbsp; {n_figs} interactive figures</p>\n')
+html_parts.append('</header>\n')
 
 # Table of contents
 html_parts.append('<nav class="toc"><h2>Contents</h2><ol>\n')
