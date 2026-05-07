@@ -122,6 +122,11 @@ def parse_args():
                         help='Gaussian kernel sigma in ms (only used when downsample_method=gaussian)')
     parser.add_argument('--recompute_cache', action='store_true',
                         help='Force recompute dataset cache even if one exists')
+    parser.add_argument('--b_mode', type=str, default='full',
+                        choices=['full', 'decision'],
+                        help='Behavioural representation level: full (per-timepoint states) or '
+                             'decision (every timepoint in a trial labelled with its trial decision: '
+                             'choosing left/right or correct/wrong)')
 
     # Trial-based training regime
     parser.add_argument('--trial_based', action='store_true',
@@ -236,7 +241,7 @@ def save_comprehensive_config(args, params, output_dir, execution_time, executio
 
 def load_data(data_path, downsample_fs, downsample_method, good_neurons_only, apply_hold_transitions='none', normalize_method='none',
               hgf_model=None, hgf_column=None, choosing_state_mode='side',
-              gaussian_sigma_ms=25.0, recompute_cache=False):
+              gaussian_sigma_ms=25.0, recompute_cache=False, b_mode='full'):
     """Load and prepare dataset"""
     # Determine state_transitions parameter
     transition_lookup = {
@@ -288,6 +293,7 @@ def load_data(data_path, downsample_fs, downsample_method, good_neurons_only, ap
         choosing_state_mode=choosing_state_mode,
         gaussian_sigma_ms=gaussian_sigma_ms,
         recompute_cache=recompute_cache,
+        b_mode=b_mode,
         **(dict(hgf_model=hgf_model, hgf_column=hgf_column) if hgf_model is not None else {})
     )
     # Use float32 to reduce memory usage by 50%
@@ -1026,6 +1032,7 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
         choosing_state_mode=getattr(args, 'choosing_state_mode', 'side'),
         gaussian_sigma_ms=getattr(args, 'gaussian_sigma_ms', 25.0),
         recompute_cache=getattr(args, 'recompute_cache', False),
+        b_mode=getattr(args, 'b_mode', 'full'),
     )
     print_step_time("Data loading", run_start_time, step_start)
     
