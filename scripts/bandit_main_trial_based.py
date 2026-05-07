@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from ncmcm.data_loaders.bandit_task import BanditTaskNeuroPixelsDataset
 from ncmcm.bundlenet.bundlenet import BunDLeNet, train_model, project_into_latent_space
-from ncmcm.bundlenet.utils import segment_trials, prep_data_trials, trial_train_test_split
+from ncmcm.bundlenet.utils import segments_from_trial_starts, prep_data_trials, trial_train_test_split
 from ncmcm.visualisers.neuronal_behavioural import plotting_neuronal_behavioural
 from ncmcm.visualisers.latent_space import LatentSpaceVisualiser
 from sklearn.preprocessing import LabelEncoder
@@ -40,9 +40,8 @@ plotting_neuronal_behavioural(
 label_encoder = LabelEncoder()
 B_encoded = label_encoder.fit_transform(B)
 
-# 1. Segment session into trials (each trial starts at 'intertrial')
-trial_segments = segment_trials(X, B_encoded, dataset.b_labels_dict,
-                                trial_start_state='intertrial')
+# 1. Segment session into trials using pre-computed trial start indices
+trial_segments = segments_from_trial_starts(X, B_encoded, dataset.trial_start_indices)
 print(f"Number of trials: {len(trial_segments)}")
 print(f"Trial lengths (timesteps): min={min(len(b) for _, b in trial_segments)}, "
       f"max={max(len(b) for _, b in trial_segments)}")

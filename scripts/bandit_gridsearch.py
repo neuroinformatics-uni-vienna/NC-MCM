@@ -16,7 +16,8 @@ from ncmcm.bundlenet.bundlenet import BunDLeNet, train_model, project_into_laten
 from ncmcm.bundlenet.utils import (prep_data, timeseries_train_test_split, prep_data_lazy, timeseries_train_test_split_lazy,
                                      timeseries_train_test_split_cv, timeseries_train_test_split_cv_lazy, make_hybrid_b,
                                      segment_trials, prep_data_trials, trial_train_test_split,
-                                     prep_data_trials_lazy, trial_train_test_split_lazy)
+                                     prep_data_trials_lazy, trial_train_test_split_lazy,
+                                     segments_from_trial_starts)
 from ncmcm.bundlenet.initialisations import pca_initialisation
 from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import KFold
@@ -60,7 +61,7 @@ def parse_args():
                         help='Number of training epochs')
     parser.add_argument('--learning_rate', type=float, nargs='+', default=[0.0001],
                         help='Learning rate (can specify multiple values for grid search)')
-    parser.add_argument('--gamma', type=float, nargs='+', default=[0.8],
+    parser.add_argument('--gamma', type=float, nargs='+', default=[0.75],
                         help='Weight for behaviour loss (can specify multiple values for grid search)')
     parser.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu',
                         choices=['cpu', 'cuda'],
@@ -131,8 +132,6 @@ def parse_args():
     # Trial-based training regime
     parser.add_argument('--trial_based', action='store_true',
                         help='Use trial-based regime: windows per trial, random trial-level train/test split')
-    parser.add_argument('--trial_start_state', type=str, default='intertrial',
-                        help='Behavioral state name that marks the start of a new trial (default: intertrial)')
     parser.add_argument('--trial_test_ratio', type=float, default=0.2,
                         help='Fraction of trials to hold out as the test set (default: 0.2)')
     parser.add_argument('--trial_random_state', type=int, default=None,
@@ -303,6 +302,7 @@ def load_data(data_path, downsample_fs, downsample_method, good_neurons_only, ap
     b_colors = dataset.get_color_map_for_plotting()
     b_colors_rgb = dataset.get_rgb_colors_for_visualizer()
     hgf_beliefs = getattr(dataset, 'hgf_beliefs', None)  # None if HGF was not loaded
+    trial_start_indices = dataset.trial_start_indices
     
     # Free memory from dataset object (contains large sparse matrices)
     del dataset
@@ -311,14 +311,14 @@ def load_data(data_path, downsample_fs, downsample_method, good_neurons_only, ap
     print(f"Data shapes - x: {x.shape}, b: {b.shape}")
     print(f"behaviour labels: {b_labels}")
     
-    return x, b, b_labels, b_colors, b_colors_rgb, hgf_beliefs
+    return x, b, b_labels, b_colors, b_colors_rgb, hgf_beliefs, trial_start_indices
 
 
 def preprocess_data(x, b, window, lazy_loading=False, cv_folds=None, kfold_n_splits=7, kfold_test_fold=4,
-                    trial_based=False, b_labels_dict=None, trial_start_state='intertrial',
-                    trial_test_ratio=0.2, trial_random_state=None):
+                    trial_based=False, b_labels_dict=None,
+                    trial_test_ratio=0.2, trial_random_state=None, trial_start_indices=None):
     """Preprocess data for BunDLeNet
-    
+
     Args:
         x: Neural data
         b: behaviour labels
@@ -328,11 +328,12 @@ def preprocess_data(x, b, window, lazy_loading=False, cv_folds=None, kfold_n_spl
         kfold_n_splits: Number of KFold splits for single train/test split (default: 7)
         kfold_test_fold: Which fold index to use as test set in single split (default: 4)
         trial_based: Use trial-based regime (no cross-trial pairs, random trial-level split)
-        b_labels_dict: {int: str} mapping for segment_trials (required when trial_based=True)
-        trial_start_state: state name marking trial start (trial_based mode only)
+        b_labels_dict: {int: str} mapping for segment_trials (optional — not required when using trial_start_indices)
         trial_test_ratio: fraction of trials held out as test set (trial_based mode only)
         trial_random_state: random seed for trial-level split (trial_based mode only)
-    
+        trial_start_indices: array-like of trial start indices (preferred). When `trial_based=True`
+            this must be provided; label-name segmentation has been removed to avoid ambiguity.
+
     Returns:
         If cv_folds is None (or trial_based):
             x_, b_, x_train, x_test, b_train, b_test
@@ -345,13 +346,18 @@ def preprocess_data(x, b, window, lazy_loading=False, cv_folds=None, kfold_n_spl
     if trial_based:
         if cv_folds is not None:
             raise ValueError("--trial_based is not compatible with --cv_folds.")
-        if b_labels_dict is None:
-            raise ValueError("b_labels_dict must be provided when trial_based=True.")
+        # Require explicit trial starts — label-based segmentation removed
+        if trial_start_indices is None:
+            raise ValueError(
+                "trial_based=True requires 'trial_start_indices' (BanditTaskNeuroPixelsDataset.trial_start_indices)."
+                " Label-based segmentation via `trial_start_state` has been removed." 
+            )
 
         if lazy_loading:
             print("Using lazy trial-based loading (memory-efficient)...")
             x_, B_1, trial_ids = prep_data_trials_lazy(
-                x, b, b_labels_dict, trial_start_state, win=window
+                x, b, b_labels_dict=b_labels_dict, win=window,
+                trial_start_indices=trial_start_indices,
             )
             print(f"Lazy trial dataset: {x_.shape[0]} pairs, {len(np.unique(trial_ids))} trials")
             (x_train, b_train), (x_test, b_test) = trial_train_test_split_lazy(
@@ -380,8 +386,8 @@ def preprocess_data(x, b, window, lazy_loading=False, cv_folds=None, kfold_n_spl
         # boundary detection but keep full b (possibly 2-D) in segments
         b_int = b[:, 0].astype(int) if b.ndim > 1 else b.astype(int)
 
-        segments = segment_trials(x, b, b_labels_dict, trial_start_state,
-                                  b_detect=b_int if b.ndim > 1 else None)
+        # Eager trial segmentation: only trial_start_indices-based segmentation is supported
+        segments = segments_from_trial_starts(x, b, trial_start_indices)
         print(f"Segmented into {len(segments)} trials "
               f"(lengths: min={min(len(bt) for _, bt in segments)}, "
               f"max={max(len(bt) for _, bt in segments)})")
@@ -1024,7 +1030,7 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
     # Load data
     step_start = time.time()
     b_type = getattr(args, 'b_type', 'discrete')
-    x, b, b_labels, b_colors, b_colors_rgb, hgf_beliefs = load_data(
+    x, b, b_labels, b_colors, b_colors_rgb, hgf_beliefs, trial_start_indices = load_data(
         args.data_path, args.downsample_fs, args.downsample_method, args.good_neurons_only,
         args.apply_hold_transitions, args.normalize_method,
         hgf_model=args.hgf_model if b_type == 'hybrid' else None,
@@ -1081,9 +1087,9 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
         kfold_test_fold=args.kfold_test_fold,
         trial_based=getattr(args, 'trial_based', False),
         b_labels_dict=encoded_b_labels_dict,
-        trial_start_state=getattr(args, 'trial_start_state', 'intertrial'),
         trial_test_ratio=getattr(args, 'trial_test_ratio', 0.2),
         trial_random_state=getattr(args, 'trial_random_state', None),
+        trial_start_indices=trial_start_indices,
     )
 
     if args.cv_folds is not None:
