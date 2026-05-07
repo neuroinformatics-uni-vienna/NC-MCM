@@ -5,6 +5,7 @@ from ncmcm.bundlenet.utils import (
     segment_trial_boundaries, LazyTrialWindowDataset, prep_data_trials_lazy,
     trial_train_test_split_lazy, segment_trials, prep_data_trials,
     trial_train_test_split,
+    boundaries_from_trial_starts, segments_from_trial_starts,
 )
 
 
@@ -221,3 +222,66 @@ def test_trial_train_test_split_lazy_sizes():
     assert len(te_sub) == len(X_te)
     assert len(B_tr_l) == len(B_tr)
     assert len(B_te_l) == len(B_te)
+
+
+# ---------------------------------------------------------------------------
+# Trial-start-index helpers
+# ---------------------------------------------------------------------------
+
+def _make_toy_data_with_starts(n_neurons=4, rng_seed=1):
+    """Three trials with NO intertrial label; starts at t=0, 15, 30.
+
+    Layout (45 timesteps):
+      t=0..14   trial 0   label=2
+      t=15..29  trial 1   label=3
+      t=30..44  trial 2   label=2
+    """
+    rng = np.random.default_rng(rng_seed)
+    T = 45
+    X = rng.random((T, n_neurons)).astype(np.float32)
+    B = np.full(T, 2, dtype=np.int64)
+    B[15:30] = 3
+    B[30:45] = 2
+    trial_start_indices = np.array([0, 15, 30], dtype=np.int64)
+    return X, B, trial_start_indices
+
+
+def test_boundaries_from_trial_starts():
+    _, _, starts = _make_toy_data_with_starts()
+    bounds = boundaries_from_trial_starts(starts, total_length=45)
+    assert len(bounds) == 3
+    assert bounds[0] == (0, 15)
+    assert bounds[1] == (15, 30)
+    assert bounds[2] == (30, 45)
+
+
+def test_segments_from_trial_starts_shapes():
+    X, B, starts = _make_toy_data_with_starts()
+    segs = segments_from_trial_starts(X, B, starts)
+    assert len(segs) == 3
+    for i, (Xs, Bs) in enumerate(segs):
+        assert Xs.shape == (15, X.shape[1])
+        assert Bs.shape == (15,)
+
+
+def test_prep_data_trials_lazy_with_start_indices():
+    """prep_data_trials_lazy(trial_start_indices=...) should skip label-based detection."""
+    X, B, starts = _make_toy_data_with_starts()
+    win = 5
+
+    # Using trial_start_indices path — no b_labels_dict supplied
+    ds, B_1, trial_ids = prep_data_trials_lazy(
+        X, B, trial_start_indices=starts, win=win
+    )
+    # There are 3 trials of length 15 with win=5.
+    # Trial 0 (no context):          15 - 5 = 10 pairs
+    # Trial 1 (ctx=min(5,15)=5): 5 + 15 - 5 = 15 pairs
+    # Trial 2 (ctx=5):           5 + 15 - 5 = 15 pairs
+    # Total = 40
+    expected_pairs = (15 - win) + 2 * (win + 15 - win)
+    assert len(ds) == expected_pairs
+    assert B_1.shape == (len(ds),)
+    assert trial_ids.shape == (len(ds),)
+    # Consistent trial IDs: three distinct groups
+    assert len(np.unique(trial_ids)) == 3
+

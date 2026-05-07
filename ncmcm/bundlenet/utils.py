@@ -762,7 +762,8 @@ class LazyTrialWindowDataset(Dataset):
         return np.array([self[i] for i in range(len(self))])
 
 
-def prep_data_trials_lazy(X, B, b_labels_dict, trial_start_state='intertrial', win=15):
+def prep_data_trials_lazy(X, B, b_labels_dict=None, trial_start_state='intertrial', win=15,
+                          trial_start_indices=None):
     """Memory-efficient variant of :func:`prep_data_trials`.
 
     Returns a :class:`LazyTrialWindowDataset` instead of a materialised
@@ -776,12 +777,21 @@ def prep_data_trials_lazy(X, B, b_labels_dict, trial_start_state='intertrial', w
         Full-session neuronal traces (float32 recommended).
     B : np.ndarray, shape (T,) or (T, k)
         Full-session behavioural array.
-    b_labels_dict : dict {int: str}
+    b_labels_dict : dict {int: str} or None
         Label mapping from :attr:`BanditTaskNeuroPixelsDataset.b_labels_dict`.
+        Required when ``trial_start_indices`` is ``None``; ignored otherwise.
     trial_start_state : str, optional
-        State that marks the start of a new trial. Default ``'intertrial'``.
+        State that marks the start of a new trial. Used only when
+        ``trial_start_indices`` is ``None``. Default ``'intertrial'``.
     win : int, optional
         Window length. Default 15.
+    trial_start_indices : array-like of int or None, optional
+        Explicit trial start indices from the dataloader
+        (``BanditTaskNeuroPixelsDataset.trial_start_indices``).  When provided,
+        label-name boundary detection is skipped entirely — ``b_labels_dict``
+        and ``trial_start_state`` are ignored.  This is the preferred path for
+        ``b_mode='decision'`` and any other mode where ``'intertrial'`` may not
+        be present as a label.
 
     Returns
     -------
@@ -793,8 +803,15 @@ def prep_data_trials_lazy(X, B, b_labels_dict, trial_start_state='intertrial', w
     trial_ids : np.ndarray
         Alias for ``dataset.trial_ids`` — trial index per pair.
     """
-    B_1d = B[:, 0].astype(int) if B.ndim > 1 else B.astype(int)
-    boundaries = segment_trial_boundaries(B_1d, b_labels_dict, trial_start_state)
+    if trial_start_indices is not None:
+        boundaries = boundaries_from_trial_starts(trial_start_indices, len(X))
+    else:
+        if b_labels_dict is None:
+            raise ValueError(
+                "Either trial_start_indices or b_labels_dict must be provided."
+            )
+        B_1d = B[:, 0].astype(int) if B.ndim > 1 else B.astype(int)
+        boundaries = segment_trial_boundaries(B_1d, b_labels_dict, trial_start_state)
     dataset = LazyTrialWindowDataset(X, B, boundaries, win)
     return dataset, dataset.B_1, dataset.trial_ids
 
@@ -841,4 +858,64 @@ def trial_train_test_split_lazy(dataset, B_1, trial_ids, test_ratio=0.2, random_
     test_subset = Subset(dataset, all_indices[test_mask].tolist())
 
     return (train_subset, B_1[train_mask]), (test_subset, B_1[test_mask])
+
+
+# ---------------------------------------------------------------------------
+# Trial-start-index-based utilities (preferred over label-name segmentation)
+# ---------------------------------------------------------------------------
+
+
+def boundaries_from_trial_starts(trial_start_indices, total_length):
+    """Convert an array of trial start indices to ``(start, end)`` boundary pairs.
+
+    This is the preferred replacement for :func:`segment_trial_boundaries` when
+    trial boundaries come from the dataloader
+    (``BanditTaskNeuroPixelsDataset.trial_start_indices``) rather than from a
+    behavioral label name.  It works for any ``b_mode`` including ``'decision'``
+    where ``'intertrial'`` may not appear as a label.
+
+    Parameters
+    ----------
+    trial_start_indices : array-like of int
+        First timepoint index of each trial, e.g.
+        ``BanditTaskNeuroPixelsDataset.trial_start_indices``.
+    total_length : int
+        Total number of timesteps in the session (``len(X)``).
+
+    Returns
+    -------
+    list of (int, int)
+        Each tuple is ``(start, end)`` with exclusive *end*, covering exactly
+        one trial's timesteps.  Trials are returned in chronological order.
+    """
+    starts = np.asarray(trial_start_indices, dtype=np.int64)
+    ends = np.concatenate([starts[1:], [total_length]])
+    return list(zip(starts.tolist(), ends.tolist()))
+
+
+def segments_from_trial_starts(X, B, trial_start_indices):
+    """Segment a full-session time series into trials using explicit start indices.
+
+    This is the preferred replacement for :func:`segment_trials` when trial
+    boundaries come from the dataloader
+    (``BanditTaskNeuroPixelsDataset.trial_start_indices``) rather than from a
+    behavioral label name.  It works for any ``b_mode``.
+
+    Parameters
+    ----------
+    X : np.ndarray, shape (T, N)
+        Neuronal traces for the full session.
+    B : np.ndarray, shape (T,) or (T, k)
+        Behavioral array for the full session.
+    trial_start_indices : array-like of int
+        First timepoint index of each trial, as provided by the dataloader.
+
+    Returns
+    -------
+    segments : list of (np.ndarray, np.ndarray)
+        Each element is ``(X_trial, B_trial)`` — same contract as
+        :func:`segment_trials`.
+    """
+    boundaries = boundaries_from_trial_starts(trial_start_indices, len(X))
+    return [(X[s:e], B[s:e]) for s, e in boundaries]
 
