@@ -208,6 +208,19 @@ _FIGURE_CAPTIONS = {
         "vector (z-scored, 5-fold stratified CV). The curve reveals when (relative to neighboring choices) "
         "the choice signal first becomes decodable above the 50% chance baseline."
     ),
+    "32_sliding_window_decoder.html": (
+        "Sliding-window decoder on 30-step pre-choice neural snippets. Trials are split 80/20 at the trial "
+        "level before any windows are built, then each train/test trial contributes a sequence of windows "
+        "slid by 1 timestep from the previous choice up to the current choice. A linear classifier is trained "
+        "on flattened windows from the training trials and evaluated on held-out trials, showing how close to "
+        "the decision point a short recent history becomes predictive of left vs right choice."
+    ),
+    "33_session_timeseries_predictions.html": (
+        "Session-wide prediction trace: continuous model prediction (probability of 'right') scaled to [-1,+1] "
+        "and overlaid with true trial choices (±1) and per-trial predicted choices. Predictions come from the "
+        "sliding-window classifier trained on the 80% training trials and applied across all trials. "
+        "Hover for trial time, predicted probability, and train/test membership."
+    ),
 }
 
 _BANNER_STYLE = (
@@ -2604,6 +2617,518 @@ print("Saved 30_absolute_time_decoder.html")
 
 # %%
 
+# ── Sliding-window decoder: 30-bin pre-choice windows with trial-wise 80/20 split ──
+from sklearn.linear_model import SGDClassifier
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import balanced_accuracy_score
+
+WINDOW_LEN = 30
+WINDOW_STRIDE = 1
+rng = np.random.default_rng(42)
+
+# Reuse the valid choice trials from the previous decoder block, sorted chronologically.
+decoder_trials = sorted(choice_pairs, key=lambda x: x[0])
+
+if len(decoder_trials) < 2:
+    print("Sliding-window decoder skipped: not enough valid choice trials")
+else:
+    decoder_bins = np.array(
+        [int(round((t_choice_ms - t0_ms) / 1000 * fs30)) for t_choice_ms, _ in decoder_trials],
+        dtype=np.int32,
+    )
+    decoder_labels = np.array([choice_int for _, choice_int in decoder_trials], dtype=np.int32)
+
+    eligible_idx = np.arange(1, len(decoder_trials), dtype=np.int32)
+    eligible_labels = decoder_labels[eligible_idx]
+
+    left_idx = eligible_idx[eligible_labels == 0].copy()
+    right_idx = eligible_idx[eligible_labels == 1].copy()
+    rng.shuffle(left_idx)
+    rng.shuffle(right_idx)
+
+    def _split_count(n):
+        if n <= 1:
+            return n
+        return min(n - 1, max(1, int(round(0.8 * n))))
+
+    n_train_left = _split_count(len(left_idx))
+    n_train_right = _split_count(len(right_idx))
+    train_trial_idx = np.sort(np.concatenate([left_idx[:n_train_left], right_idx[:n_train_right]]))
+    test_trial_idx = np.sort(np.concatenate([left_idx[n_train_left:], right_idx[n_train_right:]]))
+
+    def build_window_set(trial_idx_arr):
+        x_parts = []
+        y_parts = []
+        rel_parts = []
+        for trial_idx in trial_idx_arr:
+            prev_bin = decoder_bins[trial_idx - 1]
+            curr_bin = decoder_bins[trial_idx]
+            if prev_bin < 0 or curr_bin > x30.shape[1] or curr_bin <= prev_bin:
+                continue
+            interval_len = curr_bin - prev_bin
+            if interval_len < WINDOW_LEN:
+                continue
+            segment = x30[:, prev_bin:curr_bin]
+            windows = np.lib.stride_tricks.sliding_window_view(segment, WINDOW_LEN, axis=1)
+            windows = np.moveaxis(windows, 1, 0)  # (n_windows, neurons, WINDOW_LEN)
+            n_windows = windows.shape[0]
+            x_parts.append(windows.reshape(n_windows, -1).astype(np.float32, copy=False))
+            y_parts.append(np.full(n_windows, decoder_labels[trial_idx], dtype=np.int32))
+            rel_bins = np.arange(n_windows, dtype=np.int32) + WINDOW_LEN - interval_len
+            rel_parts.append(rel_bins)
+        if not x_parts:
+            return None, None, None
+        return (
+            np.concatenate(x_parts, axis=0),
+            np.concatenate(y_parts, axis=0),
+            np.concatenate(rel_parts, axis=0),
+        )
+
+    X_train, y_train, rel_train = build_window_set(train_trial_idx)
+    X_test, y_test, rel_test = build_window_set(test_trial_idx)
+
+    if X_train is None or X_test is None or len(np.unique(y_train)) < 2 or len(np.unique(y_test)) < 2:
+        print("Sliding-window decoder skipped: insufficient windowed samples")
+    else:
+        scaler = StandardScaler()
+        X_train_z = scaler.fit_transform(X_train)
+        X_test_z = scaler.transform(X_test)
+
+        clf = SGDClassifier(
+            loss="log_loss",
+            alpha=1e-4,
+            max_iter=2000,
+            tol=1e-3,
+            random_state=42,
+            class_weight="balanced",
+        )
+        clf.fit(X_train_z, y_train)
+
+        y_pred_train = clf.predict(X_train_z)
+        y_pred_test = clf.predict(X_test_z)
+        train_bacc = balanced_accuracy_score(y_train, y_pred_train)
+        test_bacc = balanced_accuracy_score(y_test, y_pred_test)
+
+        rel_bins_all = np.sort(np.unique(np.concatenate([rel_train, rel_test])))
+        rel_s = rel_bins_all / fs30
+        train_curve = np.full(rel_bins_all.shape, np.nan, dtype=np.float32)
+        test_curve = np.full(rel_bins_all.shape, np.nan, dtype=np.float32)
+        train_counts = np.zeros(rel_bins_all.shape, dtype=np.int32)
+        test_counts = np.zeros(rel_bins_all.shape, dtype=np.int32)
+
+        for i, rel_bin in enumerate(rel_bins_all):
+            train_mask = rel_train == rel_bin
+            test_mask = rel_test == rel_bin
+            train_counts[i] = int(train_mask.sum())
+            test_counts[i] = int(test_mask.sum())
+            if train_counts[i] >= 2 and len(np.unique(y_train[train_mask])) >= 2:
+                train_curve[i] = balanced_accuracy_score(y_train[train_mask], y_pred_train[train_mask])
+            elif train_counts[i] > 0:
+                train_curve[i] = float(np.mean(y_train[train_mask] == y_pred_train[train_mask]))
+            if test_counts[i] >= 2 and len(np.unique(y_test[test_mask])) >= 2:
+                test_curve[i] = balanced_accuracy_score(y_test[test_mask], y_pred_test[test_mask])
+            elif test_counts[i] > 0:
+                test_curve[i] = float(np.mean(y_test[test_mask] == y_pred_test[test_mask]))
+
+        print(
+            f"Sliding-window decoder: train trials={len(train_trial_idx)} | test trials={len(test_trial_idx)}"
+        )
+        print(
+            f"Sliding-window windows: train={len(y_train):,} | test={len(y_test):,} | "
+            f"train bacc={train_bacc:.3f} | test bacc={test_bacc:.3f}"
+        )
+
+        fig = make_subplots(
+            rows=2, cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.07,
+            row_heights=[3, 1],
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=rel_s,
+                y=test_curve,
+                mode="lines+markers",
+                line=dict(color="darkorange", width=2.5),
+                marker=dict(size=4),
+                name="Held-out test",
+                hovertemplate="t_end=%{x:.2f}s before choice<br>bacc=%{y:.3f}<extra></extra>",
+            ),
+            row=1, col=1,
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=rel_s,
+                y=train_curve,
+                mode="lines",
+                line=dict(color="slategray", width=1.6, dash="dash"),
+                name="Training",
+                opacity=0.8,
+                hovertemplate="t_end=%{x:.2f}s before choice<br>bacc=%{y:.3f}<extra></extra>",
+            ),
+            row=1, col=1,
+        )
+        fig.add_hline(
+            y=0.5,
+            line_dash="dash",
+            line_color="grey",
+            line_width=1.2,
+            annotation_text="Chance (0.50)",
+            annotation_position="right",
+            row=1, col=1,
+        )
+        fig.add_vline(x=0.0, line_dash="dash", line_color="crimson", line_width=1.5, row=1, col=1)
+        fig.add_trace(
+            go.Bar(
+                x=rel_s,
+                y=test_counts,
+                marker_color="rgba(70,130,180,0.65)",
+                name="Held-out windows",
+                hovertemplate="t_end=%{x:.2f}s before choice<br>n=%{y}<extra></extra>",
+            ),
+            row=2, col=1,
+        )
+        fig.update_yaxes(title_text="Balanced accuracy", range=[0.3, 1.0], row=1, col=1)
+        fig.update_yaxes(title_text="Test windows", row=2, col=1)
+        fig.update_xaxes(title_text="Window end relative to choice (s; 0 = last pre-choice bin)", row=2, col=1)
+        window_len_s = WINDOW_LEN / fs30
+        fig.update_layout(
+            title=(
+                f"Sliding-Window Upcoming-Choice Decoder — {WINDOW_LEN}-bin windows (~{window_len_s:.2f}s), "
+                f"trial-wise 80/20 split<br>"
+                f"{len(train_trial_idx)} train trials, {len(test_trial_idx)} test trials; "
+                f"train bacc={train_bacc:.3f}, test bacc={test_bacc:.3f}"
+            ),
+            template="plotly_white",
+            hovermode="x unified",
+            height=560,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0.0),
+        )
+
+        orig_caption = _FIGURE_CAPTIONS.get("32_sliding_window_decoder.html", "")
+        extra = (
+            f" Trial-wise 80/20 stratified split ({len(train_trial_idx)} train trials, {len(test_trial_idx)} test trials)."
+            f" Each sample is a {WINDOW_LEN}-bin window (~{window_len_s:.2f}s) slid by 1 bin from the previous"
+            f" choice to the current choice."
+            f" The classifier is trained on {len(y_train):,} train windows and evaluated on {len(y_test):,} held-out windows."
+            " Activity is z-scored using the training windows only; the top panel shows train and test balanced"
+            " accuracy as a function of window end time, and the bottom panel shows how many held-out windows"
+            " contribute at each offset."
+        )
+        _FIGURE_CAPTIONS["32_sliding_window_decoder.html"] = (orig_caption + " " + extra).strip()
+        write_html_with_caption(fig, OUT_DIR / "32_sliding_window_decoder.html")
+        print("Saved 32_sliding_window_decoder.html")
+
+# %%
+# ## 33 · Session Timeseries Predictions (model output vs true choices)
+#
+# Build a session-length predicted trace by applying the trained sliding-window classifier
+# to every valid sliding window across all trials (train and held-out). Each window's
+# predicted probability for 'right' is mapped from [0,1] → [-1,+1] and placed at the
+# window center bin. Per-trial mean predictions are also computed and rendered as
+# markers aligned to the trial center. If the sliding-window classifier (`clf`/`scaler`)
+# isn't available, this block is skipped.
+try:
+    clf  # noqa: F401
+    scaler  # noqa: F401
+    _clf_available = True
+except NameError:
+    _clf_available = False
+
+if not _clf_available:
+    print("Session timeseries predictions skipped: sliding-window classifier unavailable")
+else:
+    # Walk every trial (same indexing as sliding-window builder: trials 1..N-1 are eligible)
+    all_trial_idx = np.arange(1, len(decoder_trials), dtype=np.int32)
+    center_bins_list = []
+    preds_list = []
+    per_trial_mean = {}
+
+    for trial_idx in all_trial_idx:
+        prev_bin = decoder_bins[trial_idx - 1]
+        curr_bin = decoder_bins[trial_idx]
+        if prev_bin < 0 or curr_bin > x30.shape[1] or curr_bin <= prev_bin:
+            continue
+        interval_len = curr_bin - prev_bin
+        if interval_len < WINDOW_LEN:
+            continue
+        segment = x30[:, prev_bin:curr_bin]
+        windows = np.lib.stride_tricks.sliding_window_view(segment, WINDOW_LEN, axis=1)
+        windows = np.moveaxis(windows, 1, 0)  # (n_windows, neurons, WINDOW_LEN)
+        n_windows = windows.shape[0]
+        windows_flat = windows.reshape(n_windows, -1)
+
+        # Scale + predict probability for 'right'
+        X_scaled = scaler.transform(windows_flat)
+        if hasattr(clf, "predict_proba"):
+            # find index of class '1' in case order is reversed
+            try:
+                class_idx = int(np.where(clf.classes_ == 1)[0][0])
+            except Exception:
+                class_idx = 1
+            p_right = clf.predict_proba(X_scaled)[:, class_idx]
+        else:
+            scores = clf.decision_function(X_scaled)
+            p_right = 1.0 / (1.0 + np.exp(-scores))
+
+        pred_scaled = p_right * 2.0 - 1.0
+
+        starts = np.arange(0, interval_len - WINDOW_LEN + 1, dtype=np.int32)
+        centers = prev_bin + starts + (WINDOW_LEN // 2)
+
+        center_bins_list.extend(centers.tolist())
+        preds_list.extend(pred_scaled.tolist())
+        per_trial_mean[trial_idx] = float(p_right.mean())
+
+    if len(center_bins_list) == 0:
+        print("Session timeseries predictions: no valid windows found")
+    else:
+        center_bins_arr = np.array(center_bins_list, dtype=np.int32)
+        preds_arr = np.array(preds_list, dtype=np.float32)
+
+        # Average predictions mapping to the same center bin
+        uniq_bins, inv = np.unique(center_bins_arr, return_inverse=True)
+        bin_means = np.zeros_like(uniq_bins, dtype=np.float32)
+        for i in range(len(uniq_bins)):
+            bin_means[i] = preds_arr[inv == i].mean()
+
+        pred_trace = np.full(T, np.nan, dtype=np.float32)
+        pred_trace[uniq_bins] = bin_means
+
+        # Interpolate missing bins for a continuous visual trace
+        known = ~np.isnan(pred_trace)
+        if known.sum() >= 2:
+            x_idx = np.arange(T)
+            pred_interp = np.interp(x_idx, np.where(known)[0], pred_trace[known])
+        else:
+            pred_interp = pred_trace.copy()
+
+        # Light smoothing for display
+        smooth_sigma = 3
+        pred_smooth = gaussian_filter1d(pred_interp, sigma=smooth_sigma)
+        pred_smooth = np.clip(pred_smooth, -1.0, 1.0)
+
+        # Per-trial predictions (mean over windows) for marker overlay
+        trial_idx_keys = np.array(sorted(per_trial_mean.keys()), dtype=np.int32)
+        # clip to valid bin range before indexing time_s (some center bins may equal T due to slicing rules)
+        trial_center_bins = np.array([np.clip(decoder_bins[int(ti)], 0, T - 1) for ti in trial_idx_keys], dtype=np.int32)
+        trial_times = time_s[trial_center_bins]
+        trial_pred_p = np.array([per_trial_mean[int(ti)] for ti in trial_idx_keys], dtype=np.float32)
+        trial_pred_sign = trial_pred_p * 2.0 - 1.0
+        trial_true_sign = (decoder_labels[trial_idx_keys] * 2) - 1
+
+        # Identify train/test membership if split arrays exist
+        if 'train_trial_idx' in locals():
+            train_flags = np.isin(trial_idx_keys, train_trial_idx)
+        else:
+            train_flags = np.zeros_like(trial_idx_keys, dtype=bool)
+
+        # Plot: window means + per-trial true/pred markers with two colouring modes
+        # Mode A (default): colour by correctness (green=correct, red=wrong)
+        # Mode B: colour by split (train greyish, test dark)
+        fig = go.Figure()
+
+        # Window-level average predictions (magenta, always visible)
+        fig.add_trace(go.Scatter(
+            x=time_s[uniq_bins],
+            y=bin_means,
+            mode='markers',
+            marker=dict(size=3, color='magenta', opacity=0.25),
+            name='Window preds (avg per-bin)',
+            hovertemplate='t=%{x:.2f}s<br>p_scaled=%{y:.3f}<extra></extra>',
+        ))
+
+        # All-trials true choice scaffolding
+        n_trials = len(decoder_bins)
+        trial_all_center_bins_safe = np.clip(decoder_bins, 0, T - 1)
+        trial_all_times = time_s[trial_all_center_bins_safe]
+        trial_all_signs = (decoder_labels * 2) - 1
+        all_trial_ids = np.arange(n_trials, dtype=np.int32)
+
+        # Which trials have a per-trial prediction
+        has_pred = np.zeros(n_trials, dtype=bool)
+        has_pred[trial_idx_keys] = True
+
+        # Predicted classes and correctness for trials with predictions
+        pred_class = (trial_pred_p >= 0.5).astype(np.int32)
+        pred_correct_flags = pred_class == decoder_labels[trial_idx_keys]
+
+        correct_keys = trial_idx_keys[pred_correct_flags]
+        incorrect_keys = trial_idx_keys[~pred_correct_flags]
+        no_pred_keys = np.setdiff1d(all_trial_ids, trial_idx_keys)
+
+        def _times_and_signs(keys):
+            if len(keys) == 0:
+                return [], []
+            bins = np.clip(decoder_bins[keys], 0, T - 1)
+            return time_s[bins], ((decoder_labels[keys] * 2) - 1)
+
+        x_true_corr, y_true_corr = _times_and_signs(correct_keys)
+        x_true_inc, y_true_inc = _times_and_signs(incorrect_keys)
+        x_true_nopred, y_true_nopred = _times_and_signs(no_pred_keys)
+
+        # Predicted per-trial points (aligned with trial_idx_keys order)
+        pred_p = trial_pred_p
+        pred_sign = trial_pred_sign
+        x_pred_corr = trial_times[pred_correct_flags]
+        y_pred_corr = pred_sign[pred_correct_flags]
+        p_pred_corr = pred_p[pred_correct_flags]
+
+        x_pred_inc = trial_times[~pred_correct_flags]
+        y_pred_inc = pred_sign[~pred_correct_flags]
+        p_pred_inc = pred_p[~pred_correct_flags]
+
+        # Train/test masks (for the alternate colouring mode)
+        if 'train_trial_idx' in locals():
+            train_flags_all = np.isin(np.arange(n_trials, dtype=np.int32), train_trial_idx)
+        else:
+            train_flags_all = np.zeros(n_trials, dtype=bool)
+
+        x_true_train, y_true_train = _times_and_signs(np.where(train_flags_all)[0])
+        x_true_test, y_true_test = _times_and_signs(np.where(~train_flags_all)[0])
+
+        # Predicted train/test (subset of trial_idx_keys)
+        pred_train_mask = train_flags if 'train_flags' in locals() else np.zeros_like(trial_idx_keys, dtype=bool)
+        x_pred_train = trial_times[pred_train_mask]
+        y_pred_train = pred_sign[pred_train_mask]
+        p_pred_train = trial_pred_p[pred_train_mask]
+
+        x_pred_test = trial_times[~pred_train_mask]
+        y_pred_test = pred_sign[~pred_train_mask]
+        p_pred_test = trial_pred_p[~pred_train_mask]
+
+        # True choice traces (correct / incorrect / no-pred) — used in default correctness mode
+        fig.add_trace(go.Scatter(
+            x=list(x_true_corr),
+            y=list(y_true_corr),
+            mode='markers',
+            marker=dict(size=6, color='green'),
+            name='True (correct)',
+            hovertemplate='trial=%{text}<br>t=%{x:.2f}s<extra></extra>',
+            text=[str(int(ti)) for ti in correct_keys],
+        ))
+
+        fig.add_trace(go.Scatter(
+            x=list(x_true_inc),
+            y=list(y_true_inc),
+            mode='markers',
+            marker=dict(size=6, color='red'),
+            name='True (incorrect)',
+            hovertemplate='trial=%{text}<br>t=%{x:.2f}s<extra></extra>',
+            text=[str(int(ti)) for ti in incorrect_keys],
+        ))
+
+        fig.add_trace(go.Scatter(
+            x=list(x_true_nopred),
+            y=list(y_true_nopred),
+            mode='markers',
+            marker=dict(size=6, color='lightgrey', opacity=0.7),
+            name='True (no pred)',
+            hovertemplate='trial=%{text}<br>t=%{x:.2f}s<extra></extra>',
+            text=[str(int(ti)) for ti in no_pred_keys],
+        ))
+
+        # Predicted per-trial: correct / incorrect (green/red, X marker)
+        fig.add_trace(go.Scatter(
+            x=list(x_pred_corr),
+            y=list(y_pred_corr),
+            mode='markers',
+            marker=dict(size=8, color='green', symbol='x'),
+            name='Predicted (correct)',
+            hovertemplate='trial=%{text}<br>t=%{x:.2f}s<br>p_right=%{customdata[0]:.3f}<extra></extra>',
+            text=[str(int(ti)) for ti in correct_keys],
+            customdata=np.column_stack([p_pred_corr]) if len(p_pred_corr) else [],
+        ))
+
+        fig.add_trace(go.Scatter(
+            x=list(x_pred_inc),
+            y=list(y_pred_inc),
+            mode='markers',
+            marker=dict(size=8, color='red', symbol='x'),
+            name='Predicted (incorrect)',
+            hovertemplate='trial=%{text}<br>t=%{x:.2f}s<br>p_right=%{customdata[0]:.3f}<extra></extra>',
+            text=[str(int(ti)) for ti in incorrect_keys],
+            customdata=np.column_stack([p_pred_inc]) if len(p_pred_inc) else [],
+        ))
+
+        # Alternate mode traces: train/test colouring for true and predicted (kept for toggle)
+        fig.add_trace(go.Scatter(
+            x=list(x_true_train),
+            y=list(y_true_train),
+            mode='markers',
+            marker=dict(size=6, color='#9aa0a6', opacity=0.7),
+            name='True (train)',
+            hovertemplate='trial=%{text}<br>t=%{x:.2f}s<extra></extra>',
+            text=[str(int(ti)) for ti in np.where(train_flags_all)[0]],
+        ))
+
+        fig.add_trace(go.Scatter(
+            x=list(x_true_test),
+            y=list(y_true_test),
+            mode='markers',
+            marker=dict(size=6, color='dimgray'),
+            name='True (test)',
+            hovertemplate='trial=%{text}<br>t=%{x:.2f}s<extra></extra>',
+            text=[str(int(ti)) for ti in np.where(~train_flags_all)[0]],
+        ))
+
+        fig.add_trace(go.Scatter(
+            x=list(x_pred_train),
+            y=list(y_pred_train),
+            mode='markers',
+            marker=dict(size=8, color='#9aa0a6', symbol='x', opacity=0.9),
+            name='Predicted (train)',
+            hovertemplate='trial=%{text}<br>t=%{x:.2f}s<br>p_right=%{customdata[0]:.3f}<extra></extra>',
+            text=[str(int(ti)) for ti, f in zip(trial_idx_keys, pred_train_mask) if f],
+            customdata=np.column_stack([p_pred_train]) if len(p_pred_train) else [],
+        ))
+
+        fig.add_trace(go.Scatter(
+            x=list(x_pred_test),
+            y=list(y_pred_test),
+            mode='markers',
+            marker=dict(size=8, color='black', symbol='x'),
+            name='Predicted (test)',
+            hovertemplate='trial=%{text}<br>t=%{x:.2f}s<br>p_right=%{customdata[0]:.3f}<extra></extra>',
+            text=[str(int(ti)) for ti, f in zip(trial_idx_keys, ~pred_train_mask) if f],
+            customdata=np.column_stack([p_pred_test]) if len(p_pred_test) else [],
+        ))
+
+        # Updatemenu: two buttons to switch colouring mode
+        buttons = [
+            dict(
+                label='Color by correctness',
+                method='update',
+                args=[
+                    {'visible': [True, True, True, True, True, True, False, False, False, False]},
+                    {'title': 'Session Predictions — colour by correctness'}
+                ],
+            ),
+            dict(
+                label='Color by train/test',
+                method='update',
+                args=[
+                    {'visible': [True, False, False, False, False, False, True, True, True, True]},
+                    {'title': 'Session Predictions — colour by train/test'}
+                ],
+            ),
+        ]
+
+        fig.update_layout(
+            title='Session Predictions — predicted probability (per-window means) + true/predicted choices',
+            xaxis_title='Time (s)',
+            yaxis_title='Choice (1=right, -1=left)',
+            height=520,
+            template='plotly_white',
+            hovermode='x unified',
+            updatemenus=[dict(type='buttons', showactive=True, active=0, x=0.01, y=1.12, direction='right', buttons=buttons)],
+        )
+
+        write_html_with_caption(fig, OUT_DIR / '33_session_timeseries_predictions.html')
+        print('Saved 33_session_timeseries_predictions.html')
+
+# %%
+
 # ── Generate index.html ─────────────────────────────────────────────────────
 SECTIONS = [
     ("0 · Session Overview", [
@@ -2673,6 +3198,8 @@ SECTIONS = [
         ("30_absolute_time_decoder.html", "Absolute-Time Decoder — left/right choice decoded in seconds (mean ITI +1s window)"),
         ("30_abs_time_decoder.html", "Absolute-Time Decoder (alternate) — compact absolute-time summary"),
         ("31_iti_stratified_decoder.html", "ITI-stratified Normalized Decoder — short/medium/long ITI comparisons"),
+        ("32_sliding_window_decoder.html", "Sliding-Window Decoder — 30-bin pre-choice windows; 80/20 trial split"),
+        ("33_session_timeseries_predictions.html", "Session predictions trace — scaled model probabilities and true choices"),
     ]),
 ]
  
