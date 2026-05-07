@@ -431,32 +431,26 @@ def timeseries_train_test_split_cv_lazy(x_paired, b_1, n_splits=5):
 # ---------------------------------------------------------------------------
 
 
-def segment_trials(X, B, b_labels_dict, trial_start_state='intertrial', b_detect=None):
+def segment_trials(X, B, trial_start_indices=None, b_detect=None):
     """
-    Segment a full-session time series into individual trials.
+    Segment a full-session time series into individual trials using explicit
+    trial start indices.
 
-    A new trial begins whenever the behavioral state transitions *into*
-    ``trial_start_state``.  Any data before the first such transition (i.e.
-    a partial trial at the start of the session) is discarded.
+    Label-name based segmentation (e.g. ``trial_start_state`` / ``'intertrial'``)
+    has been removed. Pass ``trial_start_indices`` (array-like of ints) as the
+    canonical trial start positions (e.g. from
+    ``BanditTaskNeuroPixelsDataset.trial_start_indices``).
 
     Parameters
     ----------
     X : np.ndarray, shape (T, N)
         Neuronal traces for the full session.
     B : np.ndarray, shape (T,) or (T, k)
-        Behavioral array for the full session.  Slices of this are returned
-        in the output segments.  May be 2-D for hybrid mode.
-    b_labels_dict : dict {int: str}
-        Mapping from integer label to state name, as returned by
-        ``BanditTaskNeuroPixelsDataset.b_labels_dict``.
-    trial_start_state : str, optional
-        Name of the behavioral state that marks the beginning of a new trial.
-        Default is ``'intertrial'``.
+        Behavioral array for the full session.
+    trial_start_indices : array-like of int
+        First timepoint index of each trial.
     b_detect : np.ndarray, shape (T,), optional
-        1-D integer array used *only* for boundary detection.  Pass this when
-        ``B`` is 2-D (e.g. hybrid mode) so that boundaries can still be found
-        from the discrete class column.  If ``None``, ``B`` itself is used
-        (it must then be 1-D integer).
+        Ignored (kept for API compatibility).
 
     Returns
     -------
@@ -464,32 +458,13 @@ def segment_trials(X, B, b_labels_dict, trial_start_state='intertrial', b_detect
         Each element is ``(X_trial, B_trial)`` with shapes ``(t_i, N)`` and
         ``(t_i, ...)`` respectively, where ``t_i`` is the length of trial *i*.
     """
-    label_to_id = {v: k for k, v in b_labels_dict.items()}
-    if trial_start_state not in label_to_id:
+    if trial_start_indices is None:
         raise ValueError(
-            f"State '{trial_start_state}' not found in b_labels_dict. "
-            f"Available states: {list(label_to_id.keys())}"
+            "segment_trials requires 'trial_start_indices' (BanditTaskNeuroPixelsDataset.trial_start_indices)."
+            " Label-name based segmentation has been removed."
         )
-    start_label = label_to_id[trial_start_state]
 
-    b_1d = b_detect if b_detect is not None else B
-    is_start = b_1d == start_label
-    # Indices where the state transitions INTO start_label
-    transition_points = np.where(is_start[1:] & ~is_start[:-1])[0] + 1
-
-    if is_start[0]:
-        # Session begins with the start state — include t=0
-        boundaries = np.concatenate([[0], transition_points])
-    else:
-        # First partial trial (before the first transition) is discarded
-        boundaries = transition_points
-
-    segments = []
-    for i, start in enumerate(boundaries):
-        end = int(boundaries[i + 1]) if i + 1 < len(boundaries) else len(X)
-        segments.append((X[start:end], B[start:end]))
-
-    return segments
+    return segments_from_trial_starts(X, B, trial_start_indices)
 
 
 def prep_data_trials(trial_segments, win=15):
@@ -615,20 +590,20 @@ def trial_train_test_split(X_paired, B_1, trial_ids, test_ratio=0.2, random_stat
 # ---------------------------------------------------------------------------
 
 
-def segment_trial_boundaries(B_1d, b_labels_dict, trial_start_state='intertrial'):
+def segment_trial_boundaries(B_1d, trial_start_indices=None):
     """Return raw ``(start, end)`` index pairs for each trial — no data copied.
 
-    Lightweight companion to :func:`segment_trials` that works on integer
-    indices only, making it cheap to call before any windowing.
+    Label-name based segmentation has been removed. Supply explicit
+    ``trial_start_indices`` (preferred) which will be converted to
+    ``(start, end)`` pairs.
 
     Parameters
     ----------
     B_1d : np.ndarray, shape (T,)
-        1-D integer behavioural label array for the full session.
-    b_labels_dict : dict {int: str}
-        Mapping from integer label to state name.
-    trial_start_state : str, optional
-        State name that marks the beginning of a new trial. Default ``'intertrial'``.
+        1-D integer behavioural label array for the full session. Only used to
+        determine the total length when converting start indices to boundaries.
+    trial_start_indices : array-like of int
+        Explicit trial start indices.
 
     Returns
     -------
@@ -636,24 +611,13 @@ def segment_trial_boundaries(B_1d, b_labels_dict, trial_start_state='intertrial'
         Each element is ``(start, end)`` — exclusive end index — covering
         exactly one trial's timesteps in ``B_1d``.
     """
-    label_to_id = {v: k for k, v in b_labels_dict.items()}
-    if trial_start_state not in label_to_id:
+    if trial_start_indices is None:
         raise ValueError(
-            f"State '{trial_start_state}' not found in b_labels_dict. "
-            f"Available states: {list(label_to_id.keys())}"
+            "segment_trial_boundaries requires 'trial_start_indices'. "
+            "Label-name based segmentation has been removed."
         )
-    start_label = label_to_id[trial_start_state]
 
-    is_start = B_1d == start_label
-    transition_points = np.where(is_start[1:] & ~is_start[:-1])[0] + 1
-
-    if is_start[0]:
-        starts = np.concatenate([[0], transition_points])
-    else:
-        starts = transition_points
-
-    ends = np.concatenate([starts[1:], [len(B_1d)]])
-    return list(zip(starts.tolist(), ends.tolist()))
+    return boundaries_from_trial_starts(trial_start_indices, len(B_1d))
 
 
 class LazyTrialWindowDataset(Dataset):
