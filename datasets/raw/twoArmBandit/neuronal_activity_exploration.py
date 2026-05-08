@@ -2926,98 +2926,66 @@ else:
         else:
             train_flags = np.zeros_like(trial_idx_keys, dtype=bool)
 
-        # Plot: window means + per-trial true/pred markers with two colouring modes
-        # Mode A (default): colour by correctness (green=correct, red=wrong)
-        # Mode B: colour by split (train greyish, test dark)
+        # Plot: build traces split by All / Train / Test and by correctness so filtering is simple
         fig = go.Figure()
 
-        # Compute per-bin metadata so window markers can be coloured by correctness or train/test
-        bin_counts = np.zeros(len(uniq_bins), dtype=np.int32)
-        bin_correct_frac = np.zeros(len(uniq_bins), dtype=np.float32)
-        bin_train_frac = np.zeros(len(uniq_bins), dtype=np.float32)
-        for i in range(len(uniq_bins)):
-            ids = np.where(inv == i)[0]
-            bin_counts[i] = ids.size
-            if ids.size == 0:
-                bin_correct_frac[i] = 0.0
-                bin_train_frac[i] = 0.0
-                continue
-            window_preds = preds_arr[ids]
-            window_pred_class = (window_preds >= 0.0).astype(np.int32)
-            trial_ids = center_trial_idx_arr[ids]
-            trial_labels = decoder_labels[trial_ids]
-            corr_flags = (window_pred_class == trial_labels).astype(np.float32)
-            bin_correct_frac[i] = float(corr_flags.mean())
-            if 'train_trial_idx' in locals():
-                train_flags_window = np.isin(trial_ids, train_trial_idx)
-                bin_train_frac[i] = float(train_flags_window.mean())
-            else:
-                bin_train_frac[i] = 0.0
+        # Per-window (fine-grained) arrays
+        x_win = time_s[center_bins_arr]
+        y_win = preds_arr
+        trial_ids_win = center_trial_idx_arr
+        p_right_win = (preds_arr + 1.0) / 2.0
+        pred_class_win = (preds_arr >= 0.0).astype(np.int32)
+        correct_win = pred_class_win == decoder_labels[trial_ids_win]
 
-        # Binary masks (majority vote) for colouring
-        bin_corr_mask = bin_correct_frac >= 0.5
-        bin_inc_mask = ~bin_corr_mask
-        bin_train_mask = bin_train_frac >= 0.5
-        bin_test_mask = ~bin_train_mask
-
-        # Shared hover data per-uniq-bin
-        common_customdata = np.column_stack([bin_counts, bin_correct_frac, bin_train_frac])
-
-        # Window-level average predictions split by correctness (default mode)
-        if bin_corr_mask.any():
-            fig.add_trace(go.Scatter(
-                x=time_s[uniq_bins][bin_corr_mask],
-                y=bin_means[bin_corr_mask],
-                mode='markers',
-                marker=dict(size=3, color='green', opacity=0.35),
-                name='Window preds (correct)',
-                hovertemplate='t=%{x:.2f}s<br>p_mean=%{y:.3f}<br>n=%{customdata[0]}<br>frac_correct=%{customdata[1]:.2f}<br>frac_train=%{customdata[2]:.2f}<extra></extra>',
-                customdata=common_customdata[bin_corr_mask],
-            ))
+        if 'train_trial_idx' in locals():
+            is_train_win = np.isin(trial_ids_win, train_trial_idx)
         else:
-            fig.add_trace(go.Scatter(x=[], y=[], mode='markers', marker=dict(size=3, color='green', opacity=0.35), name='Window preds (correct)'))
+            is_train_win = np.zeros_like(trial_ids_win, dtype=bool)
 
-        if bin_inc_mask.any():
-            fig.add_trace(go.Scatter(
-                x=time_s[uniq_bins][bin_inc_mask],
-                y=bin_means[bin_inc_mask],
-                mode='markers',
-                marker=dict(size=3, color='red', opacity=0.35),
-                name='Window preds (incorrect)',
-                hovertemplate='t=%{x:.2f}s<br>p_mean=%{y:.3f}<br>n=%{customdata[0]}<br>frac_correct=%{customdata[1]:.2f}<br>frac_train=%{customdata[2]:.2f}<extra></extra>',
-                customdata=common_customdata[bin_inc_mask],
-            ))
-        else:
-            fig.add_trace(go.Scatter(x=[], y=[], mode='markers', marker=dict(size=3, color='red', opacity=0.35), name='Window preds (incorrect)'))
+        # Window indices per category
+        idx_all_corr = np.where(correct_win)[0]
+        idx_all_inc = np.where(~correct_win)[0]
+        idx_train_corr = np.where(correct_win & is_train_win)[0]
+        idx_train_inc = np.where((~correct_win) & is_train_win)[0]
+        idx_test_corr = np.where(correct_win & ~is_train_win)[0]
+        idx_test_inc = np.where((~correct_win) & ~is_train_win)[0]
+        idx_train = np.where(is_train_win)[0]
+        idx_test = np.where(~is_train_win)[0]
 
-        # Window-level average predictions split by train/test (alternate mode)
-        if bin_train_mask.any():
-            fig.add_trace(go.Scatter(
-                x=time_s[uniq_bins][bin_train_mask],
-                y=bin_means[bin_train_mask],
-                mode='markers',
-                marker=dict(size=3, color='#9aa0a6', opacity=0.35),
-                name='Window preds (train)',
-                hovertemplate='t=%{x:.2f}s<br>p_mean=%{y:.3f}<br>n=%{customdata[0]}<br>frac_correct=%{customdata[1]:.2f}<br>frac_train=%{customdata[2]:.2f}<extra></extra>',
-                customdata=common_customdata[bin_train_mask],
-            ))
-        else:
-            fig.add_trace(go.Scatter(x=[], y=[], mode='markers', marker=dict(size=3, color='#9aa0a6', opacity=0.35), name='Window preds (train)'))
+        # Helper hovertemplate
+        win_hover = 'trial=%{customdata[0]}<br>t=%{x:.2f}s<br>p_right=%{customdata[1]:.3f}<extra></extra>'
 
-        if bin_test_mask.any():
-            fig.add_trace(go.Scatter(
-                x=time_s[uniq_bins][bin_test_mask],
-                y=bin_means[bin_test_mask],
-                mode='markers',
-                marker=dict(size=3, color='dimgray', opacity=0.35),
-                name='Window preds (test)',
-                hovertemplate='t=%{x:.2f}s<br>p_mean=%{y:.3f}<br>n=%{customdata[0]}<br>frac_correct=%{customdata[1]:.2f}<br>frac_train=%{customdata[2]:.2f}<extra></extra>',
-                customdata=common_customdata[bin_test_mask],
-            ))
-        else:
-            fig.add_trace(go.Scatter(x=[], y=[], mode='markers', marker=dict(size=3, color='dimgray', opacity=0.35), name='Window preds (test)'))
+        # Window traces: correctness split (All / Train / Test)
+        fig.add_trace(go.Scatter(x=x_win[idx_all_corr], y=y_win[idx_all_corr], mode='markers',
+                                 marker=dict(size=3, color='green', opacity=0.35), name='Window preds (All: correct)',
+                                 hovertemplate=win_hover, customdata=np.column_stack([trial_ids_win[idx_all_corr], p_right_win[idx_all_corr]])))
+        fig.add_trace(go.Scatter(x=x_win[idx_all_inc], y=y_win[idx_all_inc], mode='markers',
+                                 marker=dict(size=3, color='red', opacity=0.35), name='Window preds (All: incorrect)',
+                                 hovertemplate=win_hover, customdata=np.column_stack([trial_ids_win[idx_all_inc], p_right_win[idx_all_inc]])))
 
-        # All-trials true choice scaffolding
+        fig.add_trace(go.Scatter(x=x_win[idx_train_corr], y=y_win[idx_train_corr], mode='markers',
+                                 marker=dict(size=3, color='green', opacity=0.35), name='Window preds (Train: correct)',
+                                 hovertemplate=win_hover, customdata=np.column_stack([trial_ids_win[idx_train_corr], p_right_win[idx_train_corr]])))
+        fig.add_trace(go.Scatter(x=x_win[idx_train_inc], y=y_win[idx_train_inc], mode='markers',
+                                 marker=dict(size=3, color='red', opacity=0.35), name='Window preds (Train: incorrect)',
+                                 hovertemplate=win_hover, customdata=np.column_stack([trial_ids_win[idx_train_inc], p_right_win[idx_train_inc]])))
+
+        fig.add_trace(go.Scatter(x=x_win[idx_test_corr], y=y_win[idx_test_corr], mode='markers',
+                                 marker=dict(size=3, color='green', opacity=0.35), name='Window preds (Test: correct)',
+                                 hovertemplate=win_hover, customdata=np.column_stack([trial_ids_win[idx_test_corr], p_right_win[idx_test_corr]])))
+        fig.add_trace(go.Scatter(x=x_win[idx_test_inc], y=y_win[idx_test_inc], mode='markers',
+                                 marker=dict(size=3, color='red', opacity=0.35), name='Window preds (Test: incorrect)',
+                                 hovertemplate=win_hover, customdata=np.column_stack([trial_ids_win[idx_test_inc], p_right_win[idx_test_inc]])))
+
+        # Window traces: train/test colouring (for the alternate mode)
+        fig.add_trace(go.Scatter(x=x_win[idx_train], y=y_win[idx_train], mode='markers',
+                                 marker=dict(size=3, color='#9aa0a6', opacity=0.35), name='Window preds (train)',
+                                 hovertemplate=win_hover, customdata=np.column_stack([trial_ids_win[idx_train], p_right_win[idx_train]])))
+        fig.add_trace(go.Scatter(x=x_win[idx_test], y=y_win[idx_test], mode='markers',
+                                 marker=dict(size=3, color='dimgray', opacity=0.35), name='Window preds (test)',
+                                 hovertemplate=win_hover, customdata=np.column_stack([trial_ids_win[idx_test], p_right_win[idx_test]])))
+
+        # All-trials / per-subset true & predicted markers
         n_trials = len(decoder_bins)
         trial_all_center_bins_safe = np.clip(decoder_bins, 0, T - 1)
         trial_all_times = time_s[trial_all_center_bins_safe]
@@ -3029,178 +2997,218 @@ else:
         has_pred[trial_idx_keys] = True
 
         # Predicted classes and correctness for trials with predictions
-        pred_class = (trial_pred_p >= 0.5).astype(np.int32)
-        pred_correct_flags = pred_class == decoder_labels[trial_idx_keys]
+        trial_pred_class = (trial_pred_p >= 0.5).astype(np.int32)
+        pred_correct_flags = trial_pred_class == decoder_labels[trial_idx_keys]
 
-        correct_keys = trial_idx_keys[pred_correct_flags]
-        incorrect_keys = trial_idx_keys[~pred_correct_flags]
+        # No-pred trials
         no_pred_keys = np.setdiff1d(all_trial_ids, trial_idx_keys)
 
-        def _times_and_signs(keys):
-            if len(keys) == 0:
-                return [], []
-            bins = np.clip(decoder_bins[keys], 0, T - 1)
-            return time_s[bins], ((decoder_labels[keys] * 2) - 1)
-
-        x_true_corr, y_true_corr = _times_and_signs(correct_keys)
-        x_true_inc, y_true_inc = _times_and_signs(incorrect_keys)
-        x_true_nopred, y_true_nopred = _times_and_signs(no_pred_keys)
-
-        # Predicted per-trial points (aligned with trial_idx_keys order)
-        pred_p = trial_pred_p
-        pred_sign = trial_pred_sign
-        x_pred_corr = trial_times[pred_correct_flags]
-        y_pred_corr = pred_sign[pred_correct_flags]
-        p_pred_corr = pred_p[pred_correct_flags]
-
-        x_pred_inc = trial_times[~pred_correct_flags]
-        y_pred_inc = pred_sign[~pred_correct_flags]
-        p_pred_inc = pred_p[~pred_correct_flags]
-
-        # Train/test masks (for the alternate colouring mode)
+        # Train/test flags
         if 'train_trial_idx' in locals():
             train_flags_all = np.isin(np.arange(n_trials, dtype=np.int32), train_trial_idx)
+            train_mask_for_keys = np.isin(trial_idx_keys, train_trial_idx)
         else:
             train_flags_all = np.zeros(n_trials, dtype=bool)
+            train_mask_for_keys = np.zeros_like(trial_idx_keys, dtype=bool)
 
-        x_true_train, y_true_train = _times_and_signs(np.where(train_flags_all)[0])
-        x_true_test, y_true_test = _times_and_signs(np.where(~train_flags_all)[0])
+        # Per-trial masks (indices into trial_idx_keys)
+        t_all_corr_idx = np.where(pred_correct_flags)[0]
+        t_all_inc_idx = np.where(~pred_correct_flags)[0]
+        t_train_corr_idx = np.where(pred_correct_flags & train_mask_for_keys)[0]
+        t_train_inc_idx = np.where((~pred_correct_flags) & train_mask_for_keys)[0]
+        t_test_corr_idx = np.where(pred_correct_flags & ~train_mask_for_keys)[0]
+        t_test_inc_idx = np.where((~pred_correct_flags) & ~train_mask_for_keys)[0]
 
-        # Predicted train/test (subset of trial_idx_keys)
-        pred_train_mask = train_flags if 'train_flags' in locals() else np.zeros_like(trial_idx_keys, dtype=bool)
-        x_pred_train = trial_times[pred_train_mask]
-        y_pred_train = pred_sign[pred_train_mask]
-        p_pred_train = trial_pred_p[pred_train_mask]
+        # Helper for formatting trial text & customdata
+        def _fmt_text(ids):
+            return [str(int(ti)) for ti in ids]
 
-        x_pred_test = trial_times[~pred_train_mask]
-        y_pred_test = pred_sign[~pred_train_mask]
-        p_pred_test = trial_pred_p[~pred_train_mask]
-
-        # True choice traces (correct / incorrect / no-pred) — used in default correctness mode
+        # True markers: All (correct/incorrect/no-pred)
         fig.add_trace(go.Scatter(
-            x=list(x_true_corr),
-            y=list(y_true_corr),
-            mode='markers',
-            marker=dict(size=6, color='green'),
-            name='True (correct)',
-            hovertemplate='trial=%{text}<br>t=%{x:.2f}s<extra></extra>',
-            text=[str(int(ti)) for ti in correct_keys],
+            x=trial_times[t_all_corr_idx], y=trial_true_sign[t_all_corr_idx], mode='markers',
+            marker=dict(size=6, color='green'), name='True (All: correct)',
+            hovertemplate='trial=%{text}<br>t=%{x:.2f}s<extra></extra>', text=_fmt_text(trial_idx_keys[t_all_corr_idx])
         ))
 
         fig.add_trace(go.Scatter(
-            x=list(x_true_inc),
-            y=list(y_true_inc),
-            mode='markers',
-            marker=dict(size=6, color='red'),
-            name='True (incorrect)',
-            hovertemplate='trial=%{text}<br>t=%{x:.2f}s<extra></extra>',
-            text=[str(int(ti)) for ti in incorrect_keys],
+            x=trial_times[t_all_inc_idx], y=trial_true_sign[t_all_inc_idx], mode='markers',
+            marker=dict(size=6, color='red'), name='True (All: incorrect)',
+            hovertemplate='trial=%{text}<br>t=%{x:.2f}s<extra></extra>', text=_fmt_text(trial_idx_keys[t_all_inc_idx])
         ))
 
-        fig.add_trace(go.Scatter(
-            x=list(x_true_nopred),
-            y=list(y_true_nopred),
-            mode='markers',
-            marker=dict(size=6, color='lightgrey', opacity=0.7),
-            name='True (no pred)',
-            hovertemplate='trial=%{text}<br>t=%{x:.2f}s<extra></extra>',
-            text=[str(int(ti)) for ti in no_pred_keys],
-        ))
+        # True no-pred (All)
+        if len(no_pred_keys):
+            bins = np.clip(decoder_bins[no_pred_keys], 0, T - 1)
+            fig.add_trace(go.Scatter(
+                x=time_s[bins], y=((decoder_labels[no_pred_keys] * 2) - 1), mode='markers',
+                marker=dict(size=6, color='lightgrey', opacity=0.7), name='True (All: no pred)',
+                hovertemplate='trial=%{text}<br>t=%{x:.2f}s<extra></extra>', text=_fmt_text(no_pred_keys)
+            ))
+        else:
+            fig.add_trace(go.Scatter(x=[], y=[], mode='markers', marker=dict(size=6, color='lightgrey', opacity=0.7), name='True (All: no pred)'))
 
-        # Predicted per-trial: correct / incorrect (green/red, X marker)
+        # Predicted markers: All correct / incorrect
         fig.add_trace(go.Scatter(
-            x=list(x_pred_corr),
-            y=list(y_pred_corr),
-            mode='markers',
-            marker=dict(size=8, color='green', symbol='x'),
-            name='Predicted (correct)',
+            x=trial_times[t_all_corr_idx], y=trial_pred_sign[t_all_corr_idx], mode='markers',
+            marker=dict(size=8, color='green', symbol='x'), name='Predicted (All: correct)',
             hovertemplate='trial=%{text}<br>t=%{x:.2f}s<br>p_right=%{customdata[0]:.3f}<extra></extra>',
-            text=[str(int(ti)) for ti in correct_keys],
-            customdata=np.column_stack([p_pred_corr]) if len(p_pred_corr) else [],
+            text=_fmt_text(trial_idx_keys[t_all_corr_idx]),
+            customdata=np.column_stack([trial_pred_p[t_all_corr_idx]]) if len(t_all_corr_idx) else [],
         ))
 
         fig.add_trace(go.Scatter(
-            x=list(x_pred_inc),
-            y=list(y_pred_inc),
-            mode='markers',
-            marker=dict(size=8, color='red', symbol='x'),
-            name='Predicted (incorrect)',
+            x=trial_times[t_all_inc_idx], y=trial_pred_sign[t_all_inc_idx], mode='markers',
+            marker=dict(size=8, color='red', symbol='x'), name='Predicted (All: incorrect)',
             hovertemplate='trial=%{text}<br>t=%{x:.2f}s<br>p_right=%{customdata[0]:.3f}<extra></extra>',
-            text=[str(int(ti)) for ti in incorrect_keys],
-            customdata=np.column_stack([p_pred_inc]) if len(p_pred_inc) else [],
+            text=_fmt_text(trial_idx_keys[t_all_inc_idx]),
+            customdata=np.column_stack([trial_pred_p[t_all_inc_idx]]) if len(t_all_inc_idx) else [],
         ))
 
-        # Alternate mode traces: train/test colouring for true and predicted (kept for toggle)
+        # Train subset: True (correct/incorrect/no-pred) + Predicted
         fig.add_trace(go.Scatter(
-            x=list(x_true_train),
-            y=list(y_true_train),
-            mode='markers',
-            marker=dict(size=6, color='#9aa0a6', opacity=0.7),
-            name='True (train)',
-            hovertemplate='trial=%{text}<br>t=%{x:.2f}s<extra></extra>',
-            text=[str(int(ti)) for ti in np.where(train_flags_all)[0]],
+            x=trial_times[t_train_corr_idx], y=trial_true_sign[t_train_corr_idx], mode='markers',
+            marker=dict(size=6, color='green'), name='True (Train: correct)',
+            hovertemplate='trial=%{text}<br>t=%{x:.2f}s<extra></extra>', text=_fmt_text(trial_idx_keys[t_train_corr_idx])
         ))
 
         fig.add_trace(go.Scatter(
-            x=list(x_true_test),
-            y=list(y_true_test),
-            mode='markers',
-            marker=dict(size=6, color='dimgray'),
-            name='True (test)',
-            hovertemplate='trial=%{text}<br>t=%{x:.2f}s<extra></extra>',
-            text=[str(int(ti)) for ti in np.where(~train_flags_all)[0]],
+            x=trial_times[t_train_inc_idx], y=trial_true_sign[t_train_inc_idx], mode='markers',
+            marker=dict(size=6, color='red'), name='True (Train: incorrect)',
+            hovertemplate='trial=%{text}<br>t=%{x:.2f}s<extra></extra>', text=_fmt_text(trial_idx_keys[t_train_inc_idx])
         ))
 
+        # Train no-pred
+        train_no_pred = no_pred_keys[train_flags_all[no_pred_keys]] if len(no_pred_keys) else np.array([], dtype=int)
+        if len(train_no_pred):
+            bins = np.clip(decoder_bins[train_no_pred], 0, T - 1)
+            fig.add_trace(go.Scatter(
+                x=time_s[bins], y=((decoder_labels[train_no_pred] * 2) - 1), mode='markers',
+                marker=dict(size=6, color='lightgrey', opacity=0.7), name='True (Train: no pred)',
+                hovertemplate='trial=%{text}<br>t=%{x:.2f}s<extra></extra>', text=_fmt_text(train_no_pred)
+            ))
+        else:
+            fig.add_trace(go.Scatter(x=[], y=[], mode='markers', marker=dict(size=6, color='lightgrey', opacity=0.7), name='True (Train: no pred)'))
+
         fig.add_trace(go.Scatter(
-            x=list(x_pred_train),
-            y=list(y_pred_train),
-            mode='markers',
-            marker=dict(size=8, color='#9aa0a6', symbol='x', opacity=0.9),
-            name='Predicted (train)',
+            x=trial_times[t_train_corr_idx], y=trial_pred_sign[t_train_corr_idx], mode='markers',
+            marker=dict(size=8, color='#9aa0a6', symbol='x'), name='Predicted (Train: correct)',
             hovertemplate='trial=%{text}<br>t=%{x:.2f}s<br>p_right=%{customdata[0]:.3f}<extra></extra>',
-            text=[str(int(ti)) for ti, f in zip(trial_idx_keys, pred_train_mask) if f],
-            customdata=np.column_stack([p_pred_train]) if len(p_pred_train) else [],
+            text=_fmt_text(trial_idx_keys[t_train_corr_idx]),
+            customdata=np.column_stack([trial_pred_p[t_train_corr_idx]]) if len(t_train_corr_idx) else [],
         ))
 
         fig.add_trace(go.Scatter(
-            x=list(x_pred_test),
-            y=list(y_pred_test),
-            mode='markers',
-            marker=dict(size=8, color='black', symbol='x'),
-            name='Predicted (test)',
+            x=trial_times[t_train_inc_idx], y=trial_pred_sign[t_train_inc_idx], mode='markers',
+            marker=dict(size=8, color='#9aa0a6', symbol='x'), name='Predicted (Train: incorrect)',
             hovertemplate='trial=%{text}<br>t=%{x:.2f}s<br>p_right=%{customdata[0]:.3f}<extra></extra>',
-            text=[str(int(ti)) for ti, f in zip(trial_idx_keys, ~pred_train_mask) if f],
-            customdata=np.column_stack([p_pred_test]) if len(p_pred_test) else [],
+            text=_fmt_text(trial_idx_keys[t_train_inc_idx]),
+            customdata=np.column_stack([trial_pred_p[t_train_inc_idx]]) if len(t_train_inc_idx) else [],
         ))
 
-        # Updatemenu: two buttons to switch colouring mode
-        buttons = [
-            dict(
-                label='Color by correctness',
-                method='update',
-                args=[
-                    {'visible': [True, True, False, False, True, True, True, True, True, False, False, False, False]},
-                    {'title': 'Session Predictions — colour by correctness'}
-                ],
-            ),
-            dict(
-                label='Color by train/test',
-                method='update',
-                args=[
-                    {'visible': [False, False, True, True, False, False, False, False, False, True, True, True, True]},
-                    {'title': 'Session Predictions — colour by train/test'}
-                ],
-            ),
-        ]
+        # Test subset: True (correct/incorrect/no-pred) + Predicted
+        fig.add_trace(go.Scatter(
+            x=trial_times[t_test_corr_idx], y=trial_true_sign[t_test_corr_idx], mode='markers',
+            marker=dict(size=6, color='green'), name='True (Test: correct)',
+            hovertemplate='trial=%{text}<br>t=%{x:.2f}s<extra></extra>', text=_fmt_text(trial_idx_keys[t_test_corr_idx])
+        ))
+
+        fig.add_trace(go.Scatter(
+            x=trial_times[t_test_inc_idx], y=trial_true_sign[t_test_inc_idx], mode='markers',
+            marker=dict(size=6, color='red'), name='True (Test: incorrect)',
+            hovertemplate='trial=%{text}<br>t=%{x:.2f}s<extra></extra>', text=_fmt_text(trial_idx_keys[t_test_inc_idx])
+        ))
+
+        test_no_pred = no_pred_keys[~train_flags_all[no_pred_keys]] if len(no_pred_keys) else np.array([], dtype=int)
+        if len(test_no_pred):
+            bins = np.clip(decoder_bins[test_no_pred], 0, T - 1)
+            fig.add_trace(go.Scatter(
+                x=time_s[bins], y=((decoder_labels[test_no_pred] * 2) - 1), mode='markers',
+                marker=dict(size=6, color='lightgrey', opacity=0.7), name='True (Test: no pred)',
+                hovertemplate='trial=%{text}<br>t=%{x:.2f}s<extra></extra>', text=_fmt_text(test_no_pred)
+            ))
+        else:
+            fig.add_trace(go.Scatter(x=[], y=[], mode='markers', marker=dict(size=6, color='lightgrey', opacity=0.7), name='True (Test: no pred)'))
+
+        fig.add_trace(go.Scatter(
+            x=trial_times[t_test_corr_idx], y=trial_pred_sign[t_test_corr_idx], mode='markers',
+            marker=dict(size=8, color='black', symbol='x'), name='Predicted (Test: correct)',
+            hovertemplate='trial=%{text}<br>t=%{x:.2f}s<br>p_right=%{customdata[0]:.3f}<extra></extra>',
+            text=_fmt_text(trial_idx_keys[t_test_corr_idx]),
+            customdata=np.column_stack([trial_pred_p[t_test_corr_idx]]) if len(t_test_corr_idx) else [],
+        ))
+
+        fig.add_trace(go.Scatter(
+            x=trial_times[t_test_inc_idx], y=trial_pred_sign[t_test_inc_idx], mode='markers',
+            marker=dict(size=8, color='black', symbol='x'), name='Predicted (Test: incorrect)',
+            hovertemplate='trial=%{text}<br>t=%{x:.2f}s<br>p_right=%{customdata[0]:.3f}<extra></extra>',
+            text=_fmt_text(trial_idx_keys[t_test_inc_idx]),
+            customdata=np.column_stack([trial_pred_p[t_test_inc_idx]]) if len(t_test_inc_idx) else [],
+        ))
+
+        # Add vertical dotted lines for block-change epochs and labels
+        for t_idx, lbl in block_changes:
+            t = time_s[min(int(t_idx), len(time_s) - 1)]
+            short = "Better L" if "left" in lbl.lower() else ("Better R" if "right" in lbl.lower() else lbl)
+            color = "green" if "left" in lbl.lower() else "dodgerblue"
+            fig.add_vline(x=t, line_dash="dot", line_color=color, line_width=1.2)
+            fig.add_annotation(x=t, y=1.06, xref="x", yref="paper", text=short, showarrow=False, font=dict(color=color, size=10))
+
+        # Updatemenu: combined colour x subset options (6 states)
+        # Trace order (indices) must match the traces added above; compute visibility arrays accordingly
+        n_traces = len(fig.data)
+
+        # Helper to build a visibility mask with indices set to True
+        def vis_mask(true_idx_list):
+            v = [False] * n_traces
+            for ii in true_idx_list:
+                if 0 <= ii < n_traces:
+                    v[ii] = True
+            return v
+
+        # Indices mapping (based on the order traces were added above):
+        # 0-5: Window All/Train/Test correct/inc
+        # 6-7: Window train/test set
+        # 8-10: True All (corr, inc, no-pred)
+        # 11-12: Pred All (corr, inc)
+        # 13-15: True Train (corr, inc, no-pred)
+        # 16-17: Pred Train (corr, inc)
+        # 18-20: True Test (corr, inc, no-pred)
+        # 21-22: Pred Test (corr, inc)
+
+        btns = []
+
+        # Correctness · All
+        vis_correct_all = vis_mask([0, 1, 8, 9, 10, 11, 12])
+        btns.append(dict(label='Correctness · All', method='update', args=[{'visible': vis_correct_all}, {'title': 'Session Predictions — Correctness (All)'}]))
+
+        # Correctness · Train only
+        vis_correct_train = vis_mask([2, 3, 13, 14, 15, 16, 17])
+        btns.append(dict(label='Correctness · Train only', method='update', args=[{'visible': vis_correct_train}, {'title': 'Session Predictions — Correctness (Train only)'}]))
+
+        # Correctness · Test only
+        vis_correct_test = vis_mask([4, 5, 18, 19, 20, 21, 22])
+        btns.append(dict(label='Correctness · Test only', method='update', args=[{'visible': vis_correct_test}, {'title': 'Session Predictions — Correctness (Test only)'}]))
+
+        # Train/Test · All
+        vis_tt_all = vis_mask([6, 7, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22])
+        btns.append(dict(label='Train/Test · All', method='update', args=[{'visible': vis_tt_all}, {'title': 'Session Predictions — Train/Test (All)'}]))
+
+        # Train/Test · Train only
+        vis_tt_train = vis_mask([6, 13, 14, 15, 16, 17])
+        btns.append(dict(label='Train/Test · Train only', method='update', args=[{'visible': vis_tt_train}, {'title': 'Session Predictions — Train/Test (Train only)'}]))
+
+        # Train/Test · Test only
+        vis_tt_test = vis_mask([7, 18, 19, 20, 21, 22])
+        btns.append(dict(label='Train/Test · Test only', method='update', args=[{'visible': vis_tt_test}, {'title': 'Session Predictions — Train/Test (Test only)'}]))
 
         fig.update_layout(
-            title='Session Predictions — predicted probability (per-window means) + true/predicted choices',
+            title='Session Predictions — predicted probability (per-window) + true/predicted choices',
             xaxis_title='Time (s)',
             yaxis_title='Choice (1=right, -1=left)',
-            height=520,
+            height=560,
             template='plotly_white',
             hovermode='x unified',
-            updatemenus=[dict(type='buttons', showactive=True, active=0, x=0.01, y=1.12, direction='right', buttons=buttons)],
+            updatemenus=[dict(type='buttons', showactive=True, active=0, x=0.01, y=1.12, direction='right', buttons=btns)],
         )
 
         write_html_with_caption(fig, OUT_DIR / '33_session_timeseries_predictions.html')
