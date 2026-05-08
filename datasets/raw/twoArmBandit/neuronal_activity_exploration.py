@@ -2842,6 +2842,7 @@ else:
     all_trial_idx = np.arange(1, len(decoder_trials), dtype=np.int32)
     center_bins_list = []
     preds_list = []
+    center_trial_idx_list = []
     per_trial_mean = {}
 
     for trial_idx in all_trial_idx:
@@ -2878,6 +2879,7 @@ else:
 
         center_bins_list.extend(centers.tolist())
         preds_list.extend(pred_scaled.tolist())
+        center_trial_idx_list.extend([int(trial_idx)] * len(centers))
         per_trial_mean[trial_idx] = float(p_right.mean())
 
     if len(center_bins_list) == 0:
@@ -2885,6 +2887,7 @@ else:
     else:
         center_bins_arr = np.array(center_bins_list, dtype=np.int32)
         preds_arr = np.array(preds_list, dtype=np.float32)
+        center_trial_idx_arr = np.array(center_trial_idx_list, dtype=np.int32)
 
         # Average predictions mapping to the same center bin
         uniq_bins, inv = np.unique(center_bins_arr, return_inverse=True)
@@ -2928,15 +2931,91 @@ else:
         # Mode B: colour by split (train greyish, test dark)
         fig = go.Figure()
 
-        # Window-level average predictions (magenta, always visible)
-        fig.add_trace(go.Scatter(
-            x=time_s[uniq_bins],
-            y=bin_means,
-            mode='markers',
-            marker=dict(size=3, color='magenta', opacity=0.25),
-            name='Window preds (avg per-bin)',
-            hovertemplate='t=%{x:.2f}s<br>p_scaled=%{y:.3f}<extra></extra>',
-        ))
+        # Compute per-bin metadata so window markers can be coloured by correctness or train/test
+        bin_counts = np.zeros(len(uniq_bins), dtype=np.int32)
+        bin_correct_frac = np.zeros(len(uniq_bins), dtype=np.float32)
+        bin_train_frac = np.zeros(len(uniq_bins), dtype=np.float32)
+        for i in range(len(uniq_bins)):
+            ids = np.where(inv == i)[0]
+            bin_counts[i] = ids.size
+            if ids.size == 0:
+                bin_correct_frac[i] = 0.0
+                bin_train_frac[i] = 0.0
+                continue
+            window_preds = preds_arr[ids]
+            window_pred_class = (window_preds >= 0.0).astype(np.int32)
+            trial_ids = center_trial_idx_arr[ids]
+            trial_labels = decoder_labels[trial_ids]
+            corr_flags = (window_pred_class == trial_labels).astype(np.float32)
+            bin_correct_frac[i] = float(corr_flags.mean())
+            if 'train_trial_idx' in locals():
+                train_flags_window = np.isin(trial_ids, train_trial_idx)
+                bin_train_frac[i] = float(train_flags_window.mean())
+            else:
+                bin_train_frac[i] = 0.0
+
+        # Binary masks (majority vote) for colouring
+        bin_corr_mask = bin_correct_frac >= 0.5
+        bin_inc_mask = ~bin_corr_mask
+        bin_train_mask = bin_train_frac >= 0.5
+        bin_test_mask = ~bin_train_mask
+
+        # Shared hover data per-uniq-bin
+        common_customdata = np.column_stack([bin_counts, bin_correct_frac, bin_train_frac])
+
+        # Window-level average predictions split by correctness (default mode)
+        if bin_corr_mask.any():
+            fig.add_trace(go.Scatter(
+                x=time_s[uniq_bins][bin_corr_mask],
+                y=bin_means[bin_corr_mask],
+                mode='markers',
+                marker=dict(size=3, color='green', opacity=0.35),
+                name='Window preds (correct)',
+                hovertemplate='t=%{x:.2f}s<br>p_mean=%{y:.3f}<br>n=%{customdata[0]}<br>frac_correct=%{customdata[1]:.2f}<br>frac_train=%{customdata[2]:.2f}<extra></extra>',
+                customdata=common_customdata[bin_corr_mask],
+            ))
+        else:
+            fig.add_trace(go.Scatter(x=[], y=[], mode='markers', marker=dict(size=3, color='green', opacity=0.35), name='Window preds (correct)'))
+
+        if bin_inc_mask.any():
+            fig.add_trace(go.Scatter(
+                x=time_s[uniq_bins][bin_inc_mask],
+                y=bin_means[bin_inc_mask],
+                mode='markers',
+                marker=dict(size=3, color='red', opacity=0.35),
+                name='Window preds (incorrect)',
+                hovertemplate='t=%{x:.2f}s<br>p_mean=%{y:.3f}<br>n=%{customdata[0]}<br>frac_correct=%{customdata[1]:.2f}<br>frac_train=%{customdata[2]:.2f}<extra></extra>',
+                customdata=common_customdata[bin_inc_mask],
+            ))
+        else:
+            fig.add_trace(go.Scatter(x=[], y=[], mode='markers', marker=dict(size=3, color='red', opacity=0.35), name='Window preds (incorrect)'))
+
+        # Window-level average predictions split by train/test (alternate mode)
+        if bin_train_mask.any():
+            fig.add_trace(go.Scatter(
+                x=time_s[uniq_bins][bin_train_mask],
+                y=bin_means[bin_train_mask],
+                mode='markers',
+                marker=dict(size=3, color='#9aa0a6', opacity=0.35),
+                name='Window preds (train)',
+                hovertemplate='t=%{x:.2f}s<br>p_mean=%{y:.3f}<br>n=%{customdata[0]}<br>frac_correct=%{customdata[1]:.2f}<br>frac_train=%{customdata[2]:.2f}<extra></extra>',
+                customdata=common_customdata[bin_train_mask],
+            ))
+        else:
+            fig.add_trace(go.Scatter(x=[], y=[], mode='markers', marker=dict(size=3, color='#9aa0a6', opacity=0.35), name='Window preds (train)'))
+
+        if bin_test_mask.any():
+            fig.add_trace(go.Scatter(
+                x=time_s[uniq_bins][bin_test_mask],
+                y=bin_means[bin_test_mask],
+                mode='markers',
+                marker=dict(size=3, color='dimgray', opacity=0.35),
+                name='Window preds (test)',
+                hovertemplate='t=%{x:.2f}s<br>p_mean=%{y:.3f}<br>n=%{customdata[0]}<br>frac_correct=%{customdata[1]:.2f}<br>frac_train=%{customdata[2]:.2f}<extra></extra>',
+                customdata=common_customdata[bin_test_mask],
+            ))
+        else:
+            fig.add_trace(go.Scatter(x=[], y=[], mode='markers', marker=dict(size=3, color='dimgray', opacity=0.35), name='Window preds (test)'))
 
         # All-trials true choice scaffolding
         n_trials = len(decoder_bins)
@@ -3100,7 +3179,7 @@ else:
                 label='Color by correctness',
                 method='update',
                 args=[
-                    {'visible': [True, True, True, True, True, True, False, False, False, False]},
+                    {'visible': [True, True, False, False, True, True, True, True, True, False, False, False, False]},
                     {'title': 'Session Predictions — colour by correctness'}
                 ],
             ),
@@ -3108,7 +3187,7 @@ else:
                 label='Color by train/test',
                 method='update',
                 args=[
-                    {'visible': [True, False, False, False, False, False, True, True, True, True]},
+                    {'visible': [False, False, True, True, False, False, False, False, False, True, True, True, True]},
                     {'title': 'Session Predictions — colour by train/test'}
                 ],
             ),
