@@ -1,15 +1,7 @@
 # %% [markdown]
-# # Two-Arm Bandit: Neuronal Activity Exploration
-# 
+# Two-Arm Bandit: Neuronal Activity Exploration
+#
 # A deep visual exploration of the NeuroPixels neuronal activity data — raw spikes, quality metrics, probe anatomy, firing rates, population dynamics, trial-aligned responses, correlation structure, and dimensionality.
-# 
-# **Primary session:** `JPAS_0023_20230922`  
-# **Multi-session comparisons** where lightweight.  
-# Behavioral context is used as an overlay only — this notebook is about the **neurons**.
-
-# %%
-# %load_ext autoreload  # IPython magic — not needed when running as a script
-# %autoreload 2
 
 from pathlib import Path
 import json
@@ -44,7 +36,7 @@ for s in SESSION_DIRS:
 print(f"\nPrimary session: {PRIMARY.name}")
 
 # %%
-# ── HTML export directory ────────────────────────────────────────────────────
+# ── HTML export directory ───────────────────────────────────────────────────
 OUT_DIR = DATA_ROOT / "neuronal_activity_exploration"
 OUT_DIR.mkdir(exist_ok=True)
 print(f"HTML exports → {OUT_DIR}")
@@ -3208,11 +3200,70 @@ else:
             height=560,
             template='plotly_white',
             hovermode='x unified',
-            updatemenus=[dict(type='buttons', showactive=True, active=0, x=0.01, y=1.12, direction='right', buttons=btns)],
         )
 
         write_html_with_caption(fig, OUT_DIR / '33_session_timeseries_predictions.html')
         print('Saved 33_session_timeseries_predictions.html')
+
+        # Export visibility masks and append a small JS overlay to the saved HTML
+        masks = {
+            'correctness': {
+                'all': vis_correct_all,
+                'train': vis_correct_train,
+                'test': vis_correct_test,
+            },
+            'traintest': {
+                'all': vis_tt_all,
+                'train': vis_tt_train,
+                'test': vis_tt_test,
+            },
+        }
+
+        masks_json = json.dumps(masks)
+        html_path = OUT_DIR / '33_session_timeseries_predictions.html'
+        try:
+            with open(html_path, 'a') as f:
+                f.write("\n<!-- Fig33 UI overlay: subset + colour-mode controls -->\n")
+                f.write("<script type=\"text/javascript\">\n")
+                f.write("(function(){\n")
+                f.write("  try{\n")
+                f.write("    const masks = " + masks_json + ";\n")
+                f.write("    const gd = document.querySelector('.plotly-graph-div');\n")
+                f.write("    if(!gd) return;\n")
+                f.write("    const parent = gd.parentElement; if(parent) parent.style.position = parent.style.position || 'relative';\n")
+                f.write("    const container = document.createElement('div');\n")
+                f.write("    container.style.position='absolute';\n")
+                f.write("    container.style.left='10px';\n")
+                f.write("    container.style.top='10px';\n")
+                f.write("    container.style.zIndex=1000;\n")
+                f.write("    container.style.background='rgba(255,255,255,0.85)';\n")
+                f.write("    container.style.padding='6px';\n")
+                f.write("    container.style.borderRadius='4px';\n")
+                f.write("    container.style.fontFamily='Arial, sans-serif';\n")
+                f.write("    const select = document.createElement('select');\n")
+                f.write("    select.innerHTML = '<option value=\'all\'>All</option><option value=\'train\'>Train only</option><option value=\'test\'>Test only</option>';\n")
+                f.write("    container.appendChild(select);\n")
+                f.write("    const btnCorrect = document.createElement('button'); btnCorrect.textContent = 'Color by correctness'; btnCorrect.style.marginLeft = '8px';\n")
+                f.write("    const btnTT = document.createElement('button'); btnTT.textContent = 'Color by train/test'; btnTT.style.marginLeft = '4px';\n")
+                f.write("    container.appendChild(btnCorrect); container.appendChild(btnTT);\n")
+                f.write("    parent.appendChild(container);\n")
+                f.write("    window._fig_color_mode = 'correctness'; btnCorrect.disabled = true;\n")
+                f.write("    function applyMask(){\n")
+                f.write("      const subset = select.value;\n")
+                f.write("      const mode = window._fig_color_mode || 'correctness';\n")
+                f.write("      const mask = (mode === 'correctness') ? masks.correctness[subset] : masks.traintest[subset];\n")
+                f.write("      if(!Array.isArray(mask)) return;\n")
+                f.write("      for(let i=0;i<mask.length;i++){ Plotly.restyle(gd, {visible: mask[i]}, [i]); }\n")
+                f.write("    }\n")
+                f.write("    select.addEventListener('change', applyMask);\n")
+                f.write("    btnCorrect.addEventListener('click', function(){ window._fig_color_mode = 'correctness'; btnCorrect.disabled = true; btnTT.disabled = false; applyMask(); });\n")
+                f.write("    btnTT.addEventListener('click', function(){ window._fig_color_mode = 'traintest'; btnCorrect.disabled = false; btnTT.disabled = true; applyMask(); });\n")
+                f.write("    applyMask();\n")
+                f.write("  }catch(e){ console.error('Fig33 overlay init failed:', e); }\n")
+                f.write("})();\n")
+                f.write("</script>\n")
+        except Exception as e:
+            print('Failed to append Fig33 overlay script:', e)
 
 # %%
 
