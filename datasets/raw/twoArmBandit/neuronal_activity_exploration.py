@@ -3241,7 +3241,7 @@ else:
                 f.write("    container.style.borderRadius='4px';\n")
                 f.write("    container.style.fontFamily='Arial, sans-serif';\n")
                 f.write("    const select = document.createElement('select');\n")
-                f.write("    select.innerHTML = '<option value=\'all\'>All</option><option value=\'train\'>Train only</option><option value=\'test\'>Test only</option>';\n")
+                f.write("""    select.innerHTML = "<option value='all'>All</option><option value='train'>Train only</option><option value='test'>Test only</option>";\n""")
                 f.write("    container.appendChild(select);\n")
                 f.write("    const btnCorrect = document.createElement('button'); btnCorrect.textContent = 'Color by correctness'; btnCorrect.style.marginLeft = '8px';\n")
                 f.write("    const btnTT = document.createElement('button'); btnTT.textContent = 'Color by train/test'; btnTT.style.marginLeft = '4px';\n")
