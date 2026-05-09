@@ -40,33 +40,37 @@ from ncmcm.bundlenet.utils import (
 # ===========================================================================
 
 # --- Dataset (BanditTaskNeuroPixelsDataset constructor params) --------------
-DOWNSAMPLE_FS       = 20            # target sampling frequency in Hz; None = no downsampling
-DOWNSAMPLE_METHOD   = 'count'       # 'binary' | 'count' | 'rate' | 'mean' | 'gaussian'
-GOOD_NEURONS_ONLY   = True
-NORMALIZE_METHOD    = 'minmax_global'  # None | 'minmax' | 'minmax_global'
+# Allow overriding key dataset / pipeline parameters via environment
+# variables so we can run comparable microvariable evals without editing code.
+# Examples: MICRO_DOWNSAMPLE_FS, MICRO_DOWNSAMPLE_METHOD, MICRO_NORMALIZE_METHOD,
+# MICRO_WINDOW_SIZE, MICRO_GOOD_NEURONS_ONLY, MICRO_USE_LAZY_LOADING, etc.
+DOWNSAMPLE_FS       = int(os.getenv('MICRO_DOWNSAMPLE_FS', '20'))
+DOWNSAMPLE_METHOD   = os.getenv('MICRO_DOWNSAMPLE_METHOD', 'count')
+GOOD_NEURONS_ONLY   = os.getenv('MICRO_GOOD_NEURONS_ONLY', 'True').lower() in ('1', 'true', 'yes')
+NORMALIZE_METHOD    = os.getenv('MICRO_NORMALIZE_METHOD', 'minmax_global')  # None | 'minmax' | 'minmax_global'
 STATE_TRANSITIONS   = None          # e.g. BanditTaskNeuroPixelsDataset.CHOOSING_TO_CORRECTNESS_TRANSITIONS
-CHOOSING_STATE_MODE = 'side'        # 'side' | 'correctness'
-GAUSSIAN_SIGMA_MS   = 25.0          # only used when DOWNSAMPLE_METHOD='gaussian'
-RECOMPUTE_CACHE     = False
+CHOOSING_STATE_MODE = os.getenv('MICRO_CHOOSING_STATE_MODE', 'side')        # 'side' | 'correctness'
+GAUSSIAN_SIGMA_MS   = float(os.getenv('MICRO_GAUSSIAN_SIGMA_MS', '25.0'))  # only used when DOWNSAMPLE_METHOD='gaussian'
+RECOMPUTE_CACHE     = os.getenv('MICRO_RECOMPUTE_CACHE', 'False').lower() in ('1', 'true', 'yes')
 
 # --- HGF -------------------------------------------------------------------
-USE_HGF             = True          # set False to skip HGF loading (disables RUN_HYBRID)
-HGF_MODEL           = 'binary2'     # substring matching HGF pkl filename
-HGF_COLUMN          = 'x_1_expected_mean'   # 'x_1_expected_mean' | 'x_0_expected_mean'
+USE_HGF             = os.getenv('MICRO_USE_HGF', 'True').lower() in ('1', 'true', 'yes')
+HGF_MODEL           = os.getenv('MICRO_HGF_MODEL', 'binary2')     # substring matching HGF pkl filename
+HGF_COLUMN          = os.getenv('MICRO_HGF_COLUMN', 'x_1_expected_mean')   # 'x_1_expected_mean' | 'x_0_expected_mean'
 HGF_BELIEF_RANGE    = None          # None = use KNOWN_HGF_RANGES; or explicit (lo, hi)
 
 # --- Evaluation modes -------------------------------------------------------
-RUN_DISCRETE        = True           # classification: behavioral state → cross-entropy decoder
-RUN_HYBRID          = True           # joint decoder: discrete + continuous (requires USE_HGF=True)
-RUN_CONTINUOUS      = True           # regression: HGF belief trajectory → MSE decoder (requires USE_HGF=True)
-HYBRID_ALPHA        = 0.1           # α * CE_norm + (1-α) * MSE  (matches BunDLeNet default)
+RUN_DISCRETE        = os.getenv('MICRO_RUN_DISCRETE', 'True').lower() in ('1', 'true', 'yes')
+RUN_HYBRID          = os.getenv('MICRO_RUN_HYBRID', 'True').lower() in ('1', 'true', 'yes')
+RUN_CONTINUOUS      = os.getenv('MICRO_RUN_CONTINUOUS', 'True').lower() in ('1', 'true', 'yes')
+HYBRID_ALPHA        = float(os.getenv('MICRO_HYBRID_ALPHA', '0.1'))           # α * CE_norm + (1-α) * MSE  (matches BunDLeNet default)
 
 # --- Data pipeline ----------------------------------------------------------
-WINDOW_SIZE         = 60            # sliding window length (timesteps)
-NUM_OF_SPLITS       = 9             # number of time-series CV folds (only used when SPLIT_MODE='cv')
-USE_LAZY_LOADING    = True           # True = memory-efficient (required for large datasets)
+WINDOW_SIZE         = int(os.getenv('MICRO_WINDOW_SIZE', '60'))            # sliding window length (timesteps)
+NUM_OF_SPLITS       = int(os.getenv('MICRO_NUM_OF_SPLITS', '9'))          # number of time-series CV folds (only used when SPLIT_MODE='cv')
+USE_LAZY_LOADING    = os.getenv('MICRO_USE_LAZY_LOADING', 'True').lower() in ('1', 'true', 'yes')
                                     # False = eager numpy (fast but may OOM)
-NUM_WORKERS         = 4             # DataLoader worker processes for prefetching (USE_LAZY_LOADING only)
+NUM_WORKERS         = int(os.getenv('MICRO_NUM_WORKERS', '4'))            # DataLoader worker processes for prefetching (USE_LAZY_LOADING only)
 
 # --- Split mode -------------------------------------------------------------
 # 'cv'             : NUM_OF_SPLITS-fold time-series cross-validation (default, thorough)
@@ -79,10 +83,10 @@ BUNDLENET_KFOLD_FOLD_IDX = 4     # fold index used as val when SPLIT_MODE='bundl
                                   # matches bandit_gridsearch.py --kfold_test_fold default
 
 # --- Decoder training -------------------------------------------------------
-NUM_DECODER_RUNS    = 10            # independent decoder runs per fold
-TRAIN_EPOCHS        = 100           # epochs per decoder run
-BATCH_SIZE          = 512           # mini-batch size (only used when USE_LAZY_LOADING=True)
-NUM_PERMUTATIONS    = 200           # permutation baseline runs (discrete: chance acc; continuous: chance R²)
+NUM_DECODER_RUNS    = int(os.getenv('MICRO_NUM_DECODER_RUNS', '10'))    # independent decoder runs per fold
+TRAIN_EPOCHS        = int(os.getenv('MICRO_TRAIN_EPOCHS', '100'))      # epochs per decoder run
+BATCH_SIZE          = int(os.getenv('MICRO_BATCH_SIZE', '512'))        # mini-batch size (only used when USE_LAZY_LOADING=True)
+NUM_PERMUTATIONS    = int(os.getenv('MICRO_NUM_PERMUTATIONS', '200'))   # permutation baseline runs (discrete: chance acc; continuous: chance R²)
 
 # ===========================================================================
 # Validation
