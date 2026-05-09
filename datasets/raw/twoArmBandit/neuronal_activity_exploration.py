@@ -3083,7 +3083,7 @@ else:
 
         fig.add_trace(go.Scatter(
             x=trial_times[t_train_corr_idx], y=trial_pred_sign[t_train_corr_idx], mode='markers',
-            marker=dict(size=8, color='#9aa0a6', symbol='x'), name='Predicted (Train: correct)',
+            marker=dict(size=8, color='green', symbol='x'), name='Predicted (Train: correct)',
             hovertemplate='trial=%{text}<br>t=%{x:.2f}s<br>p_right=%{customdata[0]:.3f}<extra></extra>',
             text=_fmt_text(trial_idx_keys[t_train_corr_idx]),
             customdata=np.column_stack([trial_pred_p[t_train_corr_idx]]) if len(t_train_corr_idx) else [],
@@ -3091,7 +3091,7 @@ else:
 
         fig.add_trace(go.Scatter(
             x=trial_times[t_train_inc_idx], y=trial_pred_sign[t_train_inc_idx], mode='markers',
-            marker=dict(size=8, color='#9aa0a6', symbol='x'), name='Predicted (Train: incorrect)',
+            marker=dict(size=8, color='red', symbol='x'), name='Predicted (Train: incorrect)',
             hovertemplate='trial=%{text}<br>t=%{x:.2f}s<br>p_right=%{customdata[0]:.3f}<extra></extra>',
             text=_fmt_text(trial_idx_keys[t_train_inc_idx]),
             customdata=np.column_stack([trial_pred_p[t_train_inc_idx]]) if len(t_train_inc_idx) else [],
@@ -3123,7 +3123,7 @@ else:
 
         fig.add_trace(go.Scatter(
             x=trial_times[t_test_corr_idx], y=trial_pred_sign[t_test_corr_idx], mode='markers',
-            marker=dict(size=8, color='black', symbol='x'), name='Predicted (Test: correct)',
+            marker=dict(size=8, color='green', symbol='x'), name='Predicted (Test: correct)',
             hovertemplate='trial=%{text}<br>t=%{x:.2f}s<br>p_right=%{customdata[0]:.3f}<extra></extra>',
             text=_fmt_text(trial_idx_keys[t_test_corr_idx]),
             customdata=np.column_stack([trial_pred_p[t_test_corr_idx]]) if len(t_test_corr_idx) else [],
@@ -3131,7 +3131,7 @@ else:
 
         fig.add_trace(go.Scatter(
             x=trial_times[t_test_inc_idx], y=trial_pred_sign[t_test_inc_idx], mode='markers',
-            marker=dict(size=8, color='black', symbol='x'), name='Predicted (Test: incorrect)',
+            marker=dict(size=8, color='red', symbol='x'), name='Predicted (Test: incorrect)',
             hovertemplate='trial=%{text}<br>t=%{x:.2f}s<br>p_right=%{customdata[0]:.3f}<extra></extra>',
             text=_fmt_text(trial_idx_keys[t_test_inc_idx]),
             customdata=np.column_stack([trial_pred_p[t_test_inc_idx]]) if len(t_test_inc_idx) else [],
