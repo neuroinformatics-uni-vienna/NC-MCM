@@ -42,36 +42,39 @@ from ncmcm.bundlenet.utils import (
 )
 
 # ---------------------------------------------------------------------------
-# Config (defaults chosen to match BunDLeNet run). Override with env vars.
+# Config (defaults chosen to match BunDLeNet run). Hardcoded values.
 # ---------------------------------------------------------------------------
-DOWNSAMPLE_FS       = int(os.getenv('MICRO_TRIAL_DOWNSAMPLE_FS', '30'))
-DOWNSAMPLE_METHOD   = os.getenv('MICRO_TRIAL_DOWNSAMPLE_METHOD', 'gaussian')
-GOOD_NEURONS_ONLY   = os.getenv('MICRO_TRIAL_GOOD_NEURONS_ONLY', 'false').lower() in ('1', 'true', 'yes')
-NORMALIZE_METHOD    = os.getenv('MICRO_TRIAL_NORMALIZE_METHOD', 'minmax_global')
-CHOOSING_STATE_MODE = os.getenv('MICRO_TRIAL_CHOOSING_STATE_MODE', 'side')
-GAUSSIAN_SIGMA_MS   = float(os.getenv('MICRO_TRIAL_GAUSSIAN_SIGMA_MS', '25.0'))
-RECOMPUTE_CACHE     = os.getenv('MICRO_TRIAL_RECOMPUTE_CACHE', 'false').lower() in ('1', 'true', 'yes')
+DOWNSAMPLE_FS       = 30
+DOWNSAMPLE_METHOD   = 'gaussian'
+GOOD_NEURONS_ONLY   = False
+NORMALIZE_METHOD    = 'minmax_global'
+CHOOSING_STATE_MODE = 'side'
+GAUSSIAN_SIGMA_MS   = 25.0
+RECOMPUTE_CACHE     = False
 
-USE_HGF             = os.getenv('MICRO_TRIAL_USE_HGF', 'true').lower() in ('1', 'true', 'yes')
-HGF_MODEL           = os.getenv('MICRO_TRIAL_HGF_MODEL', 'binary2')
-HGF_COLUMN          = os.getenv('MICRO_TRIAL_HGF_COLUMN', 'x_1_expected_mean')
+USE_HGF             = True
+HGF_MODEL           = 'binary2'
+HGF_COLUMN          = 'x_1_expected_mean'
 
-RUN_DISCRETE        = os.getenv('MICRO_TRIAL_RUN_DISCRETE', 'true').lower() in ('1', 'true', 'yes')
-RUN_HYBRID          = os.getenv('MICRO_TRIAL_RUN_HYBRID', 'true').lower() in ('1', 'true', 'yes')
-RUN_CONTINUOUS      = os.getenv('MICRO_TRIAL_RUN_CONTINUOUS', 'true').lower() in ('1', 'true', 'yes')
-HYBRID_ALPHA        = float(os.getenv('MICRO_TRIAL_HYBRID_ALPHA', '0.1'))
+# Behavioural label mode: 'full' (per-timepoint) or 'decision' (one label per trial)
+B_MODE              = 'full'
 
-WINDOW_SIZE         = int(os.getenv('MICRO_TRIAL_WINDOW_SIZE', '50'))
-USE_LAZY_LOADING    = os.getenv('MICRO_TRIAL_USE_LAZY_LOADING', 'true').lower() in ('1', 'true', 'yes')
-NUM_WORKERS         = int(os.getenv('MICRO_TRIAL_NUM_WORKERS', '4'))
+RUN_DISCRETE        = True
+RUN_HYBRID          = True
+RUN_CONTINUOUS      = True
+HYBRID_ALPHA        = 0.1
 
-NUM_DECODER_RUNS    = int(os.getenv('MICRO_TRIAL_NUM_DECODER_RUNS', '10'))
-TRAIN_EPOCHS        = int(os.getenv('MICRO_TRIAL_TRAIN_EPOCHS', '100'))
-BATCH_SIZE          = int(os.getenv('MICRO_TRIAL_BATCH_SIZE', '256'))
-NUM_PERMUTATIONS    = int(os.getenv('MICRO_TRIAL_NUM_PERMUTATIONS', '200'))
+WINDOW_SIZE         = 50
+USE_LAZY_LOADING    = True
+NUM_WORKERS         = 4
 
-TRIAL_TEST_RATIO    = float(os.getenv('MICRO_TRIAL_TEST_RATIO', '0.2'))
-RANDOM_SEED         = int(os.getenv('MICRO_TRIAL_RANDOM_SEED', '42'))
+NUM_DECODER_RUNS    = 10
+TRAIN_EPOCHS        = 100
+BATCH_SIZE          = 256
+NUM_PERMUTATIONS    = 200 # For estimating chance accuracy in discrete decoding
+
+TRIAL_TEST_RATIO    = 0.2
+RANDOM_SEED         = 42
 
 # Device
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -109,6 +112,7 @@ def main():
         good_neurons_only=GOOD_NEURONS_ONLY,
         normalize_method=NORMALIZE_METHOD,
         choosing_state_mode=CHOOSING_STATE_MODE,
+        b_mode=B_MODE,
         gaussian_sigma_ms=GAUSSIAN_SIGMA_MS,
         recompute_cache=RECOMPUTE_CACHE,
         **_hgf_kwargs,
@@ -290,6 +294,7 @@ def main():
             data_path=data_path, downsample_fs=DOWNSAMPLE_FS, downsample_method=DOWNSAMPLE_METHOD,
             normalize_method=NORMALIZE_METHOD, window_size=WINDOW_SIZE, use_lazy_loading=USE_LAZY_LOADING,
             num_decoder_runs=NUM_DECODER_RUNS, train_epochs=TRAIN_EPOCHS, batch_size=BATCH_SIZE,
+            b_mode=B_MODE,
         ),
         metrics=metrics,
     )
