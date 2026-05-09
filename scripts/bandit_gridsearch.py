@@ -630,8 +630,18 @@ def visualize_latent_space(y, b, b_labels, output_dir, vis_range, data_split='tr
             safe_name = var_name.lower().replace(' ', '_')
             np.save(output_dir / 'data' / f'{safe_name}_{data_split}.npy', var_array)
 
-    # Slice segment_ids to the same range
-    seg_ids_vis = segment_ids[start:end] if segment_ids is not None else None
+    # Slice segment_ids to the same range (robust to mismatched lengths)
+    seg_ids_vis = None
+    if segment_ids is not None:
+        try:
+            seg_ids_vis = segment_ids[start:end]
+            # If lengths don't match, ignore segment_ids to avoid indexing errors
+            if getattr(seg_ids_vis, 'shape', (None,))[0] != y_vis.shape[0]:
+                print(f"Warning: segment_ids length ({len(segment_ids)}) does not match latent length ({len(y)}); skipping segment-based boundary suppression for this split")
+                seg_ids_vis = None
+        except Exception:
+            print(f"Warning: could not slice segment_ids (len={len(segment_ids)}) for latent range {start}:{end}; skipping segment-based boundary suppression")
+            seg_ids_vis = None
 
     vis = LatentSpaceVisualiser(y_vis, b_vis, b_labels, show_points=True, colors=colors, segment_ids=seg_ids_vis)
     
