@@ -3163,52 +3163,88 @@ else:
             fig.add_annotation(x=t, y=1.06, xref="x", yref="paper", text=short, showarrow=False, font=dict(color=color, size=10))
 
         # Updatemenu: combined colour x subset options (6 states)
-        # Trace order (indices) must match the traces added above; compute visibility arrays accordingly
+        # Build visibility masks by mapping trace *names* → indices so adding/removing
+        # intermediate traces (e.g. the wrong-prop line) doesn't break the UI.
         n_traces = len(fig.data)
 
-        # Helper to build a visibility mask with indices set to True
-        def vis_mask(true_idx_list):
+        # Map trace names to their indices
+        name_to_idx = {getattr(t, 'name', ''): i for i, t in enumerate(fig.data)}
+
+        def idxs(*names):
+            out = []
+            for n in names:
+                if n in name_to_idx:
+                    out.append(name_to_idx[n])
+            return out
+
+        def mask_from_indices(indices):
             v = [False] * n_traces
-            for ii in true_idx_list:
+            for ii in indices:
                 if 0 <= ii < n_traces:
                     v[ii] = True
             return v
 
-        # Indices mapping (based on the order traces were added above):
-        # 0-5: Window All/Train/Test correct/inc
-        # 6-7: Window train/test set
-        # 8-10: True All (corr, inc, no-pred)
-        # 11-12: Pred All (corr, inc)
-        # 13-15: True Train (corr, inc, no-pred)
-        # 16-17: Pred Train (corr, inc)
-        # 18-20: True Test (corr, inc, no-pred)
-        # 21-22: Pred Test (corr, inc)
+        # Keep certain utility traces always visible (e.g. the running wrong-prop line)
+        always_idx = [i for i, t in enumerate(fig.data) if (getattr(t, 'name', '') or '').startswith('Wrong prop')]
 
+        # Names used in traces above; construct masks by name for robustness
         btns = []
 
         # Correctness · All
-        vis_correct_all = vis_mask([0, 1, 8, 9, 10, 11, 12])
-        btns.append(dict(label='Correctness · All', method='update', args=[{'visible': vis_correct_all}, {'title': 'Session Predictions — Correctness (All)'}]))
+        correct_all_names = (
+            'Window preds (All: correct)', 'Window preds (All: incorrect)',
+            'True (All: correct)', 'True (All: incorrect)', 'True (All: no pred)',
+            'Predicted (All: correct)', 'Predicted (All: incorrect)'
+        )
+        vis_correct_all = set(idxs(*correct_all_names)) | set(always_idx)
+        btns.append(dict(label='Correctness · All', method='update', args=[{'visible': mask_from_indices(sorted(vis_correct_all))}, {'title': 'Session Predictions — Correctness (All)'}]))
 
         # Correctness · Train only
-        vis_correct_train = vis_mask([2, 3, 13, 14, 15, 16, 17])
-        btns.append(dict(label='Correctness · Train only', method='update', args=[{'visible': vis_correct_train}, {'title': 'Session Predictions — Correctness (Train only)'}]))
+        correct_train_names = (
+            'Window preds (Train: correct)', 'Window preds (Train: incorrect)',
+            'True (Train: correct)', 'True (Train: incorrect)', 'True (Train: no pred)',
+            'Predicted (Train: correct)', 'Predicted (Train: incorrect)'
+        )
+        vis_correct_train = set(idxs(*correct_train_names)) | set(always_idx)
+        btns.append(dict(label='Correctness · Train only', method='update', args=[{'visible': mask_from_indices(sorted(vis_correct_train))}, {'title': 'Session Predictions — Correctness (Train only)'}]))
 
         # Correctness · Test only
-        vis_correct_test = vis_mask([4, 5, 18, 19, 20, 21, 22])
-        btns.append(dict(label='Correctness · Test only', method='update', args=[{'visible': vis_correct_test}, {'title': 'Session Predictions — Correctness (Test only)'}]))
+        correct_test_names = (
+            'Window preds (Test: correct)', 'Window preds (Test: incorrect)',
+            'True (Test: correct)', 'True (Test: incorrect)', 'True (Test: no pred)',
+            'Predicted (Test: correct)', 'Predicted (Test: incorrect)'
+        )
+        vis_correct_test = set(idxs(*correct_test_names)) | set(always_idx)
+        btns.append(dict(label='Correctness · Test only', method='update', args=[{'visible': mask_from_indices(sorted(vis_correct_test))}, {'title': 'Session Predictions — Correctness (Test only)'}]))
 
-        # Train/Test · All
-        vis_tt_all = vis_mask([6, 7, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22])
-        btns.append(dict(label='Train/Test · All', method='update', args=[{'visible': vis_tt_all}, {'title': 'Session Predictions — Train/Test (All)'}]))
+        # Train/Test · All (show window train/test + all per-trial traces)
+        tt_all_names = (
+            'Window preds (train)', 'Window preds (test)',
+            'True (Train: correct)', 'True (Train: incorrect)', 'True (Train: no pred)',
+            'Predicted (Train: correct)', 'Predicted (Train: incorrect)',
+            'True (Test: correct)', 'True (Test: incorrect)', 'True (Test: no pred)',
+            'Predicted (Test: correct)', 'Predicted (Test: incorrect)'
+        )
+        vis_tt_all = set(idxs(*tt_all_names)) | set(always_idx)
+        btns.append(dict(label='Train/Test · All', method='update', args=[{'visible': mask_from_indices(sorted(vis_tt_all))}, {'title': 'Session Predictions — Train/Test (All)'}]))
 
         # Train/Test · Train only
-        vis_tt_train = vis_mask([6, 13, 14, 15, 16, 17])
-        btns.append(dict(label='Train/Test · Train only', method='update', args=[{'visible': vis_tt_train}, {'title': 'Session Predictions — Train/Test (Train only)'}]))
+        tt_train_names = (
+            'Window preds (train)',
+            'True (Train: correct)', 'True (Train: incorrect)', 'True (Train: no pred)',
+            'Predicted (Train: correct)', 'Predicted (Train: incorrect)'
+        )
+        vis_tt_train = set(idxs(*tt_train_names)) | set(always_idx)
+        btns.append(dict(label='Train/Test · Train only', method='update', args=[{'visible': mask_from_indices(sorted(vis_tt_train))}, {'title': 'Session Predictions — Train/Test (Train only)'}]))
 
         # Train/Test · Test only
-        vis_tt_test = vis_mask([7, 18, 19, 20, 21, 22])
-        btns.append(dict(label='Train/Test · Test only', method='update', args=[{'visible': vis_tt_test}, {'title': 'Session Predictions — Train/Test (Test only)'}]))
+        tt_test_names = (
+            'Window preds (test)',
+            'True (Test: correct)', 'True (Test: incorrect)', 'True (Test: no pred)',
+            'Predicted (Test: correct)', 'Predicted (Test: incorrect)'
+        )
+        vis_tt_test = set(idxs(*tt_test_names)) | set(always_idx)
+        btns.append(dict(label='Train/Test · Test only', method='update', args=[{'visible': mask_from_indices(sorted(vis_tt_test))}, {'title': 'Session Predictions — Train/Test (Test only)'}]))
 
         fig.update_layout(
             title='Session Predictions — predicted probability (per-window) + true/predicted choices',
@@ -3223,16 +3259,17 @@ else:
         print('Saved 33_session_timeseries_predictions.html')
 
         # Export visibility masks and append a small JS overlay to the saved HTML
+        # Convert the boolean masks into plain lists for JSON export
         masks = {
             'correctness': {
-                'all': vis_correct_all,
-                'train': vis_correct_train,
-                'test': vis_correct_test,
+                'all': mask_from_indices(sorted(vis_correct_all)),
+                'train': mask_from_indices(sorted(vis_correct_train)),
+                'test': mask_from_indices(sorted(vis_correct_test)),
             },
             'traintest': {
-                'all': vis_tt_all,
-                'train': vis_tt_train,
-                'test': vis_tt_test,
+                'all': mask_from_indices(sorted(vis_tt_all)),
+                'train': mask_from_indices(sorted(vis_tt_train)),
+                'test': mask_from_indices(sorted(vis_tt_test)),
             },
         }
 
