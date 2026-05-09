@@ -1,33 +1,40 @@
 #!/usr/bin/env python3
 """
-Trial-based Microvariable Evaluation for Two-Arm Bandit Task
+Trial-Based Microvariable Evaluation for Two-Arm Bandit Task
 
-This script evaluates linear decodability of behavioural states (and
-optionally HGF beliefs) on a trial-wise split. It mirrors the
-`bandit_microvariable_evaluation.py` figures but performs train/test
-splits at the trial level (no cross-trial leakage).
+Mirrors ``bandit_microvariable_evaluation.py`` in every feature — discrete /
+hybrid / continuous evaluations, both unweighted and weighted loss variants,
+2×3 summary PDF, t-tests, confusion heatmaps, per-state F1, R² plots — but
+replaces time-series cross-validation with a **single trial-level train/test
+split** so that windows from the same trial never appear in both train and test
+sets (no cross-trial leakage).
 
 Usage:
     python scripts/bandit_microvariable_evaluation_trial_based.py <data_path>
 
-Defaults are chosen to match typical BunDLeNet runs (downsample=30,
-gaussian, normalize=minmax_global, window=50). Environment variables
-can override key parameters (see constants below).
+Original discrete version adapted from:
+  Akshey Kumar, comparison-algorithms / microvariable_evaluation.py
+Adapted and extended by: Kerim Atak
 """
 
 import sys
+sys.path.append(r'../../../')
+import numpy as np
 import os
 import json
+import math
 import datetime
 from collections import defaultdict
 
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
-from sklearn.preprocessing import LabelEncoder
-from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, precision_recall_fscore_support, r2_score
+from torch.utils.data import Dataset, DataLoader
+from tqdm import tqdm
+from sklearn.metrics import (
+    accuracy_score, confusion_matrix, f1_score,
+    precision_recall_fscore_support, r2_score,
+)
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -36,273 +43,1087 @@ from scipy import stats
 
 from ncmcm.data_loaders.bandit_task import BanditTaskNeuroPixelsDataset
 from ncmcm.bundlenet.utils import (
-    segments_from_trial_starts, prep_data_trials, prep_data_trials_lazy,
-    trial_train_test_split, trial_train_test_split_lazy, make_hybrid_b,
-    torch_batch_prep,
+    prep_data_trials_lazy, trial_train_test_split_lazy,
+    segments_from_trial_starts, prep_data_trials, trial_train_test_split,
+    make_hybrid_b,
 )
 
-# ---------------------------------------------------------------------------
-# Config (defaults chosen to match BunDLeNet run). Hardcoded values.
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# EXPERIMENT CONFIGURATION — edit everything here
+# ===========================================================================
+
+# --- Dataset ----------------------------------------------------------------
 DOWNSAMPLE_FS       = 30
 DOWNSAMPLE_METHOD   = 'gaussian'
 GOOD_NEURONS_ONLY   = False
 NORMALIZE_METHOD    = 'minmax_global'
+STATE_TRANSITIONS   = None
 CHOOSING_STATE_MODE = 'side'
 GAUSSIAN_SIGMA_MS   = 25.0
 RECOMPUTE_CACHE     = False
-
-USE_HGF             = True
-HGF_MODEL           = 'binary2'
-HGF_COLUMN          = 'x_1_expected_mean'
-
 # Behavioural label mode: 'full' (per-timepoint) or 'decision' (one label per trial)
 B_MODE              = 'decision'
 
+# --- HGF -------------------------------------------------------------------
+USE_HGF             = True
+HGF_MODEL           = 'binary2'
+HGF_COLUMN          = 'x_1_expected_mean'
+HGF_BELIEF_RANGE    = None
+
+# --- Evaluation modes -------------------------------------------------------
 RUN_DISCRETE        = True
 RUN_HYBRID          = True
 RUN_CONTINUOUS      = True
 HYBRID_ALPHA        = 0.1
 
+# --- Data pipeline ----------------------------------------------------------
 WINDOW_SIZE         = 50
 USE_LAZY_LOADING    = True
 NUM_WORKERS         = 4
 
-NUM_DECODER_RUNS    = 10
-TRAIN_EPOCHS        = 100
-BATCH_SIZE          = 256
-NUM_PERMUTATIONS    = 200 # For estimating chance accuracy in discrete decoding
-
+# --- Trial split ------------------------------------------------------------
 TRIAL_TEST_RATIO    = 0.2
 RANDOM_SEED         = 42
 
-# Device
+# --- Decoder training -------------------------------------------------------
+NUM_DECODER_RUNS    = 10
+TRAIN_EPOCHS        = 100
+BATCH_SIZE          = 256
+NUM_PERMUTATIONS    = 200
+
+# ===========================================================================
+# Validation
+# ===========================================================================
+
+if RUN_HYBRID and not USE_HGF:
+    raise ValueError("RUN_HYBRID=True requires USE_HGF=True.")
+if RUN_CONTINUOUS and not USE_HGF:
+    raise ValueError("RUN_CONTINUOUS=True requires USE_HGF=True.")
+
+# ===========================================================================
+# CLI
+# ===========================================================================
+
+data_path   = sys.argv[1]
+session_dir = os.path.basename(data_path.rstrip('/'))
+
+_split_label  = f'Trial split: test={TRIAL_TEST_RATIO:.0%}, seed={RANDOM_SEED}'
+_split_suffix = 'trialbased'
+
+# ===========================================================================
+# Data loading
+# ===========================================================================
+
+print(f"Loading data from: {data_path}")
+
+_hgf_kwargs = dict(
+    hgf_model=HGF_MODEL,
+    hgf_column=HGF_COLUMN,
+    hgf_belief_range=HGF_BELIEF_RANGE,
+) if USE_HGF else dict(hgf_model=None)
+
+data = BanditTaskNeuroPixelsDataset(
+    data_path=data_path,
+    downsample_fs=DOWNSAMPLE_FS,
+    downsample_method=DOWNSAMPLE_METHOD,
+    good_neurons_only=GOOD_NEURONS_ONLY,
+    normalize_method=NORMALIZE_METHOD,
+    state_transitions=STATE_TRANSITIONS,
+    choosing_state_mode=CHOOSING_STATE_MODE,
+    b_mode=B_MODE,
+    gaussian_sigma_ms=GAUSSIAN_SIGMA_MS,
+    recompute_cache=RECOMPUTE_CACHE,
+    **_hgf_kwargs,
+)
+
+X        = data.x.toarray().T          # (T, N)
+B        = data.b.toarray().flatten()  # (T,) — discrete behavioral states
+B_belief = data.hgf_beliefs            # (T,) float32 or None
+
+b_labels_dict = data.b_labels_dict
+b_labels      = data.b_labels
+
+print(f"Data shape: X={X.shape}, B={B.shape}")
+print(f"Behavioral labels: {b_labels_dict}")
+if B_belief is not None:
+    print(f"HGF beliefs shape: {B_belief.shape}, "
+          f"range=[{B_belief.min():.3f}, {B_belief.max():.3f}]")
+
+trial_start_indices = data.trial_start_indices
+if trial_start_indices is None:
+    raise RuntimeError(
+        'Dataset does not expose trial_start_indices; '
+        'trial-based evaluation requires it.'
+    )
+print(f"Trial start indices: {len(trial_start_indices)} trials")
+
+# Hybrid label array: col 0 = discrete class index (float), col 1 = HGF belief
+B_hybrid = make_hybrid_b(B, B_belief) if (USE_HGF and B_belief is not None) else None
+
+# ===========================================================================
+# Output folder
+# ===========================================================================
+
+_ts     = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+run_dir = os.path.join(
+    'results', 'twoArmBandit', 'microvariable_evaluation_trial_based',
+    f'{session_dir}_{_ts}_{_split_suffix}',
+)
+for _sub in ('discrete', 'hybrid', 'continuous'):
+    os.makedirs(os.path.join(run_dir, _sub), exist_ok=True)
+
+n_neurons = X.shape[1]
+input_dim = n_neurons * WINDOW_SIZE
+
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(f"Using device: {device}")
 
+_config = dict(
+    # dataset
+    data_path=data_path, session_dir=session_dir,
+    downsample_fs=DOWNSAMPLE_FS, downsample_method=DOWNSAMPLE_METHOD,
+    good_neurons_only=GOOD_NEURONS_ONLY, normalize_method=NORMALIZE_METHOD,
+    state_transitions=str(STATE_TRANSITIONS), choosing_state_mode=CHOOSING_STATE_MODE,
+    b_mode=B_MODE,
+    gaussian_sigma_ms=GAUSSIAN_SIGMA_MS, recompute_cache=RECOMPUTE_CACHE,
+    # HGF
+    use_hgf=USE_HGF, hgf_model=HGF_MODEL, hgf_column=HGF_COLUMN,
+    hgf_belief_range=str(HGF_BELIEF_RANGE),
+    # modes
+    run_discrete=RUN_DISCRETE, run_hybrid=RUN_HYBRID,
+    hybrid_alpha=HYBRID_ALPHA, run_continuous=RUN_CONTINUOUS,
+    # pipeline
+    window_size=WINDOW_SIZE, use_lazy_loading=USE_LAZY_LOADING, num_workers=NUM_WORKERS,
+    # trial split
+    trial_test_ratio=TRIAL_TEST_RATIO, random_seed=RANDOM_SEED,
+    # training
+    num_decoder_runs=NUM_DECODER_RUNS, train_epochs=TRAIN_EPOCHS,
+    batch_size=BATCH_SIZE, num_permutations=NUM_PERMUTATIONS,
+    # data info
+    n_timesteps=int(X.shape[0]), n_neurons=int(X.shape[1]),
+    n_trials=int(len(trial_start_indices)),
+    start_timestamp=_ts, device=str(device),
+)
+with open(os.path.join(run_dir, 'config.json'), 'w') as _f:
+    json.dump(_config, _f, indent=2)
+print(f"Run folder: {run_dir}")
+print(f"Config written \u2192 {run_dir}/config.json")
 
-def make_dataloader_eager(x_paired, b_arr, batch_size, shuffle=True):
-    # x_paired: (M, 2, win, N)
-    X1 = x_paired[:, 1, :, :]
-    X1_flat = X1.reshape(X1.shape[0], -1)
-    x_t = torch.FloatTensor(X1_flat)
-    b_t = torch.LongTensor(b_arr)
-    batches = list(zip([x_t[i:i+batch_size] for i in range(0, len(x_t), batch_size)],
-                       [b_t[i:i+batch_size] for i in range(0, len(b_t), batch_size)]))
-    return batches
+# ===========================================================================
+# Data pipeline helpers
+# ===========================================================================
 
+def make_trial_split(label_array):
+    """Return a single trial-based train/test split, wrapped as a 1-element
+    list of (x_tr, x_val, b_tr, b_val) tuples.
 
-def main():
-    if len(sys.argv) < 2:
-        print("Usage: python bandit_microvariable_evaluation_trial_based.py <data_path>")
-        sys.exit(1)
-
-    data_path = sys.argv[1]
-    session_dir = os.path.basename(data_path.rstrip('/'))
-    ts = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-    run_dir = os.path.join('results', 'twoArmBandit', 'microvariable_evaluation_trial_based', f'{session_dir}_{ts}_trialbased')
-    for sub in ('discrete', 'hybrid', 'continuous'):
-        os.makedirs(os.path.join(run_dir, sub), exist_ok=True)
-
-    print(f"Loading data from: {data_path}")
-    _hgf_kwargs = dict(hgf_model=HGF_MODEL, hgf_column=HGF_COLUMN) if USE_HGF else dict(hgf_model=None)
-    data = BanditTaskNeuroPixelsDataset(
-        data_path=data_path,
-        downsample_fs=DOWNSAMPLE_FS,
-        downsample_method=DOWNSAMPLE_METHOD,
-        good_neurons_only=GOOD_NEURONS_ONLY,
-        normalize_method=NORMALIZE_METHOD,
-        choosing_state_mode=CHOOSING_STATE_MODE,
-        b_mode=B_MODE,
-        gaussian_sigma_ms=GAUSSIAN_SIGMA_MS,
-        recompute_cache=RECOMPUTE_CACHE,
-        **_hgf_kwargs,
-    )
-
-    X = data.x.toarray().T
-    B_raw = data.b.toarray().flatten()
-    b_labels_dict = data.b_labels_dict
-    print(f"Data shape: X={X.shape}, B={B_raw.shape}")
-
-    # Encode labels to integers (LabelEncoder keeps mapping)
-    le = LabelEncoder()
-    B_encoded = le.fit_transform(B_raw)
-
-    # HGF beliefs if available
-    B_belief = data.hgf_beliefs if USE_HGF and getattr(data, 'hgf_beliefs', None) is not None else None
-    if B_belief is not None:
-        print(f"HGF beliefs found: range=[{B_belief.min():.3f}, {B_belief.max():.3f}]")
-
-    # Trial segmentation + windowing
-    print("Segmenting trials and windowing (trial-based)...")
-    trial_start_indices = data.trial_start_indices
-    if trial_start_indices is None:
-        raise RuntimeError('Dataset does not expose trial_start_indices; trial-based evaluation requires it.')
-
+    The interface is intentionally identical to ``make_cv_splits`` in
+    ``bandit_microvariable_evaluation.py`` so the rest of the evaluation
+    functions can use the same fold-loop structure (with num_folds=1).
+    """
     if USE_LAZY_LOADING:
-        dataset_lazy, B_pairs, trial_ids = prep_data_trials_lazy(X, B_encoded, win=WINDOW_SIZE, trial_start_indices=trial_start_indices)
-        (train_subset, B_train), (test_subset, B_test) = trial_train_test_split_lazy(dataset_lazy, B_pairs, trial_ids, test_ratio=TRIAL_TEST_RATIO, random_state=RANDOM_SEED)
-        n_neurons = X.shape[1]
-        input_dim = WINDOW_SIZE * n_neurons
-        num_train = len(train_subset)
-        num_test = len(test_subset)
-    else:
-        trial_segments = segments_from_trial_starts(X, B_encoded, trial_start_indices)
-        X_paired, B_pairs, trial_ids = prep_data_trials(trial_segments, win=WINDOW_SIZE)
-        (X_train, B_train), (X_test, B_test) = trial_train_test_split(X_paired, B_pairs, trial_ids, test_ratio=TRIAL_TEST_RATIO, random_state=RANDOM_SEED)
-        n_neurons = X.shape[1]
-        input_dim = WINDOW_SIZE * n_neurons
-        num_train = len(X_train)
-        num_test = len(X_test)
-
-    print(f"Prepared trial-based pairs: train={num_train}, test={num_test}, input_dim={input_dim}")
-
-    # Labels and class weights
-    state_labels = np.unique(B_encoded)
-    n_states = len(state_labels)
-    print(f"State labels: {n_states} classes -> {b_labels_dict}")
-
-    # Train/eval discrete decoder
-    output_dir = os.path.join(run_dir, 'discrete')
-
-    def train_and_eval_discrete():
-        print('\nRunning discrete decoders (trial-based)')
-        val_accs = []
-        val_f1s = []
-        val_conf_sum = np.zeros((n_states, n_states))
-
-        # Precompute class weights from training distribution
-        if USE_LAZY_LOADING:
-            counts = defaultdict(int)
-            for lbl in B_train:
-                counts[int(lbl)] += 1
-            total_train = len(B_train)
-        else:
-            vals, cnts = np.unique(B_train, return_counts=True)
-            counts = {int(v): int(c) for v, c in zip(vals, cnts)}
-            total_train = len(B_train)
-
-        class_weights = {lbl: total_train / (n_states * counts.get(lbl, 1)) for lbl in state_labels}
-        weights_list = [class_weights[l] for l in sorted(state_labels)]
-        class_weights_tensor = torch.FloatTensor(weights_list).to(device)
-
-        for run in range(NUM_DECODER_RUNS):
-            model = nn.Linear(input_dim, n_states).to(device)
-            opt = optim.Adam(model.parameters(), lr=0.01)
-            crit = nn.CrossEntropyLoss(weight=class_weights_tensor)
-
-            # Build loaders
-            if USE_LAZY_LOADING:
-                tr_loader = torch_batch_prep(train_subset, B_train, device=device, batch_size=BATCH_SIZE, shuffle=True)
-                val_loader = torch_batch_prep(test_subset, B_test, device=device, batch_size=BATCH_SIZE, shuffle=False)
-            else:
-                tr_batches = make_dataloader_eager(X_train, B_train, BATCH_SIZE, shuffle=True)
-                val_batches = make_dataloader_eager(X_test, B_test, BATCH_SIZE, shuffle=False)
-
-            # Training
-            model.train()
-            for epoch in range(TRAIN_EPOCHS):
-                if USE_LAZY_LOADING:
-                    for xb, yb in tr_loader:
-                        xb_feat = xb[:, 1, :, :].reshape(xb.shape[0], -1)
-                        yb_t = yb.long()
-                        opt.zero_grad()
-                        loss = crit(model(xb_feat), yb_t)
-                        loss.backward(); opt.step()
-                else:
-                    for xb, yb in tr_batches:
-                        xb = xb.to(device)
-                        yb = yb.to(device)
-                        opt.zero_grad()
-                        loss = crit(model(xb), yb)
-                        loss.backward(); opt.step()
-
-            # Evaluation
-            if USE_LAZY_LOADING:
-                preds, trues = [], []
-                model.eval()
-                with torch.no_grad():
-                    for xb, yb in val_loader:
-                        xb_feat = xb[:, 1, :, :].reshape(xb.shape[0], -1)
-                        out = model(xb_feat)
-                        preds.append(out.argmax(dim=1).cpu().numpy())
-                        trues.append(yb.cpu().numpy())
-                pred = np.concatenate(preds); true = np.concatenate(trues)
-            else:
-                preds, trues = [], []
-                model.eval()
-                with torch.no_grad():
-                    for xb, yb in val_batches:
-                        xb = xb.to(device); yb = yb.to(device)
-                        out = model(xb)
-                        preds.append(out.argmax(dim=1).cpu().numpy())
-                        trues.append(yb.cpu().numpy())
-                pred = np.concatenate(preds); true = np.concatenate(trues)
-
-            acc = accuracy_score(true, pred)
-            f1 = f1_score(true, pred, average=None, labels=sorted(state_labels), zero_division=0)
-            val_accs.append(acc); val_f1s.append(f1)
-            val_conf_sum += confusion_matrix(true, pred, labels=sorted(state_labels))
-            print(f"  Run {run+1}/{NUM_DECODER_RUNS}  acc={acc:.3f}")
-
-        val_accs = np.array(val_accs)
-        val_f1s = np.array(val_f1s)
-        avg_conf = val_conf_sum / NUM_DECODER_RUNS
-
-        # Permutation chance baseline
-        print(f"Estimating chance accuracy ({NUM_PERMUTATIONS} permutations)...")
-        all_val_labels = B_test if not USE_LAZY_LOADING else B_test
-        chance_acc = np.array([
-            accuracy_score(np.random.choice(all_val_labels, size=all_val_labels.shape), all_val_labels)
-            for _ in range(NUM_PERMUTATIONS)
-        ])
-        print(f"Chance: {chance_acc.mean():.3f} ± {chance_acc.std():.3f}")
-
-        # Save outputs
-        np.savetxt(os.path.join(output_dir, f'acc_list_val_{session_dir}_unweighted.txt'), val_accs)
-        np.savetxt(os.path.join(output_dir, f'acc_list_chance_{session_dir}.txt'), chance_acc)
-        np.save(os.path.join(output_dir, f'all_f1_scores_val_{session_dir}_unweighted.npy'), val_f1s)
-
-        # Summary JSON for discrete
-        res = dict(
-            unweighted_val_acc=float(val_accs.mean()),
-            unweighted_val_acc_std=float(val_accs.std()),
-            chance_acc=float(chance_acc.mean()),
+        dataset_lazy, B_pairs, trial_ids = prep_data_trials_lazy(
+            X, label_array, win=WINDOW_SIZE,
+            trial_start_indices=trial_start_indices,
         )
-        with open(os.path.join(run_dir, 'discrete', 'summary_discrete.json'), 'w') as f:
-            json.dump(res, f, indent=2)
+        (x_tr, b_tr), (x_val, b_val) = trial_train_test_split_lazy(
+            dataset_lazy, B_pairs, trial_ids,
+            test_ratio=TRIAL_TEST_RATIO, random_state=RANDOM_SEED,
+        )
+    else:
+        trial_segments = segments_from_trial_starts(X, label_array, trial_start_indices)
+        x_paired, B_pairs, trial_ids = prep_data_trials(trial_segments, win=WINDOW_SIZE)
+        (x_tr, b_tr), (x_val, b_val) = trial_train_test_split(
+            x_paired, B_pairs, trial_ids,
+            test_ratio=TRIAL_TEST_RATIO, random_state=RANDOM_SEED,
+        )
+    return [(x_tr, x_val, b_tr, b_val)], label_array
 
-        # Simple summary figure (accuracy boxplot)
-        fig, ax = plt.subplots(figsize=(6, 5))
-        ax.boxplot([val_accs, chance_acc], labels=['Val', 'Chance'], patch_artist=True)
-        ax.set_ylabel('Accuracy')
-        ax.set_title(f'Discrete Decoder (trial-based) — {session_dir}')
-        plt.tight_layout()
-        plt.savefig(os.path.join(output_dir, f'summary_{session_dir}.pdf'))
-        plt.close()
 
-        return res
+class FoldDataset(Dataset):
+    """Extract channel-1 windows on demand, flatten, return tensor.
 
-    metrics = {}
-    if RUN_DISCRETE:
-        metrics['discrete'] = train_and_eval_discrete()
+    dtype_str: 'long'   for discrete labels (CrossEntropy)  — returns (x, long scalar)
+               'float'  for continuous labels (MSE)         — returns (x, float [1])
+               'hybrid' for joint labels (CE + MSE)         — returns (x, float [2])
+                        col 0 = class index (float), col 1 = belief
+    """
+    def __init__(self, subset, b_labels, dtype_str='long'):
+        self.subset    = subset
+        self.dtype_str = dtype_str
+        if dtype_str == 'long':
+            self.b_labels = b_labels.astype(np.int64)
+        else:
+            self.b_labels = b_labels.astype(np.float32)
 
-    summary = dict(
-        status='completed',
-        completed_at=datetime.datetime.now().isoformat(),
-        output_dir=run_dir,
-        configuration=dict(
-            data_path=data_path, downsample_fs=DOWNSAMPLE_FS, downsample_method=DOWNSAMPLE_METHOD,
-            normalize_method=NORMALIZE_METHOD, window_size=WINDOW_SIZE, use_lazy_loading=USE_LAZY_LOADING,
-            num_decoder_runs=NUM_DECODER_RUNS, train_epochs=TRAIN_EPOCHS, batch_size=BATCH_SIZE,
-            b_mode=B_MODE,
-        ),
-        metrics=metrics,
+    def __len__(self):
+        return len(self.subset)
+
+    def __getitem__(self, idx):
+        x_paired = self.subset[idx]   # (2, win, N)
+        x1 = x_paired[1].flatten()   # (win*N,)
+        x_t = torch.from_numpy(x1.astype(np.float32))
+        if self.dtype_str == 'long':
+            return x_t, torch.tensor(self.b_labels[idx], dtype=torch.long)
+        elif self.dtype_str == 'float':
+            return x_t, torch.tensor([self.b_labels[idx]], dtype=torch.float32)
+        else:  # hybrid
+            return x_t, torch.tensor(self.b_labels[idx], dtype=torch.float32)  # (2,)
+
+
+def make_loaders(x_fold, b_fold, dtype_str):
+    """Build DataLoaders (lazy) or list-of-batches (eager)."""
+    if USE_LAZY_LOADING:
+        ds = FoldDataset(x_fold, b_fold, dtype_str)
+        return DataLoader(
+            ds, batch_size=BATCH_SIZE, shuffle=False,
+            num_workers=NUM_WORKERS, persistent_workers=NUM_WORKERS > 0,
+        )
+    else:
+        # Eager: x_fold shape (T, 2, win, N); use channel 1
+        X1 = x_fold[:, 1, :, :]          # (T, win, N)
+        X1_flat = X1.reshape(X1.shape[0], -1)
+        x_t = torch.FloatTensor(X1_flat)
+        if dtype_str == 'long':
+            b_t = torch.LongTensor(b_fold)
+        elif dtype_str == 'float':
+            b_t = torch.FloatTensor(b_fold).unsqueeze(1)
+        else:  # hybrid
+            b_t = torch.FloatTensor(b_fold)
+        return list(zip(
+            [x_t[i:i + BATCH_SIZE] for i in range(0, len(x_t), BATCH_SIZE)],
+            [b_t[i:i + BATCH_SIZE] for i in range(0, len(b_t), BATCH_SIZE)],
+        ))
+
+
+def predict_all(model, loader, squeeze_pred=False, squeeze_true=False):
+    """Run model over loader, return (preds, trues) as numpy arrays."""
+    model.eval()
+    preds, trues = [], []
+    with torch.no_grad():
+        for xb, yb in loader:
+            xb = xb.to(device)
+            out = model(xb)
+            preds.append((out.squeeze(1) if squeeze_pred else out.argmax(dim=1)).cpu().numpy())
+            trues.append((yb.squeeze(1) if squeeze_true else yb).numpy())
+    return np.concatenate(preds), np.concatenate(trues)
+
+
+def predict_all_hybrid(model, loader, n_classes):
+    """Run hybrid model; return (disc_preds, cont_preds, disc_true, cont_true)."""
+    model.eval()
+    disc_preds, cont_preds, disc_true, cont_true = [], [], [], []
+    with torch.no_grad():
+        for xb, yb in loader:
+            xb = xb.to(device)
+            out = model(xb)
+            disc_preds.append(out[:, :n_classes].argmax(dim=1).cpu().numpy())
+            cont_preds.append(out[:, n_classes].cpu().numpy())
+            disc_true.append(yb[:, 0].long().numpy())
+            cont_true.append(yb[:, 1].numpy())
+    return (np.concatenate(disc_preds), np.concatenate(cont_preds),
+            np.concatenate(disc_true), np.concatenate(cont_true))
+
+
+def fold_size(fold_split):
+    """Return number of samples regardless of lazy/eager."""
+    return len(fold_split) if USE_LAZY_LOADING else fold_split.shape[0]
+
+
+def _predict_disc(model, loader, n_classes):
+    """Run hybrid model, return only (disc_preds, disc_true)."""
+    model.eval()
+    preds, trues = [], []
+    with torch.no_grad():
+        for xb, yb in loader:
+            xb = xb.to(device)
+            out = model(xb)
+            preds.append(out[:, :n_classes].argmax(dim=1).cpu().numpy())
+            trues.append(yb[:, 0].long().numpy())
+    return np.concatenate(preds), np.concatenate(trues)
+
+
+# ===========================================================================
+# DISCRETE EVALUATION
+# ===========================================================================
+
+def run_discrete_evaluation():
+    print(f"\n{'#'*70}")
+    print(f"### DISCRETE EVALUATION — BEHAVIORAL STATE CLASSIFICATION ###")
+    print(f"{'#'*70}")
+
+    cv_splits, B_ = make_trial_split(B)
+    num_folds    = len(cv_splits)  # always 1
+    state_labels = np.unique(B_)
+    num_states   = len(state_labels)
+    print(f"Prepared trial-based split (1 fold). {num_states} behavioral states.")
+
+    # ── Label distribution ────────────────────────────────────────────────────
+    train_label_counts_raw = defaultdict(int)
+    val_label_counts_raw   = defaultdict(int)
+    total_train = total_val = 0
+
+    for x_tr, x_val, b_tr, b_val in cv_splits:
+        for lbl, cnt in zip(*np.unique(b_tr, return_counts=True)):
+            train_label_counts_raw[lbl] += cnt
+        for lbl, cnt in zip(*np.unique(b_val, return_counts=True)):
+            val_label_counts_raw[lbl] += cnt
+        total_train += len(b_tr)
+        total_val   += len(b_val)
+
+    train_label_counts = {l: train_label_counts_raw[l] / num_folds for l in state_labels}
+    val_label_counts   = {l: val_label_counts_raw[l]   / num_folds for l in state_labels}
+
+    print(f"\nTotal samples: Train={total_train}, Test={total_val}")
+    print(f"\n{'State':<20} {'Train':>8} {'Train%':>8} {'Val':>8} {'Val%':>8}")
+    print("-" * 60)
+    for lbl in sorted(state_labels):
+        sn = b_labels_dict.get(lbl, f'State {lbl}')
+        tc = train_label_counts.get(lbl, 0)
+        vc = val_label_counts.get(lbl, 0)
+        print(f"{sn:<20} {tc:>8.1f} {100*tc/total_train:>7.1f}% "
+              f"{vc:>8.1f} {100*vc/total_val:>7.1f}%")
+
+    imbalance = (max(train_label_counts.values()) /
+                 min(v for v in train_label_counts.values() if v > 0))
+    print(f"\nClass imbalance ratio: {imbalance:.1f}x")
+
+    class_weights = {
+        lbl: total_train / (num_states * train_label_counts_raw[lbl])
+        if train_label_counts_raw[lbl] > 0 else 1.0
+        for lbl in state_labels
+    }
+    weights_list         = [class_weights[l] for l in sorted(state_labels)]
+    class_weights_tensor = torch.FloatTensor(weights_list).to(device)
+
+    output_dir = os.path.join(run_dir, 'discrete')
+    x_pos      = np.arange(len(state_labels))
+
+    # ── Inner training function ───────────────────────────────────────────────
+    def _train(use_weighted_loss, suffix):
+        loss_type = "WEIGHTED" if use_weighted_loss else "UNWEIGHTED"
+        print(f"\n{'#'*60}")
+        print(f"### {loss_type} LOSS ###")
+        print(f"{'#'*60}")
+
+        val_acc_list, val_all_predictions, val_all_f1_scores, val_true_labels         = [], [], [], []
+        train_acc_list, train_all_predictions, train_all_f1_scores, train_true_labels = [], [], [], []
+        val_conf_sum   = np.zeros((num_states, num_states))
+        train_conf_sum = np.zeros((num_states, num_states))
+        total_runs = 0
+
+        for fold_idx, (x_tr, x_val, b_tr, b_val) in enumerate(cv_splits):
+            print(f"\nFold {fold_idx+1}/{num_folds}: train={fold_size(x_tr)}, val={fold_size(x_val)}")
+            tr_loader  = make_loaders(x_tr,  b_tr,  'long')
+            val_loader = make_loaders(x_val, b_val, 'long')
+
+            for _ in tqdm(range(NUM_DECODER_RUNS),
+                          desc=f'Decoders {loss_type} fold {fold_idx+1}', leave=False):
+                model = nn.Sequential(nn.Linear(input_dim, num_states)).to(device)
+                opt   = optim.Adam(model.parameters(), lr=0.01)
+                crit  = nn.CrossEntropyLoss(
+                    weight=class_weights_tensor if use_weighted_loss else None,
+                )
+
+                for epoch in range(TRAIN_EPOCHS):
+                    model.train()
+                    for xb, yb in tr_loader:
+                        xb, yb = xb.to(device), yb.to(device)
+                        opt.zero_grad()
+                        crit(model(xb), yb).backward()
+                        opt.step()
+
+                val_pred,   val_true   = predict_all(model, val_loader,   squeeze_pred=False)
+                train_pred, train_true = predict_all(model, tr_loader,    squeeze_pred=False)
+
+                val_acc_list.append(accuracy_score(val_true, val_pred))
+                val_all_predictions.append(val_pred)
+                val_true_labels.append(val_true)
+                val_all_f1_scores.append(
+                    f1_score(val_true, val_pred, average=None,
+                             labels=state_labels, zero_division=0))
+                val_conf_sum += confusion_matrix(val_true, val_pred, labels=state_labels)
+
+                train_acc_list.append(accuracy_score(train_true, train_pred))
+                train_all_predictions.append(train_pred)
+                train_true_labels.append(train_true)
+                train_all_f1_scores.append(
+                    f1_score(train_true, train_pred, average=None,
+                             labels=state_labels, zero_division=0))
+                train_conf_sum += confusion_matrix(train_true, train_pred, labels=state_labels)
+                total_runs += 1
+
+        val_acc_list        = np.array(val_acc_list)
+        val_all_f1_scores   = np.array(val_all_f1_scores)
+        train_acc_list      = np.array(train_acc_list)
+        train_all_f1_scores = np.array(train_all_f1_scores)
+        avg_conf_val   = val_conf_sum   / total_runs
+        avg_conf_train = train_conf_sum / total_runs
+
+        print(f"\n{'='*60}")
+        print(f"{loss_type} — Val acc: {val_acc_list.mean():.3f} ± {val_acc_list.std():.3f}  |  "
+              f"Train acc: {train_acc_list.mean():.3f} ± {train_acc_list.std():.3f}")
+        print(f"Train-Val gap: {train_acc_list.mean() - val_acc_list.mean():.3f}")
+        print(f"{'='*60}")
+
+        return dict(
+            suffix=suffix, loss_type=loss_type,
+            val_acc_list=val_acc_list,
+            val_all_predictions=np.array(val_all_predictions, dtype=object),
+            val_all_f1_scores=val_all_f1_scores,
+            val_true_labels=np.array(val_true_labels, dtype=object),
+            train_acc_list=train_acc_list,
+            train_all_predictions=np.array(train_all_predictions, dtype=object),
+            train_all_f1_scores=train_all_f1_scores,
+            train_true_labels=np.array(train_true_labels, dtype=object),
+            avg_conf_matrix_val=avg_conf_val,
+            avg_conf_matrix_train=avg_conf_train,
+        )
+
+    def _save(results):
+        suffix = results['suffix']
+        np.savetxt(os.path.join(output_dir, f'acc_list_val_{session_dir}{suffix}.txt'),
+                   results['val_acc_list'])
+        np.savetxt(os.path.join(output_dir, f'acc_list_train_{session_dir}{suffix}.txt'),
+                   results['train_acc_list'])
+        np.save(os.path.join(output_dir, f'all_f1_scores_val_{session_dir}{suffix}.npy'),
+                results['val_all_f1_scores'])
+        np.save(os.path.join(output_dir, f'all_f1_scores_train_{session_dir}{suffix}.npy'),
+                results['train_all_f1_scores'])
+
+    # ── Run both loss variants ───────────────────────────────────────────────
+    res_uw = _train(use_weighted_loss=False, suffix='_unweighted')
+    _save(res_uw)
+    res_w  = _train(use_weighted_loss=True,  suffix='_weighted')
+    _save(res_w)
+
+    # ── Chance accuracy ───────────────────────────────────────────────────────
+    print(f"\nEstimating chance accuracy ({NUM_PERMUTATIONS} permutations)...")
+    # Single split — val labels come from the one fold
+    all_val_labels_chance = cv_splits[0][3]
+    chance_acc = np.array([
+        accuracy_score(
+            np.random.choice(all_val_labels_chance, size=all_val_labels_chance.shape),
+            all_val_labels_chance,
+        )
+        for _ in tqdm(range(NUM_PERMUTATIONS), desc='Chance', leave=False)
+    ])
+    print(f"Chance accuracy: {chance_acc.mean():.3f} ± {chance_acc.std():.3f}")
+    np.savetxt(os.path.join(output_dir, f'acc_list_chance_{session_dir}.txt'), chance_acc)
+    t_uw, p_uw = stats.ttest_ind(res_uw['val_acc_list'], chance_acc)
+    t_w,  p_w  = stats.ttest_ind(res_w['val_acc_list'],  chance_acc)
+
+    # ── Derived quantities for figure ────────────────────────────────────────
+    uw_f1_means = res_uw['val_all_f1_scores'].mean(axis=0)
+    uw_f1_std   = res_uw['val_all_f1_scores'].std(axis=0)
+    w_f1_means  = res_w['val_all_f1_scores'].mean(axis=0)
+    w_f1_std    = res_w['val_all_f1_scores'].std(axis=0)
+
+    uw_conf = res_uw['avg_conf_matrix_val']
+    w_conf  = res_w['avg_conf_matrix_val']
+    norm_conf_uw = uw_conf / uw_conf.sum(axis=1, keepdims=True) * 100
+    norm_conf_w  = w_conf  / w_conf.sum(axis=1, keepdims=True)  * 100
+
+    avg_prec, avg_rec = [], []
+    for si in range(len(state_labels)):
+        precs, recs = [], []
+        for pred, true in zip(res_uw['val_all_predictions'], res_uw['val_true_labels']):
+            p, r, _, _ = precision_recall_fscore_support(
+                np.asarray(true, dtype=np.int64).ravel(),
+                np.asarray(pred, dtype=np.int64).ravel(),
+                labels=state_labels, zero_division=0, average=None,
+            )
+            precs.append(p[si]); recs.append(r[si])
+        avg_prec.append(np.mean(precs)); avg_rec.append(np.mean(recs))
+
+    state_names = [b_labels_dict.get(s, f'S{s}') for s in state_labels]
+
+    # ── Summary figure (2 × 3, PDF) ──────────────────────────────────────────
+    print("\nGenerating summary figure...")
+    fig, axs = plt.subplots(2, 3, figsize=(20, 12))
+    fig.suptitle(f'Discrete Decoder Summary — {session_dir}', fontsize=15, fontweight='bold')
+
+    # (0,0) Accuracy: UW / W / Chance
+    ax = axs[0, 0]
+    bp = ax.boxplot(
+        [res_uw['val_acc_list'], res_w['val_acc_list'], chance_acc],
+        positions=[1, 2, 3], widths=0.6, patch_artist=True, showmeans=True,
+        tick_labels=['Unweighted', 'Weighted', 'Chance'],
+        meanprops=dict(marker='D', markerfacecolor='red', markersize=8),
     )
-    with open(os.path.join(run_dir, 'run_summary.json'), 'w') as f:
-        json.dump(summary, f, indent=2)
+    for patch, col in zip(bp['boxes'], ['#4C9BE8', '#6BBF6B', '#AAAAAA']):
+        patch.set_facecolor(col); patch.set_alpha(0.8)
+    ax.set_ylabel('Validation Accuracy', fontsize=12)
+    ax.set_title('Decoder Accuracy vs Chance', fontweight='bold')
+    ax.grid(True, alpha=0.3, axis='y'); ax.set_ylim([0, 1.0])
+    ax.text(0.5, 0.98,
+            f'UW: t={t_uw:.1f}, p={p_uw:.1e}\nW:  t={t_w:.1f}, p={p_w:.1e}',
+            transform=ax.transAxes, ha='center', va='top', fontsize=10,
+            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.6))
 
-    print('\nAll done. Results →', run_dir)
+    # (0,1) Normalised confusion matrix — Unweighted
+    ax = axs[0, 1]
+    sns.heatmap(norm_conf_uw, annot=True, fmt='.1f', cmap='RdYlGn', ax=ax,
+                xticklabels=state_names, yticklabels=state_names,
+                cbar_kws={'label': '%'}, vmin=0, vmax=100)
+    ax.set_title('Confusion Matrix — Unweighted (%)', fontweight='bold')
+    ax.tick_params(axis='x', rotation=45); ax.tick_params(axis='y', rotation=0)
+
+    # (0,2) Normalised confusion matrix — Weighted
+    ax = axs[0, 2]
+    sns.heatmap(norm_conf_w, annot=True, fmt='.1f', cmap='RdYlGn', ax=ax,
+                xticklabels=state_names, yticklabels=state_names,
+                cbar_kws={'label': '%'}, vmin=0, vmax=100)
+    ax.set_title('Confusion Matrix — Weighted (%)', fontweight='bold')
+    ax.tick_params(axis='x', rotation=45); ax.tick_params(axis='y', rotation=0)
+
+    # (1,0) Per-state F1 — UW vs W
+    ax = axs[1, 0]
+    bw = 0.35
+    ax.bar(x_pos - bw/2, uw_f1_means, bw, yerr=uw_f1_std, label='Unweighted',
+           color='#4C9BE8', alpha=0.85, capsize=4, error_kw=dict(elinewidth=1.2))
+    ax.bar(x_pos + bw/2, w_f1_means,  bw, yerr=w_f1_std,  label='Weighted',
+           color='#6BBF6B', alpha=0.85, capsize=4, error_kw=dict(elinewidth=1.2))
+    ax.set_xticks(x_pos); ax.set_xticklabels(state_names, rotation=45, ha='right')
+    ax.set_ylabel('F1', fontsize=12)
+    ax.set_title('Per-State F1 — UW vs W (mean ± std)', fontweight='bold')
+    ax.legend(fontsize=10); ax.grid(True, alpha=0.3, axis='y'); ax.set_ylim([0, 1.05])
+
+    # (1,1) Precision / Recall / F1 — Unweighted
+    ax = axs[1, 1]
+    pw = 0.25
+    ax.bar(x_pos - pw,   avg_prec,    pw, label='Precision', color='#5B8DD9', alpha=0.85)
+    ax.bar(x_pos,        avg_rec,     pw, label='Recall',    color='#E8864C', alpha=0.85)
+    ax.bar(x_pos + pw,   uw_f1_means, pw, label='F1',        color='#6BBF6B', alpha=0.85)
+    ax.set_xticks(x_pos); ax.set_xticklabels(state_names, rotation=45, ha='right')
+    ax.set_title('Precision / Recall / F1 — Unweighted', fontweight='bold')
+    ax.legend(fontsize=10); ax.grid(True, alpha=0.3, axis='y'); ax.set_ylim([0, 1.05])
+
+    # (1,2) Summary text
+    ax = axs[1, 2]; ax.axis('off')
+    summary_t = (
+        f"SUMMARY — {session_dir}\n{'─'*36}\n"
+        f"Split: {_split_label}\n\n"
+        f"Val Accuracy\n"
+        f"  Unweighted : {res_uw['val_acc_list'].mean():.3f} ± {res_uw['val_acc_list'].std():.3f}\n"
+        f"  Weighted   : {res_w['val_acc_list'].mean():.3f} ± {res_w['val_acc_list'].std():.3f}\n"
+        f"  Chance     : {chance_acc.mean():.3f} ± {chance_acc.std():.3f}\n"
+        f"  W − UW     : {res_w['val_acc_list'].mean() - res_uw['val_acc_list'].mean():+.3f}\n\n"
+        f"Macro F1 (val, mean)\n"
+        f"  Unweighted : {uw_f1_means.mean():.3f}\n"
+        f"  Weighted   : {w_f1_means.mean():.3f}\n"
+        f"  W − UW     : {w_f1_means.mean() - uw_f1_means.mean():+.3f}\n\n"
+        f"vs Chance (t-test)\n"
+        f"  UW : t={t_uw:.2f}, p={p_uw:.2e}\n"
+        f"  W  : t={t_w:.2f}, p={p_w:.2e}\n\n"
+        f"Runs: {NUM_DECODER_RUNS}\n"
+        f"Window: {WINDOW_SIZE}  ·  Permutations: {NUM_PERMUTATIONS}"
+    )
+    ax.text(0.05, 0.97, summary_t, transform=ax.transAxes, fontsize=11,
+            va='top', family='monospace',
+            bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.85))
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, f'summary_{session_dir}.pdf'), bbox_inches='tight')
+    plt.close()
+    print(f"  Saved summary \u2192 {output_dir}/summary_{session_dir}.pdf")
+
+    print(f"\nDiscrete evaluation done. Results \u2192 {output_dir}/")
+    return {
+        'unweighted_val_acc':      float(res_uw['val_acc_list'].mean()),
+        'unweighted_val_acc_std':  float(res_uw['val_acc_list'].std()),
+        'weighted_val_acc':        float(res_w['val_acc_list'].mean()),
+        'weighted_val_acc_std':    float(res_w['val_acc_list'].std()),
+        'chance_acc':              float(chance_acc.mean()),
+        't_weighted_vs_chance':    float(t_w),
+        'p_weighted_vs_chance':    float(p_w),
+    }
 
 
-if __name__ == '__main__':
-    main()
+# ===========================================================================
+# HYBRID EVALUATION
+# ===========================================================================
+
+def run_hybrid_evaluation():
+    """Joint discrete+continuous decoder — same figures as discrete."""
+    print(f"\n{'#'*70}")
+    print(f"### HYBRID EVALUATION — JOINT DISCRETE + CONTINUOUS DECODER ###")
+    print(f"{'#'*70}")
+    print(f"Alpha={HYBRID_ALPHA}  (\u03b1\u00b7CE_norm + (1-\u03b1)\u00b7MSE, matching BunDLeNet)")
+
+    cv_splits, B_hyb_ = make_trial_split(B_hybrid)
+    num_folds    = len(cv_splits)  # always 1
+    state_labels = np.unique(B_hyb_[:, 0].astype(np.int64))
+    num_states   = len(state_labels)
+    ce_norm      = math.log(num_states)
+    output_dim   = num_states + 1
+    print(f"Prepared trial-based split. {num_states} behavioral states.")
+
+    # ── Label distribution ────────────────────────────────────────────────────
+    train_label_counts_raw = defaultdict(int)
+    val_label_counts_raw   = defaultdict(int)
+    total_train = total_val = 0
+
+    for x_tr, x_val, b_tr, b_val in cv_splits:
+        b_tr_disc  = b_tr[:, 0].astype(np.int64)
+        b_val_disc = b_val[:, 0].astype(np.int64)
+        for lbl, cnt in zip(*np.unique(b_tr_disc,  return_counts=True)):
+            train_label_counts_raw[lbl] += cnt
+        for lbl, cnt in zip(*np.unique(b_val_disc, return_counts=True)):
+            val_label_counts_raw[lbl] += cnt
+        total_train += len(b_tr_disc)
+        total_val   += len(b_val_disc)
+
+    train_label_counts = {l: train_label_counts_raw[l] / num_folds for l in state_labels}
+    val_label_counts   = {l: val_label_counts_raw[l]   / num_folds for l in state_labels}
+
+    print(f"\nTotal samples: Train={total_train}, Test={total_val}")
+    print(f"\n{'State':<20} {'Train':>8} {'Train%':>8} {'Val':>8} {'Val%':>8}")
+    print("-" * 60)
+    for lbl in sorted(state_labels):
+        sn = b_labels_dict.get(lbl, f'State {lbl}')
+        tc = train_label_counts.get(lbl, 0)
+        vc = val_label_counts.get(lbl, 0)
+        print(f"{sn:<20} {tc:>8.1f} {100*tc/total_train:>7.1f}% "
+              f"{vc:>8.1f} {100*vc/total_val:>7.1f}%")
+
+    imbalance = (max(train_label_counts.values()) /
+                 min(v for v in train_label_counts.values() if v > 0))
+    print(f"\nClass imbalance ratio: {imbalance:.1f}x")
+
+    class_weights = {
+        lbl: total_train / (num_states * train_label_counts_raw[lbl])
+        if train_label_counts_raw[lbl] > 0 else 1.0
+        for lbl in state_labels
+    }
+    weights_list         = [class_weights[l] for l in sorted(state_labels)]
+    class_weights_tensor = torch.FloatTensor(weights_list).to(device)
+
+    output_dir = os.path.join(run_dir, 'hybrid')
+    x_pos      = np.arange(len(state_labels))
+
+    def _train(use_weighted_loss, suffix):
+        loss_type = "WEIGHTED" if use_weighted_loss else "UNWEIGHTED"
+        print(f"\n{'#'*60}")
+        print(f"### HYBRID {loss_type} LOSS ###")
+        print(f"{'#'*60}")
+
+        val_acc_list, val_all_predictions, val_all_f1_scores, val_true_labels         = [], [], [], []
+        train_acc_list, train_all_predictions, train_all_f1_scores, train_true_labels = [], [], [], []
+        val_conf_sum   = np.zeros((num_states, num_states))
+        train_conf_sum = np.zeros((num_states, num_states))
+        total_runs = 0
+
+        ce_loss_fn  = nn.CrossEntropyLoss(
+            weight=class_weights_tensor if use_weighted_loss else None,
+        )
+        mse_loss_fn = nn.MSELoss()
+
+        for fold_idx, (x_tr, x_val, b_tr, b_val) in enumerate(cv_splits):
+            print(f"\nFold {fold_idx+1}/{num_folds}: train={fold_size(x_tr)}, val={fold_size(x_val)}")
+            tr_loader  = make_loaders(x_tr,  b_tr,  'hybrid')
+            val_loader = make_loaders(x_val, b_val, 'hybrid')
+
+            for _ in tqdm(range(NUM_DECODER_RUNS),
+                          desc=f'Decoders Hybrid {loss_type} fold {fold_idx+1}', leave=False):
+                model = nn.Linear(input_dim, output_dim).to(device)
+                opt   = optim.Adam(model.parameters(), lr=0.01)
+
+                for epoch in range(TRAIN_EPOCHS):
+                    model.train()
+                    for xb, yb in tr_loader:
+                        xb, yb = xb.to(device), yb.to(device)
+                        out      = model(xb)
+                        logits   = out[:, :num_states]
+                        cont_out = out[:, num_states:num_states + 1]
+                        disc_lbl = yb[:, 0].long()
+                        cont_lbl = yb[:, 1:2]
+                        loss = (HYBRID_ALPHA * ce_loss_fn(logits, disc_lbl) / ce_norm
+                                + (1 - HYBRID_ALPHA) * mse_loss_fn(cont_out, cont_lbl))
+                        opt.zero_grad(); loss.backward(); opt.step()
+
+                val_pred,   val_true   = _predict_disc(model, val_loader,  num_states)
+                train_pred, train_true = _predict_disc(model, tr_loader,   num_states)
+
+                val_acc_list.append(accuracy_score(val_true, val_pred))
+                val_all_predictions.append(val_pred)
+                val_true_labels.append(val_true)
+                val_all_f1_scores.append(
+                    f1_score(val_true, val_pred, average=None,
+                             labels=state_labels, zero_division=0))
+                val_conf_sum += confusion_matrix(val_true, val_pred, labels=state_labels)
+
+                train_acc_list.append(accuracy_score(train_true, train_pred))
+                train_all_predictions.append(train_pred)
+                train_true_labels.append(train_true)
+                train_all_f1_scores.append(
+                    f1_score(train_true, train_pred, average=None,
+                             labels=state_labels, zero_division=0))
+                train_conf_sum += confusion_matrix(train_true, train_pred, labels=state_labels)
+                total_runs += 1
+
+        val_acc_list        = np.array(val_acc_list)
+        val_all_f1_scores   = np.array(val_all_f1_scores)
+        train_acc_list      = np.array(train_acc_list)
+        train_all_f1_scores = np.array(train_all_f1_scores)
+        avg_conf_val   = val_conf_sum   / total_runs
+        avg_conf_train = train_conf_sum / total_runs
+
+        print(f"\n{'='*60}")
+        print(f"HYBRID {loss_type} — Val acc: {val_acc_list.mean():.3f} ± {val_acc_list.std():.3f}  |  "
+              f"Train acc: {train_acc_list.mean():.3f} ± {train_acc_list.std():.3f}")
+        print(f"Train-Val gap: {train_acc_list.mean() - val_acc_list.mean():.3f}")
+        print(f"{'='*60}")
+
+        return dict(
+            suffix=suffix, loss_type=f'HYBRID {loss_type}',
+            val_acc_list=val_acc_list,
+            val_all_predictions=np.array(val_all_predictions, dtype=object),
+            val_all_f1_scores=val_all_f1_scores,
+            val_true_labels=np.array(val_true_labels, dtype=object),
+            train_acc_list=train_acc_list,
+            train_all_predictions=np.array(train_all_predictions, dtype=object),
+            train_all_f1_scores=train_all_f1_scores,
+            train_true_labels=np.array(train_true_labels, dtype=object),
+            avg_conf_matrix_val=avg_conf_val,
+            avg_conf_matrix_train=avg_conf_train,
+        )
+
+    def _save(results):
+        suffix = results['suffix']
+        np.savetxt(os.path.join(output_dir, f'acc_list_val_{session_dir}{suffix}.txt'),
+                   results['val_acc_list'])
+        np.savetxt(os.path.join(output_dir, f'acc_list_train_{session_dir}{suffix}.txt'),
+                   results['train_acc_list'])
+        np.save(os.path.join(output_dir, f'all_f1_scores_val_{session_dir}{suffix}.npy'),
+                results['val_all_f1_scores'])
+        np.save(os.path.join(output_dir, f'all_f1_scores_train_{session_dir}{suffix}.npy'),
+                results['train_all_f1_scores'])
+
+    res_uw = _train(use_weighted_loss=False, suffix='_unweighted')
+    _save(res_uw)
+    res_w  = _train(use_weighted_loss=True,  suffix='_weighted')
+    _save(res_w)
+
+    # ── Chance accuracy ───────────────────────────────────────────────────────
+    print(f"\nEstimating chance accuracy ({NUM_PERMUTATIONS} permutations)...")
+    all_val_labels_chance = cv_splits[0][3][:, 0].astype(np.int64)
+    chance_acc = np.array([
+        accuracy_score(
+            np.random.choice(all_val_labels_chance, size=all_val_labels_chance.shape),
+            all_val_labels_chance,
+        )
+        for _ in tqdm(range(NUM_PERMUTATIONS), desc='Chance', leave=False)
+    ])
+    print(f"Chance accuracy: {chance_acc.mean():.3f} ± {chance_acc.std():.3f}")
+    np.savetxt(os.path.join(output_dir, f'acc_list_chance_{session_dir}.txt'), chance_acc)
+    t_uw, p_uw = stats.ttest_ind(res_uw['val_acc_list'], chance_acc)
+    t_w,  p_w  = stats.ttest_ind(res_w['val_acc_list'],  chance_acc)
+
+    uw_f1_means = res_uw['val_all_f1_scores'].mean(axis=0)
+    uw_f1_std   = res_uw['val_all_f1_scores'].std(axis=0)
+    w_f1_means  = res_w['val_all_f1_scores'].mean(axis=0)
+    w_f1_std    = res_w['val_all_f1_scores'].std(axis=0)
+
+    uw_conf = res_uw['avg_conf_matrix_val']
+    w_conf  = res_w['avg_conf_matrix_val']
+    norm_conf_uw = uw_conf / uw_conf.sum(axis=1, keepdims=True) * 100
+    norm_conf_w  = w_conf  / w_conf.sum(axis=1, keepdims=True)  * 100
+
+    avg_prec, avg_rec = [], []
+    for si in range(len(state_labels)):
+        precs, recs = [], []
+        for pred, true in zip(res_uw['val_all_predictions'], res_uw['val_true_labels']):
+            p, r, _, _ = precision_recall_fscore_support(
+                np.asarray(true, dtype=np.int64).ravel(),
+                np.asarray(pred, dtype=np.int64).ravel(),
+                labels=state_labels, zero_division=0, average=None,
+            )
+            precs.append(p[si]); recs.append(r[si])
+        avg_prec.append(np.mean(precs)); avg_rec.append(np.mean(recs))
+
+    state_names = [b_labels_dict.get(s, f'S{s}') for s in state_labels]
+
+    # ── Summary figure (2 × 3, PDF) ──────────────────────────────────────────
+    print("\nGenerating summary figure...")
+    fig, axs = plt.subplots(2, 3, figsize=(20, 12))
+    fig.suptitle(
+        f'Hybrid Decoder Summary (\u03b1={HYBRID_ALPHA}) — {session_dir}',
+        fontsize=15, fontweight='bold',
+    )
+
+    ax = axs[0, 0]
+    bp = ax.boxplot(
+        [res_uw['val_acc_list'], res_w['val_acc_list'], chance_acc],
+        positions=[1, 2, 3], widths=0.6, patch_artist=True, showmeans=True,
+        tick_labels=['Unweighted', 'Weighted', 'Chance'],
+        meanprops=dict(marker='D', markerfacecolor='red', markersize=8),
+    )
+    for patch, col in zip(bp['boxes'], ['#4C9BE8', '#6BBF6B', '#AAAAAA']):
+        patch.set_facecolor(col); patch.set_alpha(0.8)
+    ax.set_ylabel('Validation Accuracy', fontsize=12)
+    ax.set_title('Decoder Accuracy vs Chance', fontweight='bold')
+    ax.grid(True, alpha=0.3, axis='y'); ax.set_ylim([0, 1.0])
+    ax.text(0.5, 0.98,
+            f'UW: t={t_uw:.1f}, p={p_uw:.1e}\nW:  t={t_w:.1f}, p={p_w:.1e}',
+            transform=ax.transAxes, ha='center', va='top', fontsize=10,
+            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.6))
+
+    ax = axs[0, 1]
+    sns.heatmap(norm_conf_uw, annot=True, fmt='.1f', cmap='RdYlGn', ax=ax,
+                xticklabels=state_names, yticklabels=state_names,
+                cbar_kws={'label': '%'}, vmin=0, vmax=100)
+    ax.set_title('Confusion Matrix — Unweighted (%)', fontweight='bold')
+    ax.tick_params(axis='x', rotation=45); ax.tick_params(axis='y', rotation=0)
+
+    ax = axs[0, 2]
+    sns.heatmap(norm_conf_w, annot=True, fmt='.1f', cmap='RdYlGn', ax=ax,
+                xticklabels=state_names, yticklabels=state_names,
+                cbar_kws={'label': '%'}, vmin=0, vmax=100)
+    ax.set_title('Confusion Matrix — Weighted (%)', fontweight='bold')
+    ax.tick_params(axis='x', rotation=45); ax.tick_params(axis='y', rotation=0)
+
+    ax = axs[1, 0]
+    bw = 0.35
+    ax.bar(x_pos - bw/2, uw_f1_means, bw, yerr=uw_f1_std, label='Unweighted',
+           color='#4C9BE8', alpha=0.85, capsize=4, error_kw=dict(elinewidth=1.2))
+    ax.bar(x_pos + bw/2, w_f1_means,  bw, yerr=w_f1_std,  label='Weighted',
+           color='#6BBF6B', alpha=0.85, capsize=4, error_kw=dict(elinewidth=1.2))
+    ax.set_xticks(x_pos); ax.set_xticklabels(state_names, rotation=45, ha='right')
+    ax.set_ylabel('F1', fontsize=12)
+    ax.set_title('Per-State F1 — UW vs W (mean ± std)', fontweight='bold')
+    ax.legend(fontsize=10); ax.grid(True, alpha=0.3, axis='y'); ax.set_ylim([0, 1.05])
+
+    ax = axs[1, 1]
+    pw = 0.25
+    ax.bar(x_pos - pw,   avg_prec,    pw, label='Precision', color='#5B8DD9', alpha=0.85)
+    ax.bar(x_pos,        avg_rec,     pw, label='Recall',    color='#E8864C', alpha=0.85)
+    ax.bar(x_pos + pw,   uw_f1_means, pw, label='F1',        color='#6BBF6B', alpha=0.85)
+    ax.set_xticks(x_pos); ax.set_xticklabels(state_names, rotation=45, ha='right')
+    ax.set_title('Precision / Recall / F1 — Unweighted', fontweight='bold')
+    ax.legend(fontsize=10); ax.grid(True, alpha=0.3, axis='y'); ax.set_ylim([0, 1.05])
+
+    ax = axs[1, 2]; ax.axis('off')
+    summary_t = (
+        f"HYBRID SUMMARY — {session_dir}\n{'─'*36}\n"
+        f"Alpha = {HYBRID_ALPHA}  (\u03b1\u00b7CE_norm + (1-\u03b1)\u00b7MSE)\n"
+        f"Split: {_split_label}\n\n"
+        f"Val Accuracy\n"
+        f"  Unweighted : {res_uw['val_acc_list'].mean():.3f} ± {res_uw['val_acc_list'].std():.3f}\n"
+        f"  Weighted   : {res_w['val_acc_list'].mean():.3f} ± {res_w['val_acc_list'].std():.3f}\n"
+        f"  Chance     : {chance_acc.mean():.3f} ± {chance_acc.std():.3f}\n"
+        f"  W \u2212 UW     : {res_w['val_acc_list'].mean() - res_uw['val_acc_list'].mean():+.3f}\n\n"
+        f"Macro F1 (val, mean)\n"
+        f"  Unweighted : {uw_f1_means.mean():.3f}\n"
+        f"  Weighted   : {w_f1_means.mean():.3f}\n"
+        f"  W \u2212 UW     : {w_f1_means.mean() - uw_f1_means.mean():+.3f}\n\n"
+        f"vs Chance (t-test)\n"
+        f"  UW : t={t_uw:.2f}, p={p_uw:.2e}\n"
+        f"  W  : t={t_w:.2f}, p={p_w:.2e}\n\n"
+        f"Runs: {NUM_DECODER_RUNS}\n"
+        f"Window: {WINDOW_SIZE}  \u00b7  Permutations: {NUM_PERMUTATIONS}"
+    )
+    ax.text(0.05, 0.97, summary_t, transform=ax.transAxes, fontsize=11,
+            va='top', family='monospace',
+            bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.85))
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, f'summary_{session_dir}.pdf'), bbox_inches='tight')
+    plt.close()
+    print(f"  Saved summary \u2192 {output_dir}/summary_{session_dir}.pdf")
+
+    print(f"\nHybrid evaluation done. Results \u2192 {output_dir}/")
+    return {
+        'unweighted_val_acc':     float(res_uw['val_acc_list'].mean()),
+        'unweighted_val_acc_std': float(res_uw['val_acc_list'].std()),
+        'weighted_val_acc':       float(res_w['val_acc_list'].mean()),
+        'weighted_val_acc_std':   float(res_w['val_acc_list'].std()),
+        'chance_acc':             float(chance_acc.mean()),
+        't_weighted_vs_chance':   float(t_w),
+        'p_weighted_vs_chance':   float(p_w),
+    }
+
+
+# ===========================================================================
+# CONTINUOUS EVALUATION
+# ===========================================================================
+
+def run_continuous_evaluation():
+    """Linear MSE decoder on HGF belief trajectory only. Reports R²."""
+    print(f"\n{'#'*70}")
+    print(f"### CONTINUOUS EVALUATION — HGF BELIEF REGRESSION ###")
+    print(f"{'#'*70}")
+
+    if B_belief is None:
+        print("WARNING: B_belief is None — skipping continuous evaluation.")
+        return {}
+
+    output_dir = os.path.join(run_dir, 'continuous')
+
+    cv_splits, B_cont_ = make_trial_split(B_belief)
+    num_folds = len(cv_splits)
+    print(f"Prepared trial-based split.  Belief range: [{B_cont_.min():.3f}, {B_cont_.max():.3f}]")
+
+    val_r2_list, train_r2_list = [], []
+    last_val_pred = last_val_true = None
+
+    mse_loss_fn = nn.MSELoss()
+
+    for fold_idx, (x_tr, x_val, b_tr, b_val) in enumerate(cv_splits):
+        print(f"\nFold {fold_idx+1}/{num_folds}: train={fold_size(x_tr)}, val={fold_size(x_val)}")
+        tr_loader  = make_loaders(x_tr,  b_tr,  'float')
+        val_loader = make_loaders(x_val, b_val, 'float')
+
+        for _ in tqdm(range(NUM_DECODER_RUNS),
+                      desc=f'Belief decoder fold {fold_idx+1}', leave=False):
+            model = nn.Linear(input_dim, 1).to(device)
+            opt   = optim.Adam(model.parameters(), lr=0.01)
+
+            for epoch in range(TRAIN_EPOCHS):
+                model.train()
+                for xb, yb in tr_loader:
+                    xb, yb = xb.to(device), yb.to(device)
+                    opt.zero_grad()
+                    mse_loss_fn(model(xb), yb).backward()
+                    opt.step()
+
+            val_pred,   val_true   = predict_all(model, val_loader,   squeeze_pred=True, squeeze_true=True)
+            train_pred, train_true = predict_all(model, tr_loader,    squeeze_pred=True, squeeze_true=True)
+
+            val_r2_list.append(r2_score(val_true, val_pred))
+            train_r2_list.append(r2_score(train_true, train_pred))
+
+            last_val_pred = val_pred
+            last_val_true = val_true
+
+    val_r2_list   = np.array(val_r2_list)
+    train_r2_list = np.array(train_r2_list)
+
+    print(f"\n{'='*60}")
+    print(f"Val R\u00b2:   {val_r2_list.mean():.3f} \u00b1 {val_r2_list.std():.3f}")
+    print(f"Train R\u00b2: {train_r2_list.mean():.3f} \u00b1 {train_r2_list.std():.3f}")
+    print(f"Train-Val gap: {train_r2_list.mean() - val_r2_list.mean():.3f}")
+    print(f"{'='*60}")
+
+    np.savetxt(os.path.join(output_dir, f'r2_val_{session_dir}.txt'),   val_r2_list)
+    np.savetxt(os.path.join(output_dir, f'r2_train_{session_dir}.txt'), train_r2_list)
+
+    # ── Permutation baseline ─────────────────────────────────────────────────
+    print(f"\nEstimating chance R\u00b2 ({NUM_PERMUTATIONS} permutations)...")
+    all_val_beliefs = cv_splits[0][3]  # single split — val beliefs
+    chance_r2 = np.array([
+        r2_score(all_val_beliefs, np.random.permutation(all_val_beliefs))
+        for _ in tqdm(range(NUM_PERMUTATIONS), desc='Chance R\u00b2', leave=False)
+    ])
+    print(f"Chance R\u00b2: {chance_r2.mean():.3f} \u00b1 {chance_r2.std():.3f}")
+    np.savetxt(os.path.join(output_dir, f'r2_chance_{session_dir}.txt'), chance_r2)
+
+    t_stat, p_val = stats.ttest_ind(val_r2_list, chance_r2)
+    print(f"t-test vs chance: t={t_stat:.2f}, p={p_val:.2e}")
+
+    # ── Plot 1: R² distribution (train vs val) ────────────────────────────────
+    fig1, ax1 = plt.subplots(figsize=(10, 6))
+    bp = ax1.boxplot([train_r2_list, val_r2_list],
+                     positions=[1, 2], widths=0.6, patch_artist=True, showmeans=True,
+                     tick_labels=['Train', 'Validation'],
+                     meanprops=dict(marker='D', markerfacecolor='red', markersize=8))
+    for patch, col in zip(bp['boxes'], ['lightgreen', 'skyblue']):
+        patch.set_facecolor(col)
+    ax1.set_ylabel('R\u00b2', fontsize=13)
+    ax1.set_title(f'Belief Decoder R\u00b2 — {session_dir}', fontsize=15, fontweight='bold')
+    ax1.text(0.98, 0.02,
+             f'Val: {val_r2_list.mean():.3f}\u00b1{val_r2_list.std():.3f}\n'
+             f'Train: {train_r2_list.mean():.3f}\u00b1{train_r2_list.std():.3f}\n'
+             f'Gap: {train_r2_list.mean()-val_r2_list.mean():.3f}',
+             transform=ax1.transAxes, ha='right', va='bottom', fontsize=11,
+             bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.8))
+    ax1.grid(True, alpha=0.3, axis='y')
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, f'r2_distribution_{session_dir}.pdf'), bbox_inches='tight')
+    plt.close()
+    print("Saved R\u00b2 distribution plot.")
+
+    # ── Plot 2: decoder R² vs chance ─────────────────────────────────────────
+    fig2, ax2 = plt.subplots(figsize=(10, 6))
+    bp2 = ax2.boxplot([val_r2_list, chance_r2],
+                      positions=[1, 2], widths=0.6, patch_artist=True, showmeans=True,
+                      tick_labels=['Belief Decoder', 'Chance (permutation)'],
+                      meanprops=dict(marker='D', markerfacecolor='red', markersize=8))
+    for patch, col in zip(bp2['boxes'], ['skyblue', 'lightgray']):
+        patch.set_facecolor(col)
+    ax2.set_ylabel('R\u00b2', fontsize=13)
+    ax2.set_title(f'Belief Decoder vs Chance — {session_dir}', fontsize=15, fontweight='bold')
+    ax2.text(0.5, 0.95,
+             f'Val R\u00b2 vs Chance: t={t_stat:.2f}, p={p_val:.2e}',
+             transform=ax2.transAxes, ha='center', va='top', fontsize=11,
+             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    ax2.grid(True, alpha=0.3, axis='y')
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, f'decoder_vs_chance_{session_dir}.pdf'), bbox_inches='tight')
+    plt.close()
+    print("Saved decoder vs chance plot.")
+
+    # ── Plot 3: predicted vs true belief ─────────────────────────────────────
+    if last_val_pred is not None:
+        fig3, ax3 = plt.subplots(figsize=(8, 8))
+        ax3.scatter(last_val_true, last_val_pred, alpha=0.3, s=10,
+                    color='steelblue', label='Predictions')
+        lo = min(last_val_true.min(), last_val_pred.min())
+        hi = max(last_val_true.max(), last_val_pred.max())
+        ax3.plot([lo, hi], [lo, hi], 'r--', linewidth=1.5, label='Identity (perfect)')
+        r2_last = r2_score(last_val_true, last_val_pred)
+        ax3.set_xlabel('True HGF belief', fontsize=13)
+        ax3.set_ylabel('Predicted HGF belief', fontsize=13)
+        ax3.set_title(f'Predicted vs True Belief (last run) — {session_dir}',
+                      fontsize=13, fontweight='bold')
+        ax3.text(0.05, 0.95, f'R\u00b2 = {r2_last:.3f}',
+                 transform=ax3.transAxes, va='top', fontsize=13,
+                 bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.8))
+        ax3.legend(); ax3.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(os.path.join(output_dir, f'predicted_vs_true_{session_dir}.pdf'),
+                    bbox_inches='tight')
+        plt.close()
+        print("Saved predicted vs true belief plot.")
+
+    print(f"\nContinuous evaluation done. Results \u2192 {output_dir}/")
+    return {
+        'val_r2_mean':    float(val_r2_list.mean()),
+        'val_r2_std':     float(val_r2_list.std()),
+        'train_r2_mean':  float(train_r2_list.mean()),
+        'train_r2_std':   float(train_r2_list.std()),
+        'chance_r2_mean': float(chance_r2.mean()),
+        't_vs_chance':    float(t_stat),
+        'p_vs_chance':    float(p_val),
+    }
+
+
+# ===========================================================================
+# MAIN
+# ===========================================================================
+
+_run_metrics = {}
+
+if RUN_DISCRETE:
+    _run_metrics['discrete'] = run_discrete_evaluation()
+
+if RUN_HYBRID:
+    _run_metrics['hybrid'] = run_hybrid_evaluation()
+
+if RUN_CONTINUOUS:
+    _run_metrics['continuous'] = run_continuous_evaluation()
+
+_summary = dict(
+    status='completed',
+    completed_at=datetime.datetime.now().isoformat(),
+    output_dir=run_dir,
+    configuration=_config,
+    metrics=_run_metrics,
+)
+with open(os.path.join(run_dir, 'run_summary.json'), 'w') as _f:
+    json.dump(_summary, _f, indent=2)
+
+print(f"\n{'='*60}")
+print(f"All done.  Session: {session_dir}")
+print(f"Results  \u2192 {run_dir}/")
+print(f"{'='*60}")
