@@ -57,7 +57,7 @@ HGF_MODEL           = 'binary2'
 HGF_COLUMN          = 'x_1_expected_mean'
 
 # Behavioural label mode: 'full' (per-timepoint) or 'decision' (one label per trial)
-B_MODE              = 'full'
+B_MODE              = 'decision'
 
 RUN_DISCRETE        = True
 RUN_HYBRID          = True
