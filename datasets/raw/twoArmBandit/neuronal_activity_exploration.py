@@ -2977,6 +2977,23 @@ else:
                                  marker=dict(size=3, color='dimgray', opacity=0.35), name='Window preds (test)',
                                  hovertemplate=win_hover, customdata=np.column_stack([trial_ids_win[idx_test], p_right_win[idx_test]])))
 
+        # Running proportion of wrong predictions over time (smoothed over last K windows)
+        K = 5
+        win_wrong = (~correct_win).astype(float)
+        if win_wrong.size:
+            kernel = np.ones(K, dtype=float) / float(K)
+            wrong_prop = np.convolve(win_wrong, kernel, mode='same')
+        else:
+            wrong_prop = np.zeros_like(win_wrong, dtype=float)
+
+        fig.add_trace(go.Scatter(x=x_win, y=wrong_prop, mode='lines',
+                                 line=dict(color='black', width=2), name=f'Wrong prop (running {K})',
+                                 hovertemplate='t=%{x:.2f}s<br>wrong_prop=%{y:.2f}<extra></extra>',
+                                 yaxis='y2'))
+
+        # Secondary y-axis for wrong-proportion (0..1) overlaid on the main y-axis
+        fig.update_layout(yaxis2=dict(overlaying='y', side='right', range=[0, 1], title='Prop wrong', showgrid=False))
+
         # All-trials / per-subset true & predicted markers
         n_trials = len(decoder_bins)
         trial_all_center_bins_safe = np.clip(decoder_bins, 0, T - 1)
