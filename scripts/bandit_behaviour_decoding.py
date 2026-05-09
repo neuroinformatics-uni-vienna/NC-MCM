@@ -724,12 +724,21 @@ def main():
     out_dir = run_dir / 'data' / 'decoding'
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # Build state name mapping from run config if available. The run's
+    # `config.json` may include `b_labels` (ordered list of class names).
+    # Use that to map label integers -> human-readable names; otherwise
+    # fall back to the package default `_DEFAULT_STATE_NAMES`.
+    if 'b_labels' in config and isinstance(config['b_labels'], list) and len(config['b_labels']) > 0:
+        state_names_dict = {i: config['b_labels'][i] for i in range(len(config['b_labels']))}
+    else:
+        state_names_dict = _DEFAULT_STATE_NAMES
+
     metrics = {}
 
     # ── Discrete decoding ─────────────────────────────────────────────────────
     metrics['discrete'] = run_discrete_decoding(
         X_train, y_train, X_val, y_val,
-        out_dir, session_dir, _DEFAULT_STATE_NAMES,
+        out_dir, session_dir, state_names_dict,
     )
 
     # ── HGF decoding ──────────────────────────────────────────────────────────
@@ -744,7 +753,7 @@ def main():
         metrics['hybrid'] = run_hybrid_decoding(
             X_train, y_train, hgf_train,
             X_val, y_val, hgf_val,
-            out_dir, session_dir, _DEFAULT_STATE_NAMES,
+            out_dir, session_dir, state_names_dict,
         )
 
     # ── Summary JSON ──────────────────────────────────────────────────────────
