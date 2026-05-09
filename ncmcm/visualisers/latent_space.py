@@ -388,17 +388,23 @@ class LatentSpaceVisualiser:
             if self.segment_ids is not None and self.segment_ids[i] != self.segment_ids[i + 1]:
                 continue
             d = (self.y[i + 1] - self.y[i])
-            kwargs.setdefault('arrow_length_ratio', 0.01 / np.linalg.norm(d))
-            kwargs.setdefault('linewidths', 1)
+            norm_d = np.linalg.norm(d)
+            if norm_d == 0:
+                continue
+            # Use per-arrow kwargs to avoid mutating shared dict and prevent
+            # extreme arrow head sizes when displacements are very small.
+            arrow_kwargs = kwargs.copy()
+            arrow_kwargs.setdefault('linewidths', 1)
+            arrow_kwargs['arrow_length_ratio'] = 0.03
             ax.quiver(
-                self.y[i, 0], 
-                self.y[i, 1], 
+                self.y[i, 0],
+                self.y[i, 1],
                 self.y[i, 2],
-                d[0], 
-                d[1], 
+                d[0],
+                d[1],
                 d[2],
                 color=self.color_dict[self.b[i]],
-                **kwargs
+                **arrow_kwargs
             )
         ax.set_axis_off()
 
@@ -740,12 +746,19 @@ class LatentSpaceVisualiser:
         Helper to comparison plot in a 3D phase space.
         """
         for i in range(len(self.y) - 1):
+            # Skip connections that cross segment (e.g. trial) boundaries
+            if self.segment_ids is not None and self.segment_ids[i] != self.segment_ids[i + 1]:
+                continue
             d = (self.y[i + 1] - self.y[i])
-            kwargs.setdefault('arrow_length_ratio', 0.01 / np.linalg.norm(d))
-            kwargs.setdefault('linewidths', 1)
+            norm_d = np.linalg.norm(d)
+            if norm_d == 0:
+                continue
+            arrow_kwargs = kwargs.copy()
+            arrow_kwargs.setdefault('linewidths', 1)
+            arrow_kwargs['arrow_length_ratio'] = 0.03
             ax.quiver(self.y[i, 0], self.y[i, 1], self.y[i, 2],
                       d[0], d[1], d[2],
-                      color=self.color_dict[self.b[i]], **kwargs)
+                      color=self.color_dict[self.b[i]], **arrow_kwargs)
         ax.set_axis_off()
         return ax
 
@@ -766,9 +779,16 @@ class LatentSpaceVisualiser:
             to_remove = self.quiver_artists.pop(0)
             to_remove.remove()
 
+        # Skip connections that cross segment (e.g. trial) boundaries
+        if self.segment_ids is not None and self.segment_ids[frame - 1] != self.segment_ids[frame]:
+            return ax
         d = (self.y[frame] - self.y[frame - 1])
-        kwargs.setdefault('arrow_length_ratio', 0.01 / np.linalg.norm(d))
-        kwargs.setdefault('linewidths', 1)
+        norm_d = np.linalg.norm(d)
+        if norm_d == 0:
+            return ax
+        arrow_kwargs = kwargs.copy()
+        arrow_kwargs.setdefault('linewidths', 1)
+        arrow_kwargs['arrow_length_ratio'] = 0.03
         quiver = ax.quiver(
             self.y[frame - 1, 0],
             self.y[frame - 1, 1],
@@ -777,7 +797,7 @@ class LatentSpaceVisualiser:
             d[1],
             d[2],
             color=self.color_dict[self.b[frame - 1]],
-            **kwargs
+            **arrow_kwargs
         )
         self.quiver_artists.append(quiver)
 
