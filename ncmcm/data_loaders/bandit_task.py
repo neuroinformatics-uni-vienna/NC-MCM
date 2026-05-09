@@ -1762,6 +1762,7 @@ class BanditTaskNeuroPixelsDataset:
                     current_metrics_md5 = None
             except Exception:
                 current_metrics_md5 = None
+
             if cached_params.get('downsample_fs') != self._original_downsample_fs or \
                cached_params.get('downsample_method') != self.downsample_method or \
                cached_params.get('good_neurons_only') != self.good_neurons_only or \
@@ -1769,7 +1770,9 @@ class BanditTaskNeuroPixelsDataset:
                cached_params.get('choosing_state_mode', self.choosing_state_mode) != self.choosing_state_mode or \
                cached_params.get('hgf_model') != self.hgf_model or \
                cached_params.get('hgf_column') != self.hgf_column or \
-               cached_params.get('hgf_belief_range') != self.hgf_belief_range:
+               cached_params.get('hgf_belief_range') != self.hgf_belief_range or \
+               cached_params.get('b_mode') != self.b_mode or \
+               cached_params.get('metrics_md5') != current_metrics_md5:
                 print("Warning: Cached parameters mismatch, reprocessing data...")
                 return False
             
