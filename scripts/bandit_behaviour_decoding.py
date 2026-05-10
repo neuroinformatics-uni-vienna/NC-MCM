@@ -40,7 +40,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 # ── Config ────────────────────────────────────────────────────────────────────
-N_RUNS       = 10
+N_RUNS       = 5
 N_EPOCHS     = 100
 BATCH_SIZE   = 256
 LR           = 0.01
@@ -72,6 +72,92 @@ def predict_logits(model, X):
 
 def predict_regression(model, X):
     return predict_logits(model, X).squeeze()
+
+
+# Auto-detect train/validation split files in a run data directory.
+def _detect_train_validation_splits(data_dir):
+    data_dir = Path(data_dir)
+    latent_files = list(data_dir.glob('latent_trajectories*.npy'))
+    label_files  = list(data_dir.glob('behaviour_labels*.npy'))
+
+    def _extract_split(name, prefix):
+        stem = name[:-4] if name.endswith('.npy') else name
+        if stem == prefix:
+            return ''
+        if stem.startswith(prefix + '_'):
+            return stem[len(prefix) + 1:]
+        if stem.startswith(prefix):
+            return stem[len(prefix):].lstrip('._-')
+        return stem[len(prefix):] if stem.startswith(prefix) else stem
+
+    latent_map = { _extract_split(p.name, 'latent_trajectories'): p for p in latent_files }
+    label_map  = { _extract_split(p.name, 'behaviour_labels'): p for p in label_files }
+
+    candidate_splits = sorted(set(latent_map.keys()) & set(label_map.keys()))
+    # Fallback heuristics: try to match 'train'/'validation' tokens inside file names
+    if not candidate_splits:
+        tokens_train = ['train', 'training']
+        tokens_val = ['validation', 'val', 'test']
+        found_train = None
+        found_val = None
+        for p in latent_files:
+            for t in tokens_train:
+                if t in p.name:
+                    found_train = t; break
+            if found_train:
+                break
+        for p in label_files:
+            for t in tokens_val:
+                if t in p.name:
+                    found_val = t; break
+            if found_val:
+                break
+        if found_train and found_val:
+            # map detected tokens to canonical names
+            for p in latent_files:
+                if found_train in p.name:
+                    latent_map['train'] = p
+                elif found_val in p.name:
+                    latent_map['validation'] = p
+            for p in label_files:
+                if found_train in p.name:
+                    label_map['train'] = p
+                elif found_val in p.name:
+                    label_map['validation'] = p
+            candidate_splits = sorted(set(latent_map.keys()) & set(label_map.keys()))
+
+    if not candidate_splits:
+        raise RuntimeError(
+            f"Could not find matching latent+label split files in {data_dir}. "
+            f"Expected files like 'latent_trajectories_train.npy' and 'behaviour_labels_train.npy'. "
+            f"Found latent files: {[p.name for p in latent_files]}; label files: {[p.name for p in label_files]}"
+        )
+
+    preferred_val = ['validation', 'val', 'test']
+    if 'train' in candidate_splits:
+        train_split = 'train'
+        val_split = next((v for v in preferred_val if v in candidate_splits), None)
+        if val_split is None:
+            others = [s for s in candidate_splits if s != 'train']
+            if others:
+                val_split = others[0]
+            else:
+                raise RuntimeError("Found only 'train' split but no validation/test split.")
+    else:
+        # choose a validation-like if present, else pick two available splits
+        val_split = next((v for v in preferred_val if v in candidate_splits), None)
+        if val_split:
+            train_split = next(s for s in candidate_splits if s != val_split)
+        elif len(candidate_splits) >= 2:
+            train_split, val_split = candidate_splits[0], candidate_splits[1]
+        else:
+            raise RuntimeError("Unable to identify train/validation splits from files in data dir.")
+
+    X_train_path = latent_map.get(train_split) or latent_map.get('')
+    y_train_path = label_map.get(train_split) or label_map.get('')
+    X_val_path   = latent_map.get(val_split)   or latent_map.get('')
+    y_val_path   = label_map.get(val_split)   or label_map.get('')
+    return train_split, val_split, X_train_path, y_train_path, X_val_path, y_val_path
 
 
 # ── Discrete decoder (one variant) ───────────────────────────────────────────
@@ -298,6 +384,123 @@ def run_discrete_decoding(X_train, y_train, X_val, y_val,
         't_weighted_vs_chance':   float(t_w),
         'p_weighted_vs_chance':   float(p_w),
     }
+
+
+def _process_decoding_for_data_dir(data_dir, session_label, config, latent_dim):
+    """Process decoding for a given data directory (run/data or fold_X/data).
+
+    Raises RuntimeError if expected latent/label split files are not found.
+    """
+    data_dir = Path(data_dir)
+    # detect splits (will raise RuntimeError if not found)
+    train_split, val_split, X_train_path, y_train_path, X_val_path, y_val_path = _detect_train_validation_splits(data_dir)
+
+    print(f"Detected splits: train='{train_split}'  val='{val_split}'")
+    print(f"  X_train -> {X_train_path.name}")
+    print(f"  y_train -> {y_train_path.name}")
+    print(f"  X_val   -> {X_val_path.name}")
+
+    X_train = np.load(X_train_path)
+    X_val   = np.load(X_val_path)
+
+    # Load discrete labels
+    y_train = np.load(y_train_path).astype(int)
+    y_val   = np.load(y_val_path).astype(int)
+
+    print(f"Samples     : train={len(X_train)}, val={len(X_val)}")
+    print(f"Labels      : {sorted(np.unique(y_train).tolist())}")
+
+    # Detect trial IDs (trial-based runs) if present
+    trial_ids_train = None
+    trial_ids_val = None
+    for p in data_dir.glob('trial_ids*.npy'):
+        if train_split and train_split in p.name:
+            try:
+                trial_ids_train = np.load(p)
+            except Exception:
+                print(f"Warning: could not load {p}")
+        if val_split and val_split in p.name:
+            try:
+                trial_ids_val = np.load(p)
+            except Exception:
+                print(f"Warning: could not load {p}")
+    if trial_ids_train is not None or trial_ids_val is not None:
+        print("Trial IDs detected (trial-based run). Decoding will run per-sample; trial-aware metrics can be added if desired.")
+
+    # Check for HGF files
+    hgf_train_path = data_dir / 'hgf_belief_train.npy'
+    hgf_val_path   = data_dir / 'hgf_belief_validation.npy'
+    has_hgf = hgf_train_path.exists() and hgf_val_path.exists()
+    if has_hgf:
+        hgf_train = np.load(hgf_train_path).astype(np.float32)
+        hgf_val   = np.load(hgf_val_path).astype(np.float32)
+        print(f"HGF belief  : found  range=[{hgf_train.min():.3f}, {hgf_train.max():.3f}]")
+    else:
+        hgf_train = hgf_val = None
+        print("HGF belief  : not found — skipping HGF decoding")
+
+    # Output directory for decoding results
+    out_dir = data_dir / 'decoding'
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Build state name mapping from config (fallback to default)
+    if 'b_labels' in config and isinstance(config['b_labels'], list) and len(config['b_labels']) > 0:
+        state_names_dict = {i: config['b_labels'][i] for i in range(len(config['b_labels']))}
+    else:
+        state_names_dict = _DEFAULT_STATE_NAMES
+
+    metrics = {}
+
+    # Discrete decoding
+    metrics['discrete'] = run_discrete_decoding(
+        X_train, y_train, X_val, y_val,
+        out_dir, session_label, state_names_dict,
+    )
+
+    # HGF decoding
+    if has_hgf:
+        metrics['hgf'] = run_hgf_decoding(
+            X_train, hgf_train, X_val, hgf_val,
+            out_dir, session_label,
+        )
+
+    # Hybrid decoding
+    if has_hgf:
+        metrics['hybrid'] = run_hybrid_decoding(
+            X_train, y_train, hgf_train,
+            X_val, y_val, hgf_val,
+            out_dir, session_label, state_names_dict,
+        )
+
+    # Save summary JSON
+    summary = {
+        'session_dir': session_label,
+        'n_runs':      N_RUNS,
+        'n_epochs':    N_EPOCHS,
+        'hybrid_alpha': HYBRID_ALPHA,
+        'latent_dim':  latent_dim,
+        'decoder':     'linear (fixed train/val split from BunDLeNet run)',
+        'metrics':     metrics,
+    }
+    with open(out_dir / 'decoding_summary.json', 'w') as f:
+        json.dump(summary, f, indent=2)
+
+    # Final printout (concise)
+    d = metrics['discrete']
+    print(f"\n{'='*60}")
+    print(f"RESULTS saved to: {out_dir}")
+    print(f"  Discrete acc (UW) : {d['unweighted_val_acc']:.3f} ± {d['unweighted_val_acc_std']:.3f}")
+    print(f"  Discrete acc (W)  : {d['weighted_val_acc']:.3f} ± {d['weighted_val_acc_std']:.3f}")
+    print(f"  Chance acc        : {d['chance_acc']:.3f}")
+    if has_hgf:
+        h = metrics['hgf']
+        print(f"  HGF R²            : {h['val_r2_mean']:.3f} ± {h['val_r2_std']:.3f}")
+        hy = metrics['hybrid']
+        print(f"  Hybrid acc (UW)   : {hy['unweighted_val_acc']:.3f} ± {hy['unweighted_val_acc_std']:.3f}")
+        print(f"  Hybrid acc (W)    : {hy['weighted_val_acc']:.3f} ± {hy['weighted_val_acc_std']:.3f}")
+        print(f"  Hybrid R² (cont,UW): {hy['unweighted_cont_r2_mean']:.3f} ± {hy['unweighted_cont_r2_std']:.3f}")
+    print(f"{'='*60}")
+
 
 
 # ── HGF decoder ───────────────────────────────────────────────────────────────
@@ -698,16 +901,59 @@ def main():
     print(f"Session     : {session_dir}")
     print(f"Latent dim  : {latent_dim}  |  Device: {DEVICE}")
 
-    # Load latent trajectories
-    X_train = np.load(run_dir / 'data' / 'latent_trajectories_train.npy')
-    X_val   = np.load(run_dir / 'data' / 'latent_trajectories_validation.npy')
+    # Auto-detect latent + label split files in the run `data/` folder
+    data_dir = run_dir / 'data'
+    try:
+        # Try top-level data dir first
+        train_split, val_split, X_train_path, y_train_path, X_val_path, y_val_path = _detect_train_validation_splits(data_dir)
+    except RuntimeError as e:
+        # Fallback: try per-fold directories (CV runs)
+        fold_dirs = sorted([d for d in run_dir.iterdir() if d.is_dir() and d.name.startswith('fold_')])
+        if fold_dirs:
+            print(f"No top-level latent/label splits found in {data_dir}; attempting per-fold decoding for {len(fold_dirs)} folds.")
+            for fold_dir in fold_dirs:
+                fold_data = fold_dir / 'data'
+                try:
+                    _process_decoding_for_data_dir(fold_data, f"{session_dir}_{fold_dir.name}", config, latent_dim)
+                except Exception as e2:
+                    print(f"  Skipping {fold_dir.name}: {e2}")
+            sys.exit(0)
+        else:
+            print(f"ERROR: {e}")
+            sys.exit(1)
+
+    print(f"Detected splits: train='{train_split}'  val='{val_split}'")
+    print(f"  X_train -> {X_train_path.name}")
+    print(f"  y_train -> {y_train_path.name}")
+    print(f"  X_val   -> {X_val_path.name}")
+    print(f"  y_val   -> {y_val_path.name}")
+
+    X_train = np.load(X_train_path)
+    X_val   = np.load(X_val_path)
 
     # Load discrete labels
-    y_train = np.load(run_dir / 'data' / 'behaviour_labels_train.npy').astype(int)
-    y_val   = np.load(run_dir / 'data' / 'behaviour_labels_validation.npy').astype(int)
+    y_train = np.load(y_train_path).astype(int)
+    y_val   = np.load(y_val_path).astype(int)
 
     print(f"Samples     : train={len(X_train)}, val={len(X_val)}")
     print(f"Labels      : {sorted(np.unique(y_train).tolist())}")
+
+    # Detect trial IDs (trial-based runs) if present
+    trial_ids_train = None
+    trial_ids_val = None
+    for p in data_dir.glob('trial_ids*.npy'):
+        if train_split and train_split in p.name:
+            try:
+                trial_ids_train = np.load(p)
+            except Exception:
+                print(f"Warning: could not load {p}")
+        if val_split and val_split in p.name:
+            try:
+                trial_ids_val = np.load(p)
+            except Exception:
+                print(f"Warning: could not load {p}")
+    if trial_ids_train is not None or trial_ids_val is not None:
+        print("Trial IDs detected (trial-based run). Decoding will run per-sample; trial-aware metrics can be added if desired.")
 
     # Check for HGF files
     hgf_train_path = run_dir / 'data' / 'hgf_belief_train.npy'
