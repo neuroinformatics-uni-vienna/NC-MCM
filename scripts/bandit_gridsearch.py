@@ -123,11 +123,11 @@ def parse_args():
                         help='Gaussian kernel sigma in ms (only used when downsample_method=gaussian)')
     parser.add_argument('--recompute_cache', action='store_true',
                         help='Force recompute dataset cache even if one exists')
-        parser.add_argument('--b_mode', type=str, default='full',
+    parser.add_argument('--b_mode', type=str, default='full',
                         choices=['full', 'decision', 'decision_strict'],
                         help='Behavioural representation level: full (per-timepoint states), '
-                            'decision (every timepoint in a trial labelled with its trial decision), '
-                            'or decision_strict (trial windows end at the last choosing timestep; reward periods become part of the next trial).')
+                             'decision (every timepoint in a trial labelled with its trial decision), '
+                             'or decision_strict (trial windows end at the last choosing timestep; reward periods become part of the next trial).')
 
     # Trial-based training regime
     parser.add_argument('--trial_based', action='store_true',
