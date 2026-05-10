@@ -61,8 +61,8 @@ STATE_TRANSITIONS   = None
 CHOOSING_STATE_MODE = 'side'
 GAUSSIAN_SIGMA_MS   = 25.0
 RECOMPUTE_CACHE     = False
-# Behavioural label mode: 'full' (per-timepoint) or 'decision' (one label per trial)
-B_MODE              = 'decision'
+# Behavioural label mode: 'full' (per-timepoint), or 'decision' (one label per trial), 'decision_strict' (one label per trial, strict)
+B_MODE              = 'decision_strict'
 
 # --- HGF -------------------------------------------------------------------
 USE_HGF             = True
@@ -86,9 +86,10 @@ TRIAL_TEST_RATIO    = 0.2
 RANDOM_SEED         = 42
 
 # --- Decoder training -------------------------------------------------------
-NUM_DECODER_RUNS    = 10
+NUM_DECODER_RUNS    = 5
 TRAIN_EPOCHS        = 100
-BATCH_SIZE          = 256
+BATCH_SIZE          = 256 # 
+LEARNING_RATE       = 0.01  # optimizer learning rate for linear decoders
 NUM_PERMUTATIONS    = 200
 
 # ===========================================================================
@@ -198,7 +199,7 @@ _config = dict(
     trial_test_ratio=TRIAL_TEST_RATIO, random_seed=RANDOM_SEED,
     # training
     num_decoder_runs=NUM_DECODER_RUNS, train_epochs=TRAIN_EPOCHS,
-    batch_size=BATCH_SIZE, num_permutations=NUM_PERMUTATIONS,
+    batch_size=BATCH_SIZE, learning_rate=LEARNING_RATE, num_permutations=NUM_PERMUTATIONS,
     # data info
     n_timesteps=int(X.shape[0]), n_neurons=int(X.shape[1]),
     n_trials=int(len(trial_start_indices)),
@@ -329,7 +330,7 @@ def run_discrete_evaluation():
             for _ in tqdm(range(NUM_DECODER_RUNS),
                           desc=f'Decoders {loss_type} fold {fold_idx+1}', leave=False):
                 model = nn.Sequential(nn.Linear(input_dim, num_states)).to(device)
-                opt   = optim.Adam(model.parameters(), lr=0.01)
+                opt   = optim.Adam(model.parameters(), lr=LEARNING_RATE)
                 crit  = nn.CrossEntropyLoss(
                     weight=class_weights_tensor if use_weighted_loss else None,
                 )
@@ -636,7 +637,7 @@ def run_hybrid_evaluation():
             for _ in tqdm(range(NUM_DECODER_RUNS),
                           desc=f'Decoders Hybrid {loss_type} fold {fold_idx+1}', leave=False):
                 model = nn.Linear(input_dim, output_dim).to(device)
-                opt   = optim.Adam(model.parameters(), lr=0.01)
+                opt   = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
                 for epoch in range(TRAIN_EPOCHS):
                     model.train()
@@ -886,7 +887,7 @@ def run_continuous_evaluation():
         for _ in tqdm(range(NUM_DECODER_RUNS),
                       desc=f'Belief decoder fold {fold_idx+1}', leave=False):
             model = nn.Linear(input_dim, 1).to(device)
-            opt   = optim.Adam(model.parameters(), lr=0.01)
+            opt   = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
             for epoch in range(TRAIN_EPOCHS):
                 model.train()
