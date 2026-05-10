@@ -161,7 +161,21 @@ def create_run_directory(grid_dir, run_idx, params):
         sanitized_params[k] = v_str
     
     param_str = '_'.join([f"{k}={v}" for k, v in sanitized_params.items()])
-    run_dir = grid_dir / f'run_{run_idx:03d}_{param_str}'
+    # Shorten long parameter strings to avoid filesystem name length limits
+    try:
+        import hashlib
+        max_len = 120
+        if len(param_str) > max_len:
+            short_hash = hashlib.md5(param_str.encode()).hexdigest()[:8]
+            # keep a prefix of the param string and append a short hash
+            prefix = param_str[: (max_len - 9)].rstrip('_')
+            param_str_short = f"{prefix}_{short_hash}"
+        else:
+            param_str_short = param_str
+    except Exception:
+        param_str_short = param_str
+
+    run_dir = grid_dir / f'run_{run_idx:03d}_{param_str_short}'
     run_dir.mkdir(parents=True, exist_ok=True)
     
     # Create subdirectories
@@ -1051,6 +1065,14 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
         b_mode=getattr(args, 'b_mode', 'full'),
     )
     print_step_time("Data loading", run_start_time, step_start)
+    
+    # Save full HGF belief trajectory for reproducibility/analysis when available
+    if hgf_beliefs is not None:
+        try:
+            np.save(output_dir / 'data' / 'hgf_beliefs.npy', hgf_beliefs)
+            print(f"HGF beliefs saved to {output_dir / 'data' / 'hgf_beliefs.npy'}")
+        except Exception as e:
+            print(f"Warning: failed to save HGF beliefs: {e}")
     
     # Encode behaviour labels and optionally build hybrid b array
     label_encoder = LabelEncoder()
