@@ -2977,19 +2977,31 @@ else:
                                  marker=dict(size=3, color='dimgray', opacity=0.35), name='Window preds (test)',
                                  hovertemplate=win_hover, customdata=np.column_stack([trial_ids_win[idx_test], p_right_win[idx_test]])))
 
-        # Running proportion of wrong predictions over time (smoothed over last K windows)
-        K = 5
+        # Running proportion of wrong predictions over time (adaptive smoothing)
+        # Compute a short running-average across windows and then apply a gentle
+        # Gaussian smooth for display so the timeline is easier to interpret.
         win_wrong = (~correct_win).astype(float)
         if win_wrong.size:
+            # adaptive K: use ~5% of available windows, but at least 5
+            K = max(5, int(round(0.05 * win_wrong.size)))
+            K = min(K, win_wrong.size)
             kernel = np.ones(K, dtype=float) / float(K)
-            wrong_prop = np.convolve(win_wrong, kernel, mode='same')
+            wrong_prop_raw = np.convolve(win_wrong, kernel, mode='same')
+
+            # display smoothing: sigma relative to K (keeps smoothing gentle)
+            smooth_sigma_prop = max(1.0, float(K) * 0.15)
+            try:
+                wrong_prop = gaussian_filter1d(wrong_prop_raw, sigma=smooth_sigma_prop)
+            except Exception:
+                # fallback if gaussian filter not available for some reason
+                wrong_prop = wrong_prop_raw
         else:
             wrong_prop = np.zeros_like(win_wrong, dtype=float)
 
         fig.add_trace(go.Scatter(x=x_win, y=wrong_prop, mode='lines',
-                                 line=dict(color='black', width=2), name=f'Wrong prop (running {K})',
+                                 line=dict(color='black', width=3), name=f'Wrong prop (smoothed, K={K})',
                                  hovertemplate='t=%{x:.2f}s<br>wrong_prop=%{y:.2f}<extra></extra>',
-                                 yaxis='y2'))
+                                 yaxis='y2', opacity=0.9, showlegend=True))
 
         # Secondary y-axis for wrong-proportion (0..1) overlaid on the main y-axis
         fig.update_layout(yaxis2=dict(overlaying='y', side='right', range=[0, 1], title='Prop wrong', showgrid=False))
