@@ -252,6 +252,79 @@ def save_comprehensive_config(args, params, output_dir, execution_time, executio
     print(f"Comprehensive configuration saved to {config_path}")
 
 
+def _compute_vis_markers(dataset, data_path):
+    """Compute trial choice triangles, block epoch markers, and per-trial sample
+    boundary arrays for the neural-behavioural HTML.
+
+    Returns
+    -------
+    trial_markers : list of (sample_idx, choice_int)
+        One entry per trial: sample_idx is the downsampled index of the choosing
+        event; choice_int is 0 (left) or 1 (right).
+    epoch_markers : list of (sample_idx, label_str)
+        One entry per block transition; label_str is 'Better L' or 'Better R'.
+    t_chosen_samples : np.ndarray, shape (n_trials,), dtype int64
+        Downsampled sample index of t_chosen for each trial (sorted by start).
+        -1 if unavailable.
+    t_choosing_samples : np.ndarray, shape (n_trials,), dtype int64
+        Downsampled sample index of t_choosing for each trial (sorted by start).
+        -1 if unavailable.
+    """
+    trial_markers = []
+    epoch_markers = []
+    t_chosen_samples = None
+    t_choosing_samples = None
+
+    try:
+        metrics_path = Path(data_path) / 'metrics.json'
+        with open(metrics_path) as f:
+            metrics_data = json.load(f)
+        trials_raw = metrics_data['metrics']['trials']
+        behavioral_time = dataset.behavioral_time  # ms, shape (T,)
+        T = len(behavioral_time)
+
+        # Sort by start time — same ordering used by _create_trial_indices in the dataset
+        usable_trials = sorted(
+            [t for t in trials_raw if t.get('start') is not None],
+            key=lambda t: t['start'],
+        )
+        n_trials = len(usable_trials)
+        t_chosen_samples = np.full(n_trials, -1, dtype=np.int64)
+        t_choosing_samples = np.full(n_trials, -1, dtype=np.int64)
+
+        for i, trial in enumerate(usable_trials):
+            t_ch = trial.get('t choosing')
+            t_cho = trial.get('t chosen')
+            choice = trial.get('choice', '').lower()
+
+            if t_ch is not None:
+                idx = int(np.clip(np.searchsorted(behavioral_time, t_ch), 0, T - 1))
+                t_choosing_samples[i] = idx
+                if choice in ('l', 'r'):
+                    trial_markers.append((idx, 0 if choice == 'l' else 1))
+
+            if t_cho is not None:
+                t_chosen_samples[i] = int(np.clip(np.searchsorted(behavioral_time, t_cho), 0, T - 1))
+
+    except Exception as exc:
+        print(f"Warning: could not compute trial markers: {exc}")
+
+    try:
+        # Epoch markers: block transition points from block_indices
+        bi = dataset.block_indices
+        bl = dataset.block_labels
+        diffs = np.diff(bi)
+        block_change_samples = np.where(diffs != 0)[0] + 1
+        for s in block_change_samples:
+            lbl = bl[int(s)]
+            nice_lbl = 'Better L' if 'left' in str(lbl).lower() else 'Better R'
+            epoch_markers.append((int(s), nice_lbl))
+    except Exception as exc:
+        print(f"Warning: could not compute epoch markers: {exc}")
+
+    return trial_markers, epoch_markers, t_chosen_samples, t_choosing_samples
+
+
 def load_data(data_path, downsample_fs, downsample_method, good_neurons_only, apply_hold_transitions='none', normalize_method='none',
               hgf_model=None, hgf_column=None, choosing_state_mode='side',
               gaussian_sigma_ms=25.0, recompute_cache=False, b_mode='full'):
@@ -317,7 +390,10 @@ def load_data(data_path, downsample_fs, downsample_method, good_neurons_only, ap
     b_colors_rgb = dataset.get_rgb_colors_for_visualizer()
     hgf_beliefs = getattr(dataset, 'hgf_beliefs', None)  # None if HGF was not loaded
     trial_start_indices = dataset.trial_start_indices
-    
+
+    # Pre-compute trial choice markers and epoch markers for visualization
+    trial_markers, epoch_markers, t_chosen_samples, t_choosing_samples = _compute_vis_markers(dataset, data_path)
+
     # Free memory from dataset object (contains large sparse matrices)
     del dataset
     gc.collect()
@@ -325,7 +401,7 @@ def load_data(data_path, downsample_fs, downsample_method, good_neurons_only, ap
     print(f"Data shapes - x: {x.shape}, b: {b.shape}")
     print(f"behaviour labels: {b_labels}")
     
-    return x, b, b_labels, b_colors, b_colors_rgb, hgf_beliefs, trial_start_indices
+    return x, b, b_labels, b_colors, b_colors_rgb, hgf_beliefs, trial_start_indices, trial_markers, epoch_markers, t_chosen_samples, t_choosing_samples
 
 
 def preprocess_data(x, b, window, lazy_loading=False, cv_folds=None, kfold_n_splits=7, kfold_test_fold=4,
@@ -594,10 +670,46 @@ def plot_training_loss(loss_array, test_loss_array, output_dir):
     print(f"Training loss plot saved to {plot_path}")
 
 
-def visualize_neural_behavioural(x, b, b_labels, b_colors, output_dir):
-    """Visualize neural activity and behavioural choices"""
+def visualize_neural_behavioural(x, b, b_labels, b_colors, output_dir,
+                                  trial_start_indices=None, test_trial_ids=None,
+                                  trial_markers=None, epoch_markers=None,
+                                  t_chosen_samples=None, t_choosing_samples=None):
+    """Visualize neural activity and behavioural choices.
+
+    Diagonal hatching is overlaid on the behaviour row to indicate test-set
+    trial windows.  When t_chosen_samples and t_choosing_samples are supplied
+    (decision_strict mode), the hatch window for trial N runs from
+    t_chosen_samples[N-1] (the color-switch point) to t_choosing_samples[N]
+    (the lever-press / triangle marker), so the hatch aligns exactly with the
+    color block.  Falls back to trial_start_indices boundaries otherwise.
+    """
     print("Plotting neural-behavioural data...")
-    fig = plotting_neuronal_behavioural_plotly(x, b, b_names=b_labels, b_colors=b_colors, show_fig=False)
+
+    split_mask = None
+    if test_trial_ids is not None and len(test_trial_ids) > 0:
+        T = x.shape[1]  # x is (neurons, timesteps)
+        split_mask = np.zeros(T, dtype=bool)
+        if t_chosen_samples is not None and t_choosing_samples is not None:
+            # decision_strict: hatch from t_chosen[N-1] to t_choosing[N]
+            for tid in np.unique(test_trial_ids):
+                tid = int(tid)
+                t0 = int(t_chosen_samples[tid - 1]) if tid > 0 else 0
+                t1 = int(t_choosing_samples[tid])
+                if 0 <= t0 < t1 <= T:
+                    split_mask[t0:t1] = True
+        elif trial_start_indices is not None:
+            n_trials = len(trial_start_indices)
+            for tid in np.unique(test_trial_ids):
+                t0 = int(trial_start_indices[tid])
+                t1 = int(trial_start_indices[tid + 1]) if tid + 1 < n_trials else T
+                split_mask[t0:t1] = True
+
+    fig = plotting_neuronal_behavioural_plotly(
+        x, b, b_names=b_labels, b_colors=b_colors, show_fig=False,
+        split_mask=split_mask,
+        trial_markers=trial_markers,
+        epoch_markers=epoch_markers,
+    )
     
     plot_path = output_dir / 'figures' / 'neural_behavioural_overview.html'
     fig.write_html(str(plot_path))
@@ -1054,7 +1166,7 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
     # Load data
     step_start = time.time()
     b_type = getattr(args, 'b_type', 'discrete')
-    x, b, b_labels, b_colors, b_colors_rgb, hgf_beliefs, trial_start_indices = load_data(
+    x, b, b_labels, b_colors, b_colors_rgb, hgf_beliefs, trial_start_indices, trial_markers, epoch_markers, t_chosen_samples, t_choosing_samples = load_data(
         args.data_path, args.downsample_fs, args.downsample_method, args.good_neurons_only,
         args.apply_hold_transitions, args.normalize_method,
         hgf_model=args.hgf_model if b_type == 'hybrid' else None,
@@ -1099,11 +1211,14 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
         'n_classes': n_classes_actual,
         'b_labels': b_labels,
     })
-    
-    # Visualize raw data
-    step_start = time.time()
-    visualize_neural_behavioural(x, b, b_labels, b_colors, output_dir)
-    print_step_time("Neural-behavioural visualization", run_start_time, step_start)
+
+    # Save trial_start_indices for reproducibility and post-hoc analysis
+    if trial_start_indices is not None:
+        try:
+            np.save(output_dir / 'data' / 'trial_start_indices.npy', trial_start_indices)
+            print(f"trial_start_indices saved ({len(trial_start_indices)} trials)")
+        except Exception as e:
+            print(f"Warning: failed to save trial_start_indices: {e}")
     
     # b_labels is a list ordered by sorted state id; after LabelEncoder the mapping
     # new_int -> state_name is identical (LabelEncoder maps sorted classes to 0, 1, ...)
@@ -1137,6 +1252,19 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
         mode_label = "Data preprocessing (trial-based)" if getattr(args, 'trial_based', False) else "Data preprocessing"
         print_step_time(mode_label, run_start_time, step_start)
     
+    # Visualize raw data with test-trial hatching (uses trial_ids_test when available)
+    step_start = time.time()
+    visualize_neural_behavioural(
+        x, b, b_labels, b_colors, output_dir,
+        trial_start_indices=trial_start_indices,
+        test_trial_ids=trial_ids_test,
+        trial_markers=trial_markers,
+        epoch_markers=epoch_markers,
+        t_chosen_samples=t_chosen_samples,
+        t_choosing_samples=t_choosing_samples,
+    )
+    print_step_time("Neural-behavioural visualization", run_start_time, step_start)
+
     # Free memory from original arrays
     del x, b, b_for_bundlenet
     
