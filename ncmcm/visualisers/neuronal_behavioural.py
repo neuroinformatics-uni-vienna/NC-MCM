@@ -136,6 +136,7 @@ def plotting_neuronal_behavioural_plotly(
     show_fig=True,
     split_mask=None,
     trial_markers=None,
+    trial_start_indices=None,
     epoch_markers=None,
     **kwargs
 ):
@@ -362,13 +363,31 @@ def plotting_neuronal_behavioural_plotly(
                 col=1,
             )
 
-    # Thin dashed vertical epoch lines spanning the full figure height
+    # Small notches at trial start positions on the behaviour subplot x-axis
+    # (range update deferred until after all traces — see below)
+
+    # Thin dashed vertical epoch lines spanning only the time-series rows (not bar charts)
     if epoch_markers is not None:
+        # Analytically compute the bottom paper-y of the last time-series row.
+        # Row heights (bottom → top in the subplots): bar(1.8) + spacer(0.5) + ts rows(2 each).
+        # We want epoch lines to cover only the time-series rows (rows 1..num_plots).
+        if has_bar_plots:
+            _rh = [2] * num_plots + [0.5] + [1.8]
+            _n = len(_rh)
+            _vs = 0.04
+            _total_h = sum(_rh)
+            _plot_h = 1.0 - _vs * (_n - 1)          # paper height allocated to plots
+            # paper height consumed by spacer + bar rows (the bottom _n-num_plots rows)
+            _bottom_h = sum(_rh[num_plots:]) / _total_h * _plot_h
+            _bottom_gaps = (_n - 1 - num_plots) * _vs  # gaps below the last ts row
+            _epoch_y0 = _bottom_h + _bottom_gaps
+        else:
+            _epoch_y0 = 0.0
         for sample_idx, label in epoch_markers:
             fig.add_shape(
                 type='line',
                 x0=sample_idx, x1=sample_idx,
-                y0=0, y1=1,
+                y0=_epoch_y0, y1=1.0,
                 xref='x', yref='paper',
                 line=dict(color='rgba(40,40,40,0.55)', width=1.2, dash='dash'),
             )
@@ -415,9 +434,39 @@ def plotting_neuronal_behavioural_plotly(
             )
             fig.update_yaxes(title_text='Timepoints', row=bar_row, col=col_idx)
 
+    # ── X-axis zoom sync ────────────────────────────────────────────────────
+    # Explicitly link all time-series rows to the primary x-axis so that zooming
+    # one row zooms all others.  Bar-chart rows use categorical labels and must
+    # NOT share the numeric time axis.
+    for _ts_row in range(2, num_plots + 2):   # behaviour row + spacer row
+        fig.update_xaxes(matches='x', showticklabels=(_ts_row == num_plots + 1), row=_ts_row, col=1)
+    fig.update_xaxes(showticklabels=False, row=1, col=1)  # hide ticks on neuronal row
+    if has_bar_plots:
+        # Detach bar chart x-axes completely — they carry categorical labels
+        fig.update_xaxes(matches=None, type='category', row=num_plots + 2, col=1)
+        fig.update_xaxes(matches=None, type='category', row=num_plots + 2, col=2)
+
+    # ── Trial-start notches (drawn after all traces so range sticks) ─────────
+    if trial_start_indices is not None and b_row is not None and len(trial_start_indices) > 0:
+        _yref_notch = 'y' if b_row == 1 else f'y{b_row}'
+        for _t0 in trial_start_indices:
+            fig.add_shape(
+                type='line',
+                x0=int(_t0), x1=int(_t0),
+                y0=-0.63, y1=-0.50,
+                xref='x', yref=_yref_notch,
+                line=dict(color='rgba(0,0,0,0.6)', width=1.3),
+                layer='above',
+            )
+        # Extend the behaviour y-axis so the notches are visible below the heatmap;
+        # autorange=False prevents Plotly from overriding this after rendering.
+        fig.update_yaxes(range=[-0.65, 0.5], autorange=False, row=b_row, col=1)
+
     fig.update_layout(
         height=num_plots * 200 + (260 if has_bar_plots else 0),
         showlegend=(split_mask_arr is not None),
+        # Place the legend just ABOVE the figure area (in the top margin) so it
+        # never overlaps the neuronal-activation heatmap.
         legend=dict(
             orientation='h',
             yanchor='bottom',
@@ -425,7 +474,9 @@ def plotting_neuronal_behavioural_plotly(
             xanchor='right',
             x=1,
             font=dict(size=10),
+            bgcolor='rgba(255,255,255,0.75)',
         ),
+        margin=dict(t=40),   # room for legend above the top row
     )
 
     if show_fig:

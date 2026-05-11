@@ -108,6 +108,24 @@ class LatentSpaceVisualiser:
         cbar.ax.set_position([bbox.x1 + 0.03, bbox.y0, 0.02, bbox.height])
 
         plt.plot(self.y / np.max(np.abs(self.y)) / 3, linewidth=2)
+        # Draw small notches at trial boundaries when segment IDs are provided
+        if self.segment_ids is not None:
+            try:
+                seg = np.asarray(self.segment_ids)
+                if seg.shape[0] == self.y.shape[0]:
+                    boundaries = np.where(np.diff(seg) != 0)[0]
+                    starts = np.concatenate(([0], boundaries + 1)).astype(int)
+                    ends = np.concatenate((boundaries, [len(seg) - 1])).astype(int)
+                    # small vertical ticks just above the bottom of the plot
+                    y0 = -0.5
+                    y1 = -0.38
+                    for idx in starts:
+                        plt.vlines(idx, ymin=y0, ymax=y1, colors='k', linewidth=0.8)
+                    for idx in ends:
+                        plt.vlines(idx, ymin=y0, ymax=y1, colors='k', linewidth=0.8)
+            except Exception:
+                # If anything goes wrong, skip drawing notches
+                pass
         plt.xlabel("time $t$", fontsize=14)
         plt.axis([0, self.y.shape[0], -0.5, 0.5])
         plt.xticks(fontsize=12)
@@ -241,6 +259,31 @@ class LatentSpaceVisualiser:
                 yanchor='top'
             )
         )
+
+        # Add small vertical notches at trial boundaries when segment IDs are provided
+        if self.segment_ids is not None:
+            try:
+                seg = np.asarray(self.segment_ids)
+                if seg.shape[0] == self.y.shape[0]:
+                    boundaries = np.where(np.diff(seg) != 0)[0]
+                    starts = np.concatenate(([0], boundaries + 1)).astype(int)
+                    ends = np.concatenate((boundaries, [len(seg) - 1])).astype(int)
+                    notch_height = 0.03  # fraction of plotting area
+                    shapes = []
+                    for idx in np.unique(np.concatenate((starts, ends))):
+                        shapes.append(dict(
+                            type='line',
+                            xref='x', x0=int(idx), x1=int(idx),
+                            yref='paper', y0=0.0, y1=notch_height,
+                            line=dict(color='black', width=1)
+                        ))
+                    # extend existing shapes if present
+                    if 'shapes' in fig.layout:
+                        fig.layout.shapes += tuple(shapes)
+                    else:
+                        fig.update_layout(shapes=shapes)
+            except Exception:
+                pass
         
         if os.path.dirname(filename):
             os.makedirs(os.path.dirname(filename), exist_ok=True)
