@@ -133,7 +133,10 @@ def plotting_neuronal_behavioural_plotly(
     s_names={}, 
     r=None, 
     r_names={}, 
-    show_fig=True, 
+    show_fig=True,
+    split_mask=None,
+    trial_markers=None,
+    epoch_markers=None,
     **kwargs
 ):
     """
@@ -154,6 +157,15 @@ def plotting_neuronal_behavioural_plotly(
     - r: 1D numpy array of response data (optional).
     - r_names: Dictionary mapping response labels to their names (optional).
     - show_fig: Boolean indicating whether to display the plot
+    - split_mask: 1D boolean array of shape (T,) where True marks test-set timesteps
+                  (optional). When provided and b is not None, hatching is overlaid on
+                  the behaviour subplot to indicate test-trial windows.
+    - trial_markers: list of (sample_idx, choice_int) tuples where choice_int is
+                     0 (left) or 1 (right). When provided, small upward triangles are
+                     drawn at the bottom of the behaviour row at the choosing timestep.
+    - epoch_markers: list of (sample_idx, label_str) tuples, e.g. [(4774, 'Better R')].
+                     When provided, thin dashed vertical lines spanning the full figure
+                     are drawn with the label annotated at the top.
     - kwargs: Additional keyword arguments for customizing the neuronal 
         activation plot (vmin, vmax, colorscale, etc.).
 
@@ -179,15 +191,33 @@ def plotting_neuronal_behavioural_plotly(
     ```
     """
     num_plots = 1 + sum([1 if var is not None else 0 for var in [b, s, r]])
-    
-    fig = make_subplots(
-        rows=num_plots, 
-        cols=1,
-        subplot_titles=None,
-        vertical_spacing=0.1,
-        row_heights=[2] * num_plots,
-        shared_xaxes=True
-    )
+    has_bar_plots = split_mask is not None and b is not None
+
+    if has_bar_plots:
+        specs = ([[{"colspan": 2, "type": "xy"}, None]] * num_plots +
+                 [[{"colspan": 2, "type": "xy"}, None]] +   # invisible spacer row
+                 [[{"type": "xy"}, {"type": "xy"}]])
+        fig = make_subplots(
+            rows=num_plots + 2,
+            cols=2,
+            specs=specs,
+            shared_xaxes=True,
+            vertical_spacing=0.04,
+            row_heights=[2] * num_plots + [0.5] + [1.8],
+            subplot_titles=[''] * num_plots + [''] + ['Train', 'Test'],
+        )
+    else:
+        fig = make_subplots(
+            rows=num_plots,
+            cols=1,
+            subplot_titles=None,
+            vertical_spacing=0.1,
+            row_heights=[2] * num_plots,
+            shared_xaxes=True
+        )
+
+    # Pre-compute split mask array once for reuse in hatch + bar sections
+    split_mask_arr = np.asarray(split_mask, dtype=bool) if split_mask is not None else None
     
     # Extract vmin, vmax, colorscale from kwargs
     vmin = kwargs.pop('vmin', None)
@@ -254,16 +284,148 @@ def plotting_neuronal_behavioural_plotly(
     current_row = 2
     if b is not None:
         discrete_plot(current_row, b, b_names, "Behaviour", "deep", custom_colors=b_colors)
+        b_row = current_row
         current_row += 1
+    else:
+        b_row = None
     if s is not None:
         discrete_plot(current_row, s, s_names, "Stimulus", "Set2")
         current_row += 1
     if r is not None:
         discrete_plot(current_row, r, r_names, "Response", "Set3")
 
+    # Overlay diagonal hatching on test-set windows in the behaviour row
+    if split_mask_arr is not None and b_row is not None:
+        # Legend-only dummy trace so the hatch pattern appears in the legend
+        fig.add_trace(
+            go.Scatter(
+                x=[0, 0, 1, 1, 0],
+                y=[-0.5, 0.5, 0.5, -0.5, -0.5],
+                fill='toself',
+                fillcolor='rgba(0,0,0,0)',
+                fillpattern=dict(shape='/', fgcolor='rgba(60,60,60,0.45)', size=10),
+                line=dict(width=0),
+                mode='lines',
+                showlegend=True,
+                name='Test timepoints',
+                visible='legendonly',
+                hoverinfo='skip',
+            ),
+            row=b_row,
+            col=1,
+        )
+        # Find contiguous test blocks [t0, t1)
+        padded = np.concatenate([[False], split_mask_arr, [False]])
+        changes = np.diff(padded.astype(np.int8))
+        starts = np.where(changes == 1)[0]
+        ends = np.where(changes == -1)[0]
+        for t0, t1 in zip(starts, ends):
+            fig.add_trace(
+                go.Scatter(
+                    x=[t0 - 0.5, t0 - 0.5, t1 - 0.5, t1 - 0.5, t0 - 0.5],
+                    y=[-0.5, 0.5, 0.5, -0.5, -0.5],
+                    fill='toself',
+                    fillcolor='rgba(0,0,0,0)',
+                    fillpattern=dict(shape='/', fgcolor='rgba(60,60,60,0.45)', size=10),
+                    line=dict(width=0),
+                    mode='lines',
+                    showlegend=False,
+                    hoverinfo='skip',
+                ),
+                row=b_row,
+                col=1,
+            )
+
+    # Small upward triangles at the choosing timestep for each trial
+    if trial_markers is not None and b_row is not None:
+        # Group by choice (0=left, 1=right)
+        for choice_int in [0, 1]:
+            xs = [m[0] for m in trial_markers if m[1] == choice_int]
+            if not xs:
+                continue
+            color = b_colors.get(choice_int, ('#e74c3c' if choice_int == 0 else '#3498db')) if b_colors else ('#e74c3c' if choice_int == 0 else '#3498db')
+            fig.add_trace(
+                go.Scatter(
+                    x=xs,
+                    y=[-0.45] * len(xs),
+                    mode='markers',
+                    marker=dict(
+                        symbol='triangle-up',
+                        size=7,
+                        color=color,
+                        line=dict(width=0.5, color='rgba(0,0,0,0.4)'),
+                    ),
+                    showlegend=False,
+                    hoverinfo='skip',
+                ),
+                row=b_row,
+                col=1,
+            )
+
+    # Thin dashed vertical epoch lines spanning the full figure height
+    if epoch_markers is not None:
+        for sample_idx, label in epoch_markers:
+            fig.add_shape(
+                type='line',
+                x0=sample_idx, x1=sample_idx,
+                y0=0, y1=1,
+                xref='x', yref='paper',
+                line=dict(color='rgba(40,40,40,0.55)', width=1.2, dash='dash'),
+            )
+            fig.add_annotation(
+                x=sample_idx, y=1.0,
+                xref='x', yref='paper',
+                text=label,
+                showarrow=False,
+                xanchor='left',
+                yanchor='bottom',
+                font=dict(size=9, color='rgba(40,40,40,0.8)'),
+                bgcolor='rgba(255,255,255,0.6)',
+                borderpad=2,
+            )
+
+    # Bar charts: class balance in train vs test sets
+    if has_bar_plots:
+        b_arr = np.asarray(b)
+        unique_vals = sorted(np.unique(b_arr).tolist())
+        bar_labels = [b_names.get(int(v), str(v)) if b_names else str(v) for v in unique_vals]
+        bar_colors_list = [b_colors.get(int(v), '#888888') if b_colors else '#888888' for v in unique_vals]
+        train_counts = [int(np.sum((b_arr == v) & ~split_mask_arr)) for v in unique_vals]
+        test_counts  = [int(np.sum((b_arr == v) &  split_mask_arr)) for v in unique_vals]
+        spacer_row = num_plots + 1
+        bar_row = num_plots + 2
+        # Hide the spacer row axes so it is purely blank vertical space
+        fig.update_xaxes(visible=False, row=spacer_row, col=1)
+        fig.update_yaxes(visible=False, row=spacer_row, col=1)
+        for col_idx, (counts, set_label) in enumerate(
+            [(train_counts, 'Train'), (test_counts, 'Test')], start=1
+        ):
+            fig.add_trace(
+                go.Bar(
+                    x=bar_labels,
+                    y=counts,
+                    marker_color=bar_colors_list,
+                    showlegend=False,
+                    text=[f'{c:,}' for c in counts],
+                    textposition='outside',
+                    cliponaxis=False,
+                    width=0.35,
+                ),
+                row=bar_row, col=col_idx,
+            )
+            fig.update_yaxes(title_text='Timepoints', row=bar_row, col=col_idx)
+
     fig.update_layout(
-        height=num_plots * 200,
-        showlegend=False
+        height=num_plots * 200 + (260 if has_bar_plots else 0),
+        showlegend=(split_mask_arr is not None),
+        legend=dict(
+            orientation='h',
+            yanchor='bottom',
+            y=1.01,
+            xanchor='right',
+            x=1,
+            font=dict(size=10),
+        ),
     )
 
     if show_fig:
