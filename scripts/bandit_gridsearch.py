@@ -708,6 +708,7 @@ def visualize_neural_behavioural(x, b, b_labels, b_colors, output_dir,
         x, b, b_names=b_labels, b_colors=b_colors, show_fig=False,
         split_mask=split_mask,
         trial_markers=trial_markers,
+        trial_start_indices=trial_start_indices,
         epoch_markers=epoch_markers,
     )
     
