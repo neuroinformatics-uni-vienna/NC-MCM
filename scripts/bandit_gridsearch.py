@@ -727,7 +727,7 @@ def visualize_neural_behavioural(x, b, b_labels, b_colors, output_dir,
 
     split_mask = None
     if test_trial_ids is not None and len(test_trial_ids) > 0:
-        T = x.shape[1]  # x is (neurons, timesteps)
+        T = x.shape[0]  # x is (timesteps, neurons) at the call site
         split_mask = np.zeros(T, dtype=bool)
         if t_chosen_samples is not None and t_choosing_samples is not None:
             # decision_strict: hatch from t_chosen[N-1] to t_choosing[N]
