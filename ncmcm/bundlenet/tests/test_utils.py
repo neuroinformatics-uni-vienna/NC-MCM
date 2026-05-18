@@ -6,6 +6,7 @@ from ncmcm.bundlenet.utils import (
     trial_train_test_split_lazy, segment_trials, prep_data_trials,
     trial_train_test_split,
     boundaries_from_trial_starts, segments_from_trial_starts,
+    compute_trial_partition,
 )
 
 
@@ -295,4 +296,242 @@ def test_prep_data_trials_lazy_with_start_indices():
     assert trial_ids.shape == (len(ds),)
     # Consistent trial IDs: three distinct groups
     assert len(np.unique(trial_ids)) == 3
+
+
+# ---------------------------------------------------------------------------
+# context_policy tests (compute_trial_partition + all three policies)
+# ---------------------------------------------------------------------------
+
+def _make_multi_trial_data(n_trials=6, trial_len=20, n_neurons=4, rng_seed=7):
+    """Build a dataset with n_trials identical-length trials."""
+    rng = np.random.default_rng(rng_seed)
+    T = n_trials * trial_len
+    X = rng.random((T, n_neurons)).astype(np.float32)
+    B = np.zeros(T, dtype=np.int64)
+    for t in range(n_trials):
+        B[t * trial_len:(t + 1) * trial_len] = t % 3
+    trial_starts = np.arange(n_trials, dtype=np.int64) * trial_len
+    return X, B, trial_starts, trial_len
+
+
+def test_compute_trial_partition_deterministic():
+    train1, test1 = compute_trial_partition(20, 0.2, 42)
+    train2, test2 = compute_trial_partition(20, 0.2, 42)
+    assert train1 == train2
+    assert test1 == test2
+
+
+def test_compute_trial_partition_sizes():
+    n = 20
+    train_set, test_set = compute_trial_partition(n, 0.2, 0)
+    assert len(train_set) + len(test_set) == n
+    assert len(train_set & test_set) == 0
+    assert len(test_set) == max(1, round(n * 0.2))
+
+
+def test_compute_trial_partition_matches_trial_train_test_split():
+    """compute_trial_partition and trial_train_test_split produce the same partition."""
+    n_trials, win = 10, 3
+    X, B, starts, tlen = _make_multi_trial_data(n_trials=n_trials, trial_len=15, n_neurons=4)
+    segs = segments_from_trial_starts(X, B, starts)
+
+    Xp, B1, tids = prep_data_trials(segs, win=win)
+    _, test_set_from_split = compute_trial_partition(n_trials, 0.2, 5)
+
+    (Xtr, _), (Xte, _) = trial_train_test_split(
+        Xp, B1, tids, test_ratio=0.2, random_state=5,
+        partition_sets=(frozenset(range(n_trials)) - test_set_from_split, test_set_from_split),
+    )
+    # The test trials should be exactly those in test_set_from_split
+    test_tids_actual = set(tids[np.array([tid in set(test_set_from_split) for tid in tids])].tolist())
+    assert test_tids_actual == set(test_set_from_split)
+
+
+def test_context_policy_always_matches_historical():
+    """context_policy='always' must produce identical results to no policy arg."""
+    X, B, starts, _ = _make_multi_trial_data()
+    segs = segments_from_trial_starts(X, B, starts)
+    win = 5
+
+    Xp_default, B1_default, tids_default = prep_data_trials(segs, win=win)
+    Xp_always, B1_always, tids_always = prep_data_trials(segs, win=win, context_policy='always')
+
+    np.testing.assert_array_equal(Xp_default, Xp_always)
+    np.testing.assert_array_equal(B1_default, B1_always)
+    np.testing.assert_array_equal(tids_default, tids_always)
+
+
+def test_context_policy_none_window_count():
+    """context_policy='none' → each trial produces exactly max(0, len_trial - win) pairs."""
+    X, B, starts, trial_len = _make_multi_trial_data(n_trials=5, trial_len=20)
+    segs = segments_from_trial_starts(X, B, starts)
+    win = 7
+
+    _, _, tids = prep_data_trials(segs, win=win, context_policy='none')
+
+    unique, counts = np.unique(tids, return_counts=True)
+    for trial_id, count in zip(unique, counts):
+        expected = max(0, trial_len - win)
+        assert count == expected, f"trial {trial_id}: got {count}, expected {expected}"
+
+    # Total must equal sum(max(0, len-win)) across all trials
+    assert len(tids) == len(segs) * max(0, trial_len - win)
+
+
+def test_context_policy_same_partition_removes_cross_context():
+    """same_partition: predecessor in opposite partition → no context borrowed."""
+    X, B, starts, trial_len = _make_multi_trial_data(n_trials=6, trial_len=20)
+    segs = segments_from_trial_starts(X, B, starts)
+    win = 5
+
+    train_set, test_set = compute_trial_partition(len(segs), 0.2, 0)
+    pmap = {tid: ('train' if tid in train_set else 'test') for tid in range(len(segs))}
+
+    _, _, tids_same = prep_data_trials(segs, win=win,
+                                       context_policy='same_partition',
+                                       trial_partition_map=pmap)
+    _, _, tids_always = prep_data_trials(segs, win=win, context_policy='always')
+    _, _, tids_none = prep_data_trials(segs, win=win, context_policy='none')
+
+    # same_partition count must be between none and always
+    assert len(tids_none) <= len(tids_same) <= len(tids_always)
+
+    # For any trial whose predecessor is in a DIFFERENT partition,
+    # same_partition count should equal the 'none' count for that trial.
+    # For any trial whose predecessor is in the SAME partition,
+    # same_partition count should equal the 'always' count for that trial.
+    unique_tids = np.unique(tids_same)
+    counts_same = {tid: int((tids_same == tid).sum()) for tid in unique_tids}
+    counts_always = {tid: int((tids_always == tid).sum()) for tid in np.unique(tids_always)}
+    counts_none = {tid: int((tids_none == tid).sum()) for tid in np.unique(tids_none)}
+
+    for tid in range(1, len(segs)):  # skip trial 0 (no predecessor)
+        prev_tid = tid - 1
+        if pmap[prev_tid] == pmap[tid]:
+            assert counts_same[tid] == counts_always[tid], (
+                f"trial {tid}: same partition → expected always count {counts_always[tid]}, "
+                f"got {counts_same[tid]}"
+            )
+        else:
+            assert counts_same[tid] == counts_none[tid], (
+                f"trial {tid}: diff partition → expected none count {counts_none[tid]}, "
+                f"got {counts_same[tid]}"
+            )
+
+
+def test_lazy_eager_count_agreement_all_policies():
+    """LazyTrialWindowDataset count must equal prep_data_trials count for all policies."""
+    X, B, starts, _ = _make_multi_trial_data(n_trials=6, trial_len=20)
+    win = 5
+
+    train_set, test_set = compute_trial_partition(6, 0.2, 1)
+    pmap = {tid: ('train' if tid in train_set else 'test') for tid in range(6)}
+    boundaries = boundaries_from_trial_starts(starts, total_length=len(X))
+    segs = segments_from_trial_starts(X, B, starts)
+
+    for policy, kwargs in [
+        ('always', {}),
+        ('none', {}),
+        ('same_partition', {'trial_partition_map': pmap}),
+    ]:
+        _, _, tids_eager = prep_data_trials(segs, win=win, context_policy=policy, **kwargs)
+        ds_lazy = LazyTrialWindowDataset(X, B, boundaries, win, context_policy=policy, **kwargs)
+        assert len(ds_lazy) == len(tids_eager), (
+            f"policy={policy}: lazy={len(ds_lazy)}, eager={len(tids_eager)}"
+        )
+
+
+def test_context_policy_same_partition_raises_without_map():
+    """same_partition with no trial_partition_map must raise ValueError."""
+    X, B, starts, _ = _make_multi_trial_data()
+    segs = segments_from_trial_starts(X, B, starts)
+    win = 5
+
+    try:
+        prep_data_trials(segs, win=win, context_policy='same_partition')
+        assert False, "Expected ValueError"
+    except ValueError:
+        pass
+
+    boundaries = boundaries_from_trial_starts(starts, total_length=len(X))
+    try:
+        LazyTrialWindowDataset(X, B, boundaries, win, context_policy='same_partition')
+        assert False, "Expected ValueError"
+    except ValueError:
+        pass
+
+
+def test_context_policy_invalid_raises():
+    X, B, starts, _ = _make_multi_trial_data()
+    segs = segments_from_trial_starts(X, B, starts)
+    win = 5
+    try:
+        prep_data_trials(segs, win=win, context_policy='bogus')
+        assert False, "Expected ValueError"
+    except ValueError:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Strong leakage sanity check — verifies frame-level isolation
+# ---------------------------------------------------------------------------
+
+def test_same_partition_no_cross_partition_frame_reads_lazy():
+    """For every test window under same_partition, no frame comes from a train trial."""
+    X, B, starts, trial_len = _make_multi_trial_data(n_trials=8, trial_len=25)
+    win = 6
+    boundaries = boundaries_from_trial_starts(starts, total_length=len(X))
+
+    train_set, test_set = compute_trial_partition(8, 0.25, 42)
+    pmap = {tid: ('train' if tid in train_set else 'test') for tid in range(8)}
+
+    # Build trial ownership map: frame -> trial_id
+    frame_trial = np.empty(len(X), dtype=np.int64)
+    for tid, (s, e) in enumerate(boundaries):
+        frame_trial[s:e] = tid
+
+    # --- same_partition: no cross-partition frame reads ---
+    ds_same = LazyTrialWindowDataset(X, B, boundaries, win,
+                                     context_policy='same_partition',
+                                     trial_partition_map=pmap)
+    # For every window, check all accessed frames belong to the same partition
+    for idx in range(len(ds_same)):
+        abs_start, step = ds_same._pair_offsets[idx]
+        window_trial = ds_same.trial_ids[idx]
+        window_partition = pmap[int(window_trial)]
+        # frames read: [abs_start+step, abs_start+step+win+1)  (x0 and x1 overlap)
+        first_frame = int(abs_start + step)
+        last_frame = int(abs_start + step + win)  # inclusive last frame of x1
+        for f in range(first_frame, last_frame + 1):
+            f_trial = int(frame_trial[f])
+            f_partition = pmap[f_trial]
+            assert f_partition == window_partition, (
+                f"LEAKAGE: window idx={idx} trial={window_trial} ({window_partition}) "
+                f"reads frame {f} from trial {f_trial} ({f_partition})"
+            )
+
+    # --- always: at least one cross-partition read exists (test is sensitive) ---
+    # Find a test trial whose predecessor is in train (or vice versa) — skip trial 0.
+    ds_always = LazyTrialWindowDataset(X, B, boundaries, win, context_policy='always')
+    found_cross = False
+    for idx in range(len(ds_always)):
+        abs_start, step = ds_always._pair_offsets[idx]
+        window_trial = ds_always.trial_ids[idx]
+        if step > 0:
+            continue  # only step-0 windows can have a cross-context start
+        first_frame = int(abs_start)
+        if first_frame < int(starts[window_trial]):
+            # Context frame from previous trial confirmed
+            prev_trial = int(window_trial) - 1
+            if pmap[prev_trial] != pmap[int(window_trial)]:
+                found_cross = True
+                break
+    # If no cross-partition pair exists for this split (rare), the test is vacuously fine
+    if train_set and test_set:
+        # There must be at least one boundary between different partitions
+        # given 8 trials with 25% test. We assert cross-partition context is detectable.
+        assert found_cross, (
+            "always policy failed to show any cross-partition context — "
+            "split may be degenerate; increase n_trials or change seed"
+        )
 

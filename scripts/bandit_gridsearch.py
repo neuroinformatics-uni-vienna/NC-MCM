@@ -17,7 +17,7 @@ from ncmcm.bundlenet.utils import (prep_data, timeseries_train_test_split, prep_
                                      timeseries_train_test_split_cv, timeseries_train_test_split_cv_lazy, make_hybrid_b,
                                      segment_trials, prep_data_trials, trial_train_test_split,
                                      prep_data_trials_lazy, trial_train_test_split_lazy,
-                                     segments_from_trial_starts)
+                                     segments_from_trial_starts, compute_trial_partition)
 from ncmcm.bundlenet.initialisations import pca_initialisation
 from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import KFold
@@ -136,6 +136,12 @@ def parse_args():
                         help='Fraction of trials to hold out as the test set (default: 0.2)')
     parser.add_argument('--trial_random_state', type=int, default=None,
                         help='Random seed for the trial-level train/test split')
+    parser.add_argument('--context_policy', type=str, default='always',
+                        choices=['always', 'none', 'same_partition'],
+                        help='How trial context is borrowed across boundaries: '
+                             'always (current behaviour, may leak across train/test splits), '
+                             'none (no cross-trial context), '
+                             'same_partition (borrow only from same-split trials; recommended for thesis runs)')
 
     return parser.parse_args()
 
@@ -406,7 +412,8 @@ def load_data(data_path, downsample_fs, downsample_method, good_neurons_only, ap
 
 def preprocess_data(x, b, window, lazy_loading=False, cv_folds=None, kfold_n_splits=7, kfold_test_fold=4,
                     trial_based=False, b_labels_dict=None,
-                    trial_test_ratio=0.2, trial_random_state=None, trial_start_indices=None):
+                    trial_test_ratio=0.2, trial_random_state=None, trial_start_indices=None,
+                    context_policy='always'):
     """Preprocess data for BunDLeNet
 
     Args:
@@ -445,15 +452,29 @@ def preprocess_data(x, b, window, lazy_loading=False, cv_folds=None, kfold_n_spl
 
         if lazy_loading:
             print("Using lazy trial-based loading (memory-efficient)...")
+            _partition_map = None
+            _partition_sets = None
+            if context_policy == 'same_partition':
+                n_trials_pre = len(trial_start_indices)
+                _train_set, _test_set_fs = compute_trial_partition(
+                    n_trials_pre, trial_test_ratio, trial_random_state)
+                _partition_sets = (_train_set, _test_set_fs)
+                _partition_map = {
+                    tid: ('train' if tid in _train_set else 'test')
+                    for tid in range(n_trials_pre)
+                }
             x_, B_1, trial_ids = prep_data_trials_lazy(
                 x, b, b_labels_dict=b_labels_dict, win=window,
                 trial_start_indices=trial_start_indices,
+                context_policy=context_policy,
+                trial_partition_map=_partition_map,
             )
             print(f"Lazy trial dataset: {x_.shape[0]} pairs, {len(np.unique(trial_ids))} trials")
             (x_train, b_train), (x_test, b_test) = trial_train_test_split_lazy(
                 x_, B_1, trial_ids,
                 test_ratio=trial_test_ratio,
                 random_state=trial_random_state,
+                partition_sets=_partition_sets,
             )
             n_trials = len(np.unique(trial_ids))
             n_test_t = max(1, int(np.round(n_trials * trial_test_ratio)))
@@ -461,12 +482,15 @@ def preprocess_data(x, b, window, lazy_loading=False, cv_folds=None, kfold_n_spl
             test_size = len(x_test)
             print(f"Trial split ({n_trials - n_test_t} train / {n_test_t} test trials): "
                   f"{train_size} train pairs, {test_size} test pairs")
-            # Derive per-split trial IDs (same RNG state as split above)
-            rng = np.random.default_rng(trial_random_state)
-            _unique = np.unique(trial_ids).copy()
-            rng.shuffle(_unique)
-            _test_set = set(_unique[-n_test_t:].tolist())
-            _train_mask = np.array([tid not in _test_set for tid in trial_ids])
+            # Derive per-split trial IDs
+            if _partition_sets is not None:
+                _test_set_ids = _partition_sets[1]
+            else:
+                rng = np.random.default_rng(trial_random_state)
+                _unique = np.unique(trial_ids).copy()
+                rng.shuffle(_unique)
+                _test_set_ids = set(_unique[-n_test_t:].tolist())
+            _train_mask = np.array([tid not in _test_set_ids for tid in trial_ids])
             trial_ids_train = trial_ids[_train_mask]
             trial_ids_test  = trial_ids[~_train_mask]
             return x_, B_1, x_train, x_test, b_train, b_test, trial_ids_train, trial_ids_test
@@ -482,24 +506,40 @@ def preprocess_data(x, b, window, lazy_loading=False, cv_folds=None, kfold_n_spl
               f"(lengths: min={min(len(bt) for _, bt in segments)}, "
               f"max={max(len(bt) for _, bt in segments)})")
 
-        X_paired, B_1, trial_ids = prep_data_trials(segments, win=window)
+        _partition_map_eager = None
+        _partition_sets_eager = None
+        if context_policy == 'same_partition':
+            _train_set_e, _test_set_e = compute_trial_partition(
+                len(segments), trial_test_ratio, trial_random_state)
+            _partition_sets_eager = (_train_set_e, _test_set_e)
+            _partition_map_eager = {
+                tid: ('train' if tid in _train_set_e else 'test')
+                for tid in range(len(segments))
+            }
+        X_paired, B_1, trial_ids = prep_data_trials(segments, win=window,
+                                                     context_policy=context_policy,
+                                                     trial_partition_map=_partition_map_eager)
         print(f"Trial-based prepared data: X={X_paired.shape}, B={B_1.shape}")
 
         (x_train, b_train), (x_test, b_test) = trial_train_test_split(
             X_paired, B_1, trial_ids,
             test_ratio=trial_test_ratio,
             random_state=trial_random_state,
+            partition_sets=_partition_sets_eager,
         )
         n_trials = len(np.unique(trial_ids))
         n_test_t = max(1, int(np.round(n_trials * trial_test_ratio)))
         print(f"Trial split ({n_trials - n_test_t} train / {n_test_t} test trials): "
               f"{x_train.shape[0]} train pairs, {x_test.shape[0]} test pairs")
-        # Derive per-split trial IDs (same RNG state as trial_train_test_split)
-        rng = np.random.default_rng(trial_random_state)
-        _unique = np.unique(trial_ids).copy()
-        rng.shuffle(_unique)
-        _test_set = set(_unique[-n_test_t:].tolist())
-        _train_mask = np.array([tid not in _test_set for tid in trial_ids])
+        # Derive per-split trial IDs
+        if _partition_sets_eager is not None:
+            _test_set_ids_e = _partition_sets_eager[1]
+        else:
+            rng = np.random.default_rng(trial_random_state)
+            _unique = np.unique(trial_ids).copy()
+            rng.shuffle(_unique)
+            _test_set_ids_e = set(_unique[-n_test_t:].tolist())
+        _train_mask = np.array([tid not in _test_set_ids_e for tid in trial_ids])
         trial_ids_train = trial_ids[_train_mask]
         trial_ids_test  = trial_ids[~_train_mask]
         return X_paired, B_1, x_train, x_test, b_train, b_test, trial_ids_train, trial_ids_test
@@ -1238,6 +1278,7 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
         trial_test_ratio=getattr(args, 'trial_test_ratio', 0.2),
         trial_random_state=getattr(args, 'trial_random_state', None),
         trial_start_indices=trial_start_indices,
+        context_policy=getattr(args, 'context_policy', 'always'),
     )
 
     if args.cv_folds is not None:

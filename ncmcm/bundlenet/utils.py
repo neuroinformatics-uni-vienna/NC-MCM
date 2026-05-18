@@ -467,7 +467,7 @@ def segment_trials(X, B, trial_start_indices=None, b_detect=None):
     return segments_from_trial_starts(X, B, trial_start_indices)
 
 
-def prep_data_trials(trial_segments, win=15):
+def prep_data_trials(trial_segments, win=15, context_policy='always', trial_partition_map=None):
     """
     Window each trial independently and concatenate the results.
 
@@ -499,6 +499,12 @@ def prep_data_trials(trial_segments, win=15):
     trial_ids : np.ndarray, shape (M,), dtype int64
         Integer trial index (0-based) for each pair in ``X_paired``.
     """
+    _valid_policies = ('always', 'none', 'same_partition')
+    if context_policy not in _valid_policies:
+        raise ValueError(f"context_policy must be one of {_valid_policies}, got {context_policy!r}")
+    if context_policy == 'same_partition' and trial_partition_map is None:
+        raise ValueError("context_policy='same_partition' requires trial_partition_map to be provided.")
+
     all_x_paired = []
     all_b_1 = []
     all_trial_ids = []
@@ -507,7 +513,15 @@ def prep_data_trials(trial_segments, win=15):
     prev_B_tail = None
 
     for trial_id, (X_t, B_t) in enumerate(trial_segments):
-        if prev_X_tail is not None:
+        _borrow = (
+            prev_X_tail is not None
+            and context_policy != 'none'
+            and (
+                context_policy == 'always'
+                or trial_partition_map[trial_id - 1] == trial_partition_map[trial_id]
+            )
+        )
+        if _borrow:
             # Prepend context from the previous trial.
             # With len(prev_X_tail) == win, b_1 from prep_data equals B_t[0:],
             # so all predicted labels belong to the current trial.
@@ -543,7 +557,7 @@ def prep_data_trials(trial_segments, win=15):
     return X_paired, B_1, trial_ids
 
 
-def trial_train_test_split(X_paired, B_1, trial_ids, test_ratio=0.2, random_state=None):
+def trial_train_test_split(X_paired, B_1, trial_ids, test_ratio=0.2, random_state=None, partition_sets=None):
     """
     Randomly split pairs into train/test sets at the *trial* level.
 
@@ -572,17 +586,56 @@ def trial_train_test_split(X_paired, B_1, trial_ids, test_ratio=0.2, random_stat
     (X_test, B_test) : tuple of np.ndarray
         Test pairs and corresponding behavioral labels.
     """
-    rng = np.random.default_rng(random_state)
-    unique_trials = np.unique(trial_ids).copy()
-    rng.shuffle(unique_trials)
-
-    n_test = max(1, int(np.round(len(unique_trials) * test_ratio)))
-    test_trial_set = set(unique_trials[-n_test:].tolist())
+    if partition_sets is not None:
+        _, test_set = partition_sets
+        test_trial_set = set(test_set)
+    else:
+        rng = np.random.default_rng(random_state)
+        unique_trials = np.unique(trial_ids).copy()
+        rng.shuffle(unique_trials)
+        n_test = max(1, int(np.round(len(unique_trials) * test_ratio)))
+        test_trial_set = set(unique_trials[-n_test:].tolist())
 
     train_mask = np.array([tid not in test_trial_set for tid in trial_ids])
     test_mask = ~train_mask
 
     return (X_paired[train_mask], B_1[train_mask]), (X_paired[test_mask], B_1[test_mask])
+
+
+def compute_trial_partition(n_trials, test_ratio=0.2, random_state=None):
+    """Compute a trial-level train/test partition before window construction.
+
+    Generates the same random partition as :func:`trial_train_test_split` for
+    identical ``(n_trials, test_ratio, random_state)`` arguments.  Call this
+    *before* :func:`prep_data_trials` or :func:`prep_data_trials_lazy` when
+    using ``context_policy='same_partition'`` so the windowing step knows which
+    trials belong to each partition and can suppress cross-partition context
+    borrowing.
+
+    Parameters
+    ----------
+    n_trials : int
+        Total number of trials in the session.
+    test_ratio : float, optional
+        Fraction of trials allocated to the test set.  Default 0.2.
+    random_state : int or None, optional
+        RNG seed.  Pass the same value as ``trial_random_state`` to guarantee
+        consistency with :func:`trial_train_test_split`.
+
+    Returns
+    -------
+    train_set : frozenset[int]
+        Trial IDs assigned to the training partition.
+    test_set : frozenset[int]
+        Trial IDs assigned to the test partition.
+    """
+    rng = np.random.default_rng(random_state)
+    unique_trials = np.arange(n_trials, dtype=np.int64)
+    rng.shuffle(unique_trials)
+    n_test = max(1, int(np.round(n_trials * test_ratio)))
+    test_set = frozenset(unique_trials[-n_test:].tolist())
+    train_set = frozenset(unique_trials[:-n_test].tolist())
+    return train_set, test_set
 
 
 # ---------------------------------------------------------------------------
@@ -644,7 +697,7 @@ class LazyTrialWindowDataset(Dataset):
         Window length (same semantics as :func:`prep_data`).
     """
 
-    def __init__(self, X, B, trial_boundaries, win):
+    def __init__(self, X, B, trial_boundaries, win, context_policy='always', trial_partition_map=None):
         self.X = X
         self.B = B
         self.win = win
@@ -655,12 +708,26 @@ class LazyTrialWindowDataset(Dataset):
         b_1_rows = []
         trial_id_rows = []
 
+        _valid_policies = ('always', 'none', 'same_partition')
+        if context_policy not in _valid_policies:
+            raise ValueError(f"context_policy must be one of {_valid_policies}, got {context_policy!r}")
+        if context_policy == 'same_partition' and trial_partition_map is None:
+            raise ValueError("context_policy='same_partition' requires trial_partition_map to be provided.")
+
         prev_t_len = None  # length of previous trial (determines context size)
         for trial_id, (t_start, t_end) in enumerate(trial_boundaries):
             t_len = t_end - t_start
             # Determine context window prepended from previous trial.
             # Matches prep_data_trials: ctx = min(win, len(prev_trial)).
-            if prev_t_len is not None:
+            _borrow = (
+                prev_t_len is not None
+                and context_policy != 'none'
+                and (
+                    context_policy == 'always'
+                    or trial_partition_map[trial_id - 1] == trial_partition_map[trial_id]
+                )
+            )
+            if _borrow:
                 ctx = min(win, prev_t_len)
                 context_start = t_start - ctx
                 total_len = ctx + t_len
@@ -726,7 +793,7 @@ class LazyTrialWindowDataset(Dataset):
         return np.array([self[i] for i in range(len(self))])
 
 
-def prep_data_trials_lazy(X, B, b_labels_dict=None, win=15, trial_start_indices=None):
+def prep_data_trials_lazy(X, B, b_labels_dict=None, win=15, trial_start_indices=None, context_policy='always', trial_partition_map=None):
     """Memory-efficient variant of :func:`prep_data_trials`.
 
     Returns a :class:`LazyTrialWindowDataset` instead of a materialised
@@ -774,11 +841,13 @@ def prep_data_trials_lazy(X, B, b_labels_dict=None, win=15, trial_start_indices=
         )
 
     boundaries = boundaries_from_trial_starts(trial_start_indices, len(X))
-    dataset = LazyTrialWindowDataset(X, B, boundaries, win)
+    dataset = LazyTrialWindowDataset(X, B, boundaries, win,
+                                     context_policy=context_policy,
+                                     trial_partition_map=trial_partition_map)
     return dataset, dataset.B_1, dataset.trial_ids
 
 
-def trial_train_test_split_lazy(dataset, B_1, trial_ids, test_ratio=0.2, random_state=None):
+def trial_train_test_split_lazy(dataset, B_1, trial_ids, test_ratio=0.2, random_state=None, partition_sets=None):
     """Trial-level train/test split for a :class:`LazyTrialWindowDataset`.
 
     Identical split logic to :func:`trial_train_test_split` but returns
@@ -805,12 +874,15 @@ def trial_train_test_split_lazy(dataset, B_1, trial_ids, test_ratio=0.2, random_
     """
     from torch.utils.data import Subset
 
-    rng = np.random.default_rng(random_state)
-    unique_trials = np.unique(trial_ids).copy()
-    rng.shuffle(unique_trials)
-
-    n_test = max(1, int(np.round(len(unique_trials) * test_ratio)))
-    test_trial_set = set(unique_trials[-n_test:].tolist())
+    if partition_sets is not None:
+        _, test_set = partition_sets
+        test_trial_set = set(test_set)
+    else:
+        rng = np.random.default_rng(random_state)
+        unique_trials = np.unique(trial_ids).copy()
+        rng.shuffle(unique_trials)
+        n_test = max(1, int(np.round(len(unique_trials) * test_ratio)))
+        test_trial_set = set(unique_trials[-n_test:].tolist())
 
     all_indices = np.arange(len(dataset))
     train_mask = np.array([tid not in test_trial_set for tid in trial_ids])

@@ -45,7 +45,7 @@ from ncmcm.data_loaders.bandit_task import BanditTaskNeuroPixelsDataset
 from ncmcm.bundlenet.utils import (
     prep_data_trials_lazy, trial_train_test_split_lazy,
     segments_from_trial_starts, prep_data_trials, trial_train_test_split,
-    make_hybrid_b,
+    make_hybrid_b, compute_trial_partition,
 )
 
 # ===========================================================================
@@ -84,6 +84,7 @@ NUM_WORKERS         = 4
 # --- Trial split ------------------------------------------------------------
 TRIAL_TEST_RATIO    = 0.2
 RANDOM_SEED         = 42
+CONTEXT_POLICY      = 'same_partition'   # 'always' | 'none' | 'same_partition'
 
 # --- Decoder training -------------------------------------------------------
 NUM_DECODER_RUNS    = 5
@@ -197,6 +198,7 @@ _config = dict(
     window_size=WINDOW_SIZE, use_lazy_loading=USE_LAZY_LOADING, num_workers=NUM_WORKERS,
     # trial split
     trial_test_ratio=TRIAL_TEST_RATIO, random_seed=RANDOM_SEED,
+    context_policy=CONTEXT_POLICY,
     # training
     num_decoder_runs=NUM_DECODER_RUNS, train_epochs=TRAIN_EPOCHS,
     batch_size=BATCH_SIZE, learning_rate=LEARNING_RATE, num_permutations=NUM_PERMUTATIONS,
@@ -222,21 +224,38 @@ def make_trial_split(label_array):
     ``bandit_microvariable_evaluation.py`` so the rest of the evaluation
     functions can use the same fold-loop structure (with num_folds=1).
     """
+    _partition_map_mve = None
+    _partition_sets_mve = None
+    if CONTEXT_POLICY == 'same_partition':
+        n_trials_mve = len(trial_start_indices)
+        _train_set_mve, _test_set_mve = compute_trial_partition(
+            n_trials_mve, TRIAL_TEST_RATIO, RANDOM_SEED)
+        _partition_sets_mve = (_train_set_mve, _test_set_mve)
+        _partition_map_mve = {
+            tid: ('train' if tid in _train_set_mve else 'test')
+            for tid in range(n_trials_mve)
+        }
     if USE_LAZY_LOADING:
         dataset_lazy, B_pairs, trial_ids = prep_data_trials_lazy(
             X, label_array, win=WINDOW_SIZE,
             trial_start_indices=trial_start_indices,
+            context_policy=CONTEXT_POLICY,
+            trial_partition_map=_partition_map_mve,
         )
         (x_tr, b_tr), (x_val, b_val) = trial_train_test_split_lazy(
             dataset_lazy, B_pairs, trial_ids,
             test_ratio=TRIAL_TEST_RATIO, random_state=RANDOM_SEED,
+            partition_sets=_partition_sets_mve,
         )
     else:
         trial_segments = segments_from_trial_starts(X, label_array, trial_start_indices)
-        x_paired, B_pairs, trial_ids = prep_data_trials(trial_segments, win=WINDOW_SIZE)
+        x_paired, B_pairs, trial_ids = prep_data_trials(trial_segments, win=WINDOW_SIZE,
+                                                         context_policy=CONTEXT_POLICY,
+                                                         trial_partition_map=_partition_map_mve)
         (x_tr, b_tr), (x_val, b_val) = trial_train_test_split(
             x_paired, B_pairs, trial_ids,
             test_ratio=TRIAL_TEST_RATIO, random_state=RANDOM_SEED,
+            partition_sets=_partition_sets_mve,
         )
     return [(x_tr, x_val, b_tr, b_val)], label_array
 
