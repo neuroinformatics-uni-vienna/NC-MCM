@@ -880,11 +880,19 @@ def run_hybrid_decoding(X_train, y_train, hgf_train,
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: python bandit_behaviour_decoding.py <run_folder>")
-        sys.exit(1)
+    import argparse
+    ap = argparse.ArgumentParser(
+        description='Behaviour decoding evaluation from a BunDLeNet run folder.'
+    )
+    ap.add_argument('run_folder', help='Path to the BunDLeNet run folder.')
+    ap.add_argument(
+        '--out', default=None,
+        help='Output directory for decoding results '
+             '(default: <run_folder>/data/decoding).',
+    )
+    args = ap.parse_args()
 
-    run_dir = Path(sys.argv[1])
+    run_dir = Path(args.run_folder)
     if not run_dir.is_dir():
         print(f"ERROR: not a directory: {run_dir}")
         sys.exit(1)
@@ -967,7 +975,7 @@ def main():
         print("HGF belief  : not found — skipping HGF decoding")
 
     # Output directory
-    out_dir = run_dir / 'data' / 'decoding'
+    out_dir = Path(args.out) if args.out else run_dir / 'data' / 'decoding'
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # Build state name mapping from run config if available. The run's
