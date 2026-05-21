@@ -1,0 +1,107 @@
+{
+  "spec_name": "T0_phase_full_side",
+  "is_consistent": false,
+  "known_issues": [
+    "reward and no reward timepoints are labeled correctly but have trial_index=-1 (outside [trial.start, t_chosen] windows). They will not appear in prep_data_trials training windows."
+  ],
+  "old_params": {
+    "b_mode": "full",
+    "choosing_state_mode": "side",
+    "apply_hold_transitions": "none"
+  },
+  "total_timepoints": 38794,
+  "segment_coverage_fraction": 0.5706,
+  "segment_coverage_pct": 57.06,
+  "state_labels": [
+    "intertrial",
+    "hold",
+    "reward",
+    "no reward",
+    "choosing left",
+    "choosing right"
+  ],
+  "full_session_counts": {
+    "intertrial": 8775,
+    "hold": 10720,
+    "reward": 4709,
+    "no reward": 11955,
+    "choosing left": 1083,
+    "choosing right": 1552
+  },
+  "in_trial_counts": {
+    "intertrial": 8775,
+    "hold": 10720,
+    "reward": 4,
+    "no reward": 1,
+    "choosing left": 1083,
+    "choosing right": 1552
+  },
+  "out_of_trial_counts": {
+    "reward": 4705,
+    "no reward": 11954
+  },
+  "reward_states_in_trial": {
+    "no reward": 1,
+    "reward": 4
+  },
+  "reward_states_in_trial_total": 6,
+  "reward_expectation": "FAIL",
+  "severe_reward_contamination": false,
+  "segment_stats": {
+    "count": 237,
+    "mean_frames": 93.39662447257383,
+    "min_frames": 53,
+    "max_frames": 407,
+    "std_frames": 35.323144616070635
+  },
+  "label_homogeneity": {
+    "checked": true,
+    "n_homogeneous": 0,
+    "n_mixed": 237,
+    "pct_homogeneous": 0.0,
+    "mixed_examples": [
+      {
+        "trial_id": 0,
+        "unique_label_ids": [
+          0,
+          1,
+          5
+        ],
+        "n_timepoints": 61
+      },
+      {
+        "trial_id": 1,
+        "unique_label_ids": [
+          0,
+          1,
+          5
+        ],
+        "n_timepoints": 77
+      },
+      {
+        "trial_id": 2,
+        "unique_label_ids": [
+          0,
+          1,
+          5
+        ],
+        "n_timepoints": 70
+      }
+    ]
+  },
+  "transitions_valid": {
+    "valid": true,
+    "observed_transitions": {
+      "('intertrial', 'hold')": 237,
+      "('hold', 'choosing right')": 136,
+      "('choosing right', 'reward')": 86,
+      "('reward', 'intertrial')": 157,
+      "('choosing right', 'no reward')": 50,
+      "('no reward', 'intertrial')": 79,
+      "('hold', 'choosing left')": 101,
+      "('choosing left', 'no reward')": 30,
+      "('choosing left', 'reward')": 71
+    },
+    "invalid_transitions": []
+  }
+}

@@ -1,0 +1,105 @@
+{
+  "spec_name": "reward_to_choice",
+  "is_consistent": true,
+  "known_issues": [],
+  "old_params": {
+    "b_mode": "reward_to_choice",
+    "choosing_state_mode": "side",
+    "apply_hold_transitions": "none"
+  },
+  "total_timepoints": 38733,
+  "segment_coverage_fraction": 1.0,
+  "segment_coverage_pct": 100.0,
+  "state_labels": [
+    "choosing left",
+    "choosing right"
+  ],
+  "full_session_counts": {
+    "choosing left": 15765,
+    "choosing right": 22968
+  },
+  "in_trial_counts": {
+    "choosing left": 15765,
+    "choosing right": 22968
+  },
+  "out_of_trial_counts": {},
+  "reward_states_in_trial": {},
+  "reward_states_in_trial_total": 0,
+  "reward_expectation": "PASS",
+  "severe_reward_contamination": false,
+  "segment_stats": {
+    "count": 237,
+    "mean_frames": 163.43037974683546,
+    "min_frames": 84,
+    "max_frames": 436,
+    "std_frames": 62.2064787373647
+  },
+  "label_homogeneity": {
+    "checked": true,
+    "n_homogeneous": 237,
+    "n_mixed": 0,
+    "pct_homogeneous": 100.0,
+    "mixed_examples": []
+  },
+  "transitions_valid": {
+    "valid": false,
+    "observed_transitions": {
+      "('choosing right', 'choosing left')": 19,
+      "('choosing left', 'choosing right')": 19
+    },
+    "invalid_transitions": [
+      {
+        "from": "choosing right",
+        "to": "choosing left",
+        "count": 19,
+        "indices": [
+          326,
+          1415,
+          3051,
+          5294,
+          6453,
+          7655,
+          8511,
+          10746,
+          11315,
+          17870,
+          18462,
+          24357,
+          24706,
+          27042,
+          27912,
+          28805,
+          30577,
+          34963,
+          36496
+        ]
+      },
+      {
+        "from": "choosing left",
+        "to": "choosing right",
+        "count": 19,
+        "indices": [
+          922,
+          2878,
+          4934,
+          5611,
+          6538,
+          7775,
+          8595,
+          11092,
+          11424,
+          18124,
+          24103,
+          24572,
+          26543,
+          27288,
+          28054,
+          28933,
+          30726,
+          36238,
+          37371
+        ]
+      }
+    ]
+  }
+}
