@@ -1,6 +1,6 @@
 # AGENTS.md — NC-MCM Repository Guide for AI Coding Agents
 
-> **Last updated:** 2026-05-21  
+> **Last updated:** 2026-05-21 (Prompt 036)  
 > This file is the single source of truth for AI agents working in this repository. Read it before touching any code.
 
 ---
@@ -49,6 +49,7 @@ pip install -e .            # installs ncmcm package in editable mode
 | `ncmcm/bundlenet/subsystem_fit/` | 3-stream subsystem variant (sensory/inter/motor neurons) |
 | `ncmcm/cognitive_graphs/` | Cognitive graph construction, clustering, visualisation |
 | `ncmcm/data_loaders/` | Dataset classes for C. elegans, rat hippocampus, bandit task |
+| `ncmcm/data_loaders/bandit_specs.py` | Pure description module: `SegmentPolicy`, `TargetPolicy`, `BanditSpec` frozen dataclasses; 9 predefined specs; `old_params_to_spec()` / `spec_to_old_params()` translation |
 | `ncmcm/statistical_testing/` | Markov and stationarity tests for validating cognitive states |
 | `ncmcm/visualisers/` | All plotting functions (matplotlib + plotly) |
 | `ncmcm/closed_loop/` | **Stub only** — no code |
@@ -96,6 +97,8 @@ pip install -e .            # installs ncmcm package in editable mode
 - Use `b.toarray()` on a numpy array — check `scipy.sparse.issparse(b)` first
 - Use `behavior_labels_train.npy` (US spelling) — gridsearch writes `behaviour_labels_train.npy` (British)
 - Assert `train_history.shape == (n_epochs, 3)` — current `train_model` returns `(n_epochs, 5)` columns
+- Assume `b_mode='decision'` / `'decision_strict'` have consistent label and trial-window boundaries — they don't; only `b_mode='reward_to_choice'` is fully consistent. See `.ai/bandit_loader_refactor_plan.md`.
+- Trust `check_state_transitions()` for T2/T2b specs — it returns False because fused state names are not in `DEFAULT_TRANSITION_MAP` (false negative; data is correct)
 
 ---
 
@@ -147,6 +150,7 @@ Test locations:
 | [.ai/modules/visualisers.md](.ai/modules/visualisers.md) | All visualiser functions/classes |
 | [.ai/modules/closed_loop.md](.ai/modules/closed_loop.md) | Stub module documentation |
 | [.ai/bandit.md](.ai/bandit.md) | **Bandit-branch deep-dive**: paradigm, `metrics.json` schema, HGF models, preprocessing pipeline, behaviour representations, results structure, gotchas |
+| [.ai/bandit_loader_refactor_plan.md](.ai/bandit_loader_refactor_plan.md) | **Loader refactor design**: 6 coupling points, label–window mismatch table, SegmentPolicy × TargetPolicy architecture, migration roadmap (Phases 1-4) |
 
 ---
 
@@ -162,3 +166,5 @@ Test locations:
 | 2026-05-21 | `0c2c6f5` | Prompt 029: retrained clean BunDLe-Net with `b_mode=reward_to_choice`, `context_policy=same_partition`, `trial_random_state=42`, JPAS_0023_20230922, 30Hz gaussian. Hybrid (alpha=0.5) run: `grid_search_20260521_150124_same_partition_reward_to_choice_hybrid_alpha_050/run_20260521_150127` (58m). Discrete-only: `grid_search_20260521_150124_same_partition_reward_to_choice_discrete_only/run_20260521_155945` (56m). Choice acc (hybrid): 0.825/bacc=0.823; (discrete): 0.816/0.815. HGF R²=0.690. Stay=0.905 bacc, Switch=0.618 bacc. Hybrid PCA: 3 active dims (79.5/20.5/0.0%). Added `scripts/preflight_reward_to_choice.py`, `scripts/run_reward_to_choice_tmux.sh`, `scripts/analyze_reward_to_choice_results.py`, `scripts/start_reward_to_choice_decoding.sh`. Analysis at `results/analysis/rtc_analysis_20260521_172508/`. |
 | 2026-05-21 | `0a59067` | Prompt 030: colocalized all post-training analysis outputs inside `<run_dir>/analysis/<name>_{ts}/`; fixed broken `hybrid_vs_discrete_summary.json` cell in `time_resolved_predictability_discrete_only.ipynb`; updated `analyze_reward_to_choice_results.py` and `event_aligned_predictability.py` defaults. |
 | 2026-05-21 | `9439dcd` | Prompt 032: new `ncmcm/experiment_archive/` module (`folders.py`, `manifest.py`, `report.py`) + `scripts/run_experiment.py` orchestrator. Creates `results/experiments/<experiment_id>/` with 9 subfolders, `manifest.json`, `config.json`, `status.json`, `reports/experiment_report.md`. Added `--out` arg to `bandit_behaviour_decoding.py`. Smoke run: `JPAS_0023_20230922_reward_to_choice_hybrid_alpha_050_seed42_20260521_150127`. |
+| 2026-05-21 | `7b2a33e` | Target mode diagnostics: T0/T1/T2/T2b configs verified, `scripts/target_mode_diagnostics.py` created, `ncmcm/experiment_archive/manifest.py` updated with `choosing_state_mode`/`apply_hold_transitions`/`state_mapping`. Diagnostic outputs: `results/target_mode_diagnostics/T{0,1,2,2b}_*/diagnostics.json` + 3 bar plots each. Key finding: T0 reward/no-reward excluded from trial windows (imbalance 11.0×). |
+| 2026-05-21 | `eddc702` | Prompt 036: bandit loader refactor design + scaffolding. `ncmcm/data_loaders/bandit_specs.py` (new): pure description layer with `SegmentPolicy`, `TargetPolicy`, `BanditSpec` frozen dataclasses; 6 segment policies, 8 target policies, 9 predefined specs; `old_params_to_spec()`/`spec_to_old_params()` translation. `scripts/diagnose_bandit_segment_target_specs.py` (new): per-spec diagnostics (coverage, state counts, reward-in-trial, label homogeneity, transitions). `.ai/bandit_loader_refactor_plan.md` (new): 6 coupling points, mismatch table, 3-dim architecture proposal, phased migration. Diagnostic results: T0/T1 seg_cov=57%, reward_in_trial≈0; T2/T2b seg_cov=57%, reward_in_trial=3780 (straddle); reward_to_choice seg_cov=100%, reward_in_trial=0, hom=100%. No behavior changes. |
