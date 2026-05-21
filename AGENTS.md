@@ -1,6 +1,6 @@
 # AGENTS.md — NC-MCM Repository Guide for AI Coding Agents
 
-> **Last updated:** 2026-04-28  
+> **Last updated:** 2026-05-21  
 > This file is the single source of truth for AI agents working in this repository. Read it before touching any code.
 
 ---
@@ -160,3 +160,5 @@ Test locations:
 | 2026-05-05 | `ae1a929` | Full scan: created `.ai/data_shapes.md`, `.ai/hyperparameters.md`, `.ai/outputs.md`, `.ai/known_issues.md`, `.ai/test_coverage.md`; updated `.ai/modules/data_loaders.md` (corrected `b` shape, added 3 methods), `.ai/modules/visualisers.md` (added `plot_phase_space_continuous`, missing `behavioural_discrete` functions), `.ai/scripts.md` (overnight_run exact params); added 2 "Never do this" entries to AGENTS.md |
 | 2026-05-21 | `2f054b8` | Prompt 028: added `b_mode='reward_to_choice'` to `BanditTaskNeuroPixelsDataset`; updated `--b_mode` CLI in `bandit_gridsearch.py`; added `scripts/verify_reward_to_choice.py` diagnostic (4/4 criteria pass, JPAS_0023_20230922, 30 Hz gaussian); updated `.ai/bandit.md` (`b_mode` table) and `.ai/scripts.md` |
 | 2026-05-21 | `0c2c6f5` | Prompt 029: retrained clean BunDLe-Net with `b_mode=reward_to_choice`, `context_policy=same_partition`, `trial_random_state=42`, JPAS_0023_20230922, 30Hz gaussian. Hybrid (alpha=0.5) run: `grid_search_20260521_150124_same_partition_reward_to_choice_hybrid_alpha_050/run_20260521_150127` (58m). Discrete-only: `grid_search_20260521_150124_same_partition_reward_to_choice_discrete_only/run_20260521_155945` (56m). Choice acc (hybrid): 0.825/bacc=0.823; (discrete): 0.816/0.815. HGF R²=0.690. Stay=0.905 bacc, Switch=0.618 bacc. Hybrid PCA: 3 active dims (79.5/20.5/0.0%). Added `scripts/preflight_reward_to_choice.py`, `scripts/run_reward_to_choice_tmux.sh`, `scripts/analyze_reward_to_choice_results.py`, `scripts/start_reward_to_choice_decoding.sh`. Analysis at `results/analysis/rtc_analysis_20260521_172508/`. |
+| 2026-05-21 | `0a59067` | Prompt 030: colocalized all post-training analysis outputs inside `<run_dir>/analysis/<name>_{ts}/`; fixed broken `hybrid_vs_discrete_summary.json` cell in `time_resolved_predictability_discrete_only.ipynb`; updated `analyze_reward_to_choice_results.py` and `event_aligned_predictability.py` defaults. |
+| 2026-05-21 | `9439dcd` | Prompt 032: new `ncmcm/experiment_archive/` module (`folders.py`, `manifest.py`, `report.py`) + `scripts/run_experiment.py` orchestrator. Creates `results/experiments/<experiment_id>/` with 9 subfolders, `manifest.json`, `config.json`, `status.json`, `reports/experiment_report.md`. Added `--out` arg to `bandit_behaviour_decoding.py`. Smoke run: `JPAS_0023_20230922_reward_to_choice_hybrid_alpha_050_seed42_20260521_150127`. |
