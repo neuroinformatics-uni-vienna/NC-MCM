@@ -151,6 +151,17 @@ class BanditTaskNeuroPixelsDataset:
                                   period). Timepoints after t_chosen[last] remain 'waiting' and
                                   are trimmed. After trimming the dataset contains exactly 2 labels
                                   (same vocabulary as 'decision'). Respects `choosing_state_mode`.
+                      'reward_to_choice': segments run from the first frame after the previous
+                                  trial's t_chosen (i.e. t_chosen[N-1] + 1, the reward onset /
+                                  previous decision completed) to the current trial's t_chosen[N]
+                                  (inclusive, the current decision completed). Each segment is
+                                  labelled with the CURRENT trial's choice. The first usable trial
+                                  is dropped because there is no prior t_chosen. Under this mode
+                                  every training example genuinely starts after one decision is
+                                  done and ends exactly when the next decision is made, eliminating
+                                  both leading-choice-state contamination (choosing frames of the
+                                  previous trial) and trailing reward-period contamination.
+                                  Respects `choosing_state_mode`.
             
         Attributes after loading:
             data_path: Path to the dataset directory
@@ -190,8 +201,8 @@ class BanditTaskNeuroPixelsDataset:
         self.hgf_column = hgf_column
         self.hgf_belief_range = hgf_belief_range
         b_mode = (b_mode or 'full').lower()
-        if b_mode not in ('full', 'decision', 'decision_strict'):
-            raise ValueError("b_mode must be 'full', 'decision', or 'decision_strict'")
+        if b_mode not in ('full', 'decision', 'decision_strict', 'reward_to_choice'):
+            raise ValueError("b_mode must be 'full', 'decision', 'decision_strict', or 'reward_to_choice'")
         self.b_mode = b_mode
         # Store original parameters for cache key (before any adjustments)
         self._original_downsample_fs = downsample_fs
@@ -821,6 +832,11 @@ class BanditTaskNeuroPixelsDataset:
                 metrics, neuronal_length, translation_indices_neuronal_to_behavioral
             )
 
+        if self.b_mode == 'reward_to_choice':
+            return self._create_reward_to_choice_behavioral_data_matrix(
+                metrics, neuronal_length, translation_indices_neuronal_to_behavioral
+            )
+
         trials = metrics['metrics']['trials']
         states = metrics['metrics']['states']
         blocks = metrics['metrics'].get('blocks', [])
@@ -1169,6 +1185,189 @@ class BanditTaskNeuroPixelsDataset:
         state_array_sparse = sparse.csr_matrix(state_array_neuronal, shape=(1, neuronal_length))
         return state_array_sparse, state_labels
 
+    def _create_reward_to_choice_behavioral_data_matrix(self, metrics, neuronal_length, translation_indices_neuronal_to_behavioral):
+        """
+        Build a behavioural state array for b_mode='reward_to_choice'.
+
+        Each segment runs from the first frame after the *previous* trial's
+        ``t_chosen`` up to (and including) the *current* trial's ``t_chosen``,
+        and is labelled with the CURRENT trial's choice.
+
+            Segment for trial i (i >= 1):
+                start_ms = t_chosen[i-1] + 1   (first ms after previous decision)
+                end_ms   = t_chosen[i]          (ms of current decision commitment)
+                label    = current trial's left/right choice
+
+        The first usable trial (i == 0) is **dropped** because there is no
+        previous ``t_chosen``.  Its frames remain "waiting" and are trimmed
+        by ``_trim_waiting_periods``.
+
+        This eliminates both:
+          - leading-choice-state contamination (the choosing frames of the
+            previous trial are now the *start* of the next segment, labelled
+            with the upcoming choice, so the model must learn to use them
+            rather than them being a confound).
+          - trailing reward-period contamination (the segment ends exactly at
+            ``t_chosen``, never extending into the reward/no-reward period).
+
+        After trimming the dataset contains exactly two labels:
+            side mode      → "choosing left" / "choosing right"
+            correctness    → "choosing correct" / "choosing wrong"
+
+        Args:
+            metrics: behavioral metrics from JSON
+            neuronal_length: number of samples in neuronal data (potentially downsampled)
+            translation_indices_neuronal_to_behavioral: mapping from neuronal time to behavioral time
+
+        Returns:
+            tuple: (state_array_sparse, state_labels) — same contract as
+                   _create_behavioral_data_matrix.
+        """
+        trials = metrics['metrics']['trials']
+        states = metrics['metrics']['states']
+        blocks = metrics['metrics'].get('blocks', [])
+
+        max_state_time = max([s[0] for s in states], default=0)
+        max_trial_time = max([t.get('t chosen', 0) for t in trials if 't chosen' in t], default=0)
+        last_timestamp_ms = int(max(max_state_time, max_trial_time))
+
+        # Vocabulary: "waiting" sentinel (id=0) + 2 choosing labels.
+        # "waiting" is trimmed away by _trim_waiting_periods after loading.
+        if self.choosing_state_mode == 'correctness':
+            unique_state_names = ["waiting", "choosing correct", "choosing wrong"]
+        else:
+            unique_state_names = ["waiting", "choosing left", "choosing right"]
+
+        state_name_to_id = {name: idx for idx, name in enumerate(unique_state_names)}
+        state_labels = {idx: name for name, idx in state_name_to_id.items()}
+
+        # Default: "waiting" everywhere (id=0) — trimmed away by _trim_waiting_periods.
+        state_array_ms = np.zeros(last_timestamp_ms + 1, dtype=np.int8)
+
+        # Build block-side map for correctness mode
+        block_side_ms = None
+        if self.choosing_state_mode == 'correctness' and blocks:
+            block_side_ms = np.full(last_timestamp_ms + 1, None, dtype=object)
+            sorted_blocks = sorted(blocks, key=lambda b: b.get('t', 0))
+            for block_idx, block in enumerate(sorted_blocks):
+                start_time = block.get('t')
+                if start_time is None:
+                    continue
+                end_time = (
+                    sorted_blocks[block_idx + 1].get('t', last_timestamp_ms)
+                    if block_idx < len(sorted_blocks) - 1
+                    else last_timestamp_ms
+                )
+                label = str(block.get('block', '')).lower()
+                better_side = 'l' if 'left' in label else ('r' if 'right' in label else None)
+                block_side_ms[start_time:end_time + 1] = better_side
+
+        # Filter to usable trials and sort chronologically
+        usable_trials = [
+            t for t in trials
+            if t.get('start') is not None
+            and t.get('t chosen') is not None
+            and t.get('choice', '').lower() in ['l', 'r']
+        ]
+        usable_trials.sort(key=lambda t: t['start'])
+
+        # i == 0 is intentionally skipped (no prior t_chosen available).
+        # Every segment i >= 1 spans [t_chosen[i-1]+1, t_chosen[i]] and is
+        # labelled with trial i's choice.
+        for i in range(1, len(usable_trials)):
+            prev_t_chosen = int(usable_trials[i - 1]['t chosen'])
+            curr_t_chosen = int(usable_trials[i]['t chosen'])
+            start_time = prev_t_chosen + 1
+            end_time   = curr_t_chosen
+            choice = usable_trials[i]['choice'].lower()
+
+            if self.choosing_state_mode == 'correctness':
+                better_side = (
+                    block_side_ms[start_time]
+                    if (block_side_ms is not None and start_time <= last_timestamp_ms)
+                    else None
+                )
+                if better_side in ['l', 'r']:
+                    state_name = "choosing correct" if choice == better_side else "choosing wrong"
+                else:
+                    state_name = "choosing left" if choice == 'l' else "choosing right"
+            else:
+                state_name = "choosing left" if choice == 'l' else "choosing right"
+
+            state_array_ms[start_time:end_time + 1] = state_name_to_id[state_name]
+
+        # Map neuronal time to behavioral states using translation indices
+        state_array_neuronal = np.zeros(neuronal_length, dtype=np.int8)
+        for neuronal_idx in range(neuronal_length):
+            behavioral_ms = min(int(translation_indices_neuronal_to_behavioral[neuronal_idx]), last_timestamp_ms)
+            state_array_neuronal[neuronal_idx] = state_array_ms[behavioral_ms]
+
+        state_array_sparse = sparse.csr_matrix(state_array_neuronal, shape=(1, neuronal_length))
+        return state_array_sparse, state_labels
+
+    def _create_reward_to_choice_trial_indices(self, metrics, neuronal_length, translation_indices_neuronal_to_behavioral):
+        """
+        Build trial index array for b_mode='reward_to_choice'.
+
+        Uses the new segment boundaries [t_chosen[i-1]+1, t_chosen[i]] for i >= 1.
+        The first usable trial (i == 0) has no prior t_chosen and is therefore
+        excluded; its frames remain -1.
+
+        The trial_idx stored for segment i is the position of usable_trials[i] in
+        the list of all trials sorted by start time (same convention as the default
+        _create_trial_indices so that downstream consumers can look up trial
+        metadata using the same sorted-all-trials list).
+
+        Args:
+            metrics: behavioral metrics from JSON
+            neuronal_length: number of samples in neuronal data (potentially downsampled)
+            translation_indices_neuronal_to_behavioral: mapping from neuronal time to behavioral time
+
+        Returns:
+            np.ndarray of shape (neuronal_length,) with trial indices (-1 = not in any segment)
+        """
+        trials = metrics['metrics']['trials']
+
+        max_trial_time = max([t.get('t chosen', 0) for t in trials if 't chosen' in t], default=0)
+        last_timestamp_ms = int(max_trial_time)
+
+        trial_indices_ms = np.full(last_timestamp_ms + 1, -1, dtype=np.int32)
+
+        # Build a start-time → all-sorted-index map for trial_idx lookup
+        all_sorted = sorted(trials, key=lambda t: t.get('start', 0))
+        all_sorted_idx_by_start = {int(t.get('start', 0)): i for i, t in enumerate(all_sorted)}
+
+        # Filter to usable trials and sort chronologically
+        usable_trials = [
+            t for t in trials
+            if t.get('start') is not None
+            and t.get('t chosen') is not None
+            and t.get('choice', '').lower() in ['l', 'r']
+        ]
+        usable_trials.sort(key=lambda t: t['start'])
+
+        # Skip i == 0 (no prior t_chosen).
+        # Segment i >= 1: [t_chosen[i-1]+1, t_chosen[i]]
+        for i in range(1, len(usable_trials)):
+            prev_t_chosen = int(usable_trials[i - 1]['t chosen'])
+            curr_t_chosen = int(usable_trials[i]['t chosen'])
+            seg_start = prev_t_chosen + 1
+            seg_end   = curr_t_chosen
+
+            # trial_idx = position of current trial in all sorted trials
+            trial_idx = all_sorted_idx_by_start.get(int(usable_trials[i]['start']), -1)
+            if trial_idx < 0:
+                continue  # should not happen with valid data
+            trial_indices_ms[seg_start:seg_end + 1] = trial_idx
+
+        # Map to neuronal time
+        trial_indices_neuronal = np.full(neuronal_length, -1, dtype=np.int32)
+        for neuronal_idx in range(neuronal_length):
+            behavioral_ms = min(int(translation_indices_neuronal_to_behavioral[neuronal_idx]), last_timestamp_ms)
+            trial_indices_neuronal[neuronal_idx] = trial_indices_ms[behavioral_ms]
+
+        return trial_indices_neuronal
+
     def _create_continuous_behavioral_data(self, metrics, neuronal_length, translation_indices_neuronal_to_behavioral):
         """
         Create continuous behavioral data representing the running average of the last 10 trial decisions.
@@ -1259,6 +1458,10 @@ class BanditTaskNeuroPixelsDataset:
         Each timepoint is assigned the index of the trial it belongs to (starting from 0).
         Timepoints outside of trials are assigned -1.
 
+        For b_mode='reward_to_choice' the segment boundaries differ from the original
+        trial windows; in that case this method delegates to
+        _create_reward_to_choice_trial_indices which uses [t_chosen[i-1]+1, t_chosen[i]].
+
         Args:
             metrics: behavioral metrics from JSON
             neuronal_length: number of samples in neuronal data (potentially downsampled)
@@ -1267,6 +1470,11 @@ class BanditTaskNeuroPixelsDataset:
         Returns:
             np.ndarray of shape (neuronal_length,) with trial indices
         """
+        if self.b_mode == 'reward_to_choice':
+            return self._create_reward_to_choice_trial_indices(
+                metrics, neuronal_length, translation_indices_neuronal_to_behavioral
+            )
+
         trials = metrics['metrics']['trials']
         
         # Find the last timestamp in behavioral time (ms)
