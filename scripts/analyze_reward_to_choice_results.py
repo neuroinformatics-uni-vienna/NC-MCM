@@ -542,7 +542,7 @@ def parse_args():
     p.add_argument('--discrete', required=True, metavar='DIR',
                    help='Discrete-only run folder path')
     p.add_argument('--out', default=None, metavar='DIR',
-                   help='Output directory (default: results/analysis/rtc_analysis_{timestamp})')
+                   help='Output directory (default: <hybrid_run_dir>/analysis/rtc_analysis_{timestamp})')
     return p.parse_args()
 
 
@@ -554,7 +554,7 @@ def main():
     hybrid_dir = Path(args.hybrid)
     disc_dir   = Path(args.discrete)
     ts = datetime.now().strftime('%Y%m%d_%H%M%S')
-    out_dir = Path(args.out) if args.out else Path('results/analysis') / f'rtc_analysis_{ts}'
+    out_dir = Path(args.out) if args.out else hybrid_dir / f'analysis/rtc_analysis_{ts}'
     fig_dir = out_dir / 'figures'
     fig_dir.mkdir(parents=True, exist_ok=True)
 

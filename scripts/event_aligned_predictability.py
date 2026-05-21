@@ -2,8 +2,15 @@
 """
 Prompt 022 — Event-Aligned Predictability Analysis
 Refactors time-resolved accuracy onto a correct event-aligned x-axis.
+
+Usage:
+    python event_aligned_predictability.py [--val-csv PATH] [--out DIR]
+
+Defaults:
+    --val-csv  <hardcoded legacy path> (override to use a different run's CSV)
+    --out      <val-csv parent dir>/event_aligned_predictability_{timestamp}/
 """
-import json, sys, numpy as np, pandas as pd, matplotlib
+import argparse, json, sys, numpy as np, pandas as pd, matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from pathlib import Path
@@ -12,12 +19,23 @@ from scipy import stats
 
 REPO_ROOT    = Path(__file__).resolve().parent.parent
 DATASET_PATH = REPO_ROOT / 'datasets/raw/twoArmBandit/JPAS_0023_20230922'
-VAL_CSV      = REPO_ROOT / (
+
+_LEGACY_CSV = REPO_ROOT / (
     'results/analysis/time_resolved_predictability_20260521_012643/'
     'validation_prediction_table_with_metadata_and_margin.csv'
 )
+
+_ap = argparse.ArgumentParser()
+_ap.add_argument('--val-csv', default=None,
+                 help='Path to validation_prediction_table_with_metadata_and_margin.csv '
+                      '(default: legacy hardcoded path)')
+_ap.add_argument('--out', default=None,
+                 help='Output directory (default: <val-csv parent>/event_aligned_predictability_{ts})')
+_args, _ = _ap.parse_known_args()
+
+VAL_CSV = Path(_args.val_csv) if _args.val_csv else _LEGACY_CSV
 TS      = datetime.now().strftime('%Y%m%d_%H%M%S')
-OUT_DIR = REPO_ROOT / f'results/analysis/event_aligned_predictability_{TS}'
+OUT_DIR = Path(_args.out) if _args.out else VAL_CSV.parent / f'event_aligned_predictability_{TS}'
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
