@@ -124,10 +124,11 @@ def parse_args():
     parser.add_argument('--recompute_cache', action='store_true',
                         help='Force recompute dataset cache even if one exists')
     parser.add_argument('--b_mode', type=str, default='full',
-                        choices=['full', 'decision', 'decision_strict'],
+                        choices=['full', 'decision', 'decision_strict', 'reward_to_choice'],
                         help='Behavioural representation level: full (per-timepoint states), '
                              'decision (every timepoint in a trial labelled with its trial decision), '
-                             'or decision_strict (trial windows end at the last choosing timestep; reward periods become part of the next trial).')
+                             'decision_strict (trial windows end at the last choosing timestep; reward periods become part of the next trial), '
+                             'or reward_to_choice (segment runs from t_chosen[i-1]+1 to t_chosen[i]; first trial dropped; cleanest upcoming-decision training target).')
 
     # Trial-based training regime
     parser.add_argument('--trial_based', action='store_true',
