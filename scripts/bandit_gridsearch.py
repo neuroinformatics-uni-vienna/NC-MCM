@@ -130,6 +130,16 @@ def parse_args():
                              'decision_strict (trial windows end at the last choosing timestep; reward periods become part of the next trial), '
                              'or reward_to_choice (segment runs from t_chosen[i-1]+1 to t_chosen[i]; first trial dropped; cleanest upcoming-decision training target).')
 
+    parser.add_argument('--segment_policy', type=str, nargs='+', default=['none'],
+                        choices=['none', 'lifecycle_start_to_next_start'],
+                        help='Trial segmentation policy for trial_indices. '
+                             '"none" preserves the default [trial.start, t_chosen] windows. '
+                             '"lifecycle_start_to_next_start" extends each trial window to '
+                             '[trial.start, next_trial.start-1], covering the full lifecycle '
+                             'including reward/no-reward periods. '
+                             'Ignored when b_mode=reward_to_choice. '
+                             'Can specify multiple values for grid search.')
+
     # Trial-based training regime
     parser.add_argument('--trial_based', action='store_true',
                         help='Use trial-based regime: windows per trial, random trial-level train/test split')
@@ -334,7 +344,7 @@ def _compute_vis_markers(dataset, data_path):
 
 def load_data(data_path, downsample_fs, downsample_method, good_neurons_only, apply_hold_transitions='none', normalize_method='none',
               hgf_model=None, hgf_column=None, choosing_state_mode='side',
-              gaussian_sigma_ms=25.0, recompute_cache=False, b_mode='full'):
+              gaussian_sigma_ms=25.0, recompute_cache=False, b_mode='full', segment_policy='none'):
     """Load and prepare dataset"""
     # Determine state_transitions parameter
     transition_lookup = {
@@ -387,6 +397,7 @@ def load_data(data_path, downsample_fs, downsample_method, good_neurons_only, ap
         gaussian_sigma_ms=gaussian_sigma_ms,
         recompute_cache=recompute_cache,
         b_mode=b_mode,
+        segment_policy=segment_policy if segment_policy and segment_policy.lower() != 'none' else None,
         **(dict(hgf_model=hgf_model, hgf_column=hgf_column) if hgf_model is not None else {})
     )
     # Use float32 to reduce memory usage by 50%
@@ -1217,6 +1228,7 @@ def run_single_experiment(args, params, output_dir, run_idx, total_runs):
         gaussian_sigma_ms=getattr(args, 'gaussian_sigma_ms', 25.0),
         recompute_cache=getattr(args, 'recompute_cache', False),
         b_mode=getattr(args, 'b_mode', 'full'),
+        segment_policy=getattr(args, 'segment_policy', 'none'),
     )
     print_step_time("Data loading", run_start_time, step_start)
     

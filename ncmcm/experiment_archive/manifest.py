@@ -142,6 +142,7 @@ def build_manifest(
         },
         'model': {
             'b_mode':                  config.get('b_mode', ''),
+            'segment_policy':          config.get('segment_policy', 'none'),
             'choosing_state_mode':     config.get('choosing_state_mode', 'side'),
             'apply_hold_transitions':  config.get('apply_hold_transitions', 'none'),
             'b_type':                  config.get('b_type', ''),

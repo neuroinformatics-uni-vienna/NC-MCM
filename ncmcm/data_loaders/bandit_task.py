@@ -93,7 +93,7 @@ class BanditTaskNeuroPixelsDataset:
                  state_transitions=None, gaussian_sigma_ms=25.0, normalize_method=None,
                  choosing_state_mode='side', recompute_cache=False,
                  hgf_model='binary2', hgf_column='x_1_expected_mean', hgf_belief_range=None,
-                 b_mode='full'):
+                 b_mode='full', segment_policy=None):
         """
         Initialize dataset with flexible spike representation options.
 
@@ -204,6 +204,15 @@ class BanditTaskNeuroPixelsDataset:
         if b_mode not in ('full', 'decision', 'decision_strict', 'reward_to_choice'):
             raise ValueError("b_mode must be 'full', 'decision', 'decision_strict', or 'reward_to_choice'")
         self.b_mode = b_mode
+        _VALID_SEGMENT_POLICIES = (None, 'none', 'lifecycle_start_to_next_start')
+        _sp = (segment_policy or '').lower().strip() or None
+        if _sp == 'none':
+            _sp = None
+        if _sp not in _VALID_SEGMENT_POLICIES:
+            raise ValueError(
+                f"segment_policy must be None, 'none', or 'lifecycle_start_to_next_start', got {segment_policy!r}"
+            )
+        self.segment_policy = _sp
         # Store original parameters for cache key (before any adjustments)
         self._original_downsample_fs = downsample_fs
         self.x = None  # neuronal time-series data (scipy.sparse.csr_matrix)
@@ -302,6 +311,14 @@ class BanditTaskNeuroPixelsDataset:
         
         # Create trial indices for each timepoint
         self.trial_indices = self._create_trial_indices(metrics, neuronal_length, translation_indices_neuronal_to_behavioral)
+        
+        # Override with lifecycle segment policy if requested.
+        # (b_mode='reward_to_choice' already produces its own consistent trial_indices
+        #  via _create_reward_to_choice_trial_indices; lifecycle override is skipped for it.)
+        if self.segment_policy == 'lifecycle_start_to_next_start' and self.b_mode != 'reward_to_choice':
+            self.trial_indices = self._create_lifecycle_trial_indices(
+                metrics, neuronal_length, translation_indices_neuronal_to_behavioral
+            )
         
         # Create block indices for each timepoint
         self.block_indices = self._create_block_indices(metrics, neuronal_length, translation_indices_neuronal_to_behavioral)
@@ -1452,6 +1469,68 @@ class BanditTaskNeuroPixelsDataset:
             cluster_info = cluster_info[cluster_info["group"] == "good"]
         return cluster_info
     
+    def _create_lifecycle_trial_indices(self, metrics, neuronal_length, translation_indices_neuronal_to_behavioral):
+        """
+        Build trial index array using full-lifecycle boundaries.
+
+        Each trial i occupies [trial[i].start, trial[i+1].start - 1].
+        The last trial extends to last_timestamp_ms (end of recording).
+        This ensures that the reward / no-reward period following a choice
+        is part of the same trial segment as the choice itself, so that
+        all behavioural states (intertrial, hold, choosing, reward, no-reward)
+        are visible inside trial windows when passed to prep_data_trials.
+
+        Trial IDs are consistent with the all-sorted-trials ordering used
+        by _create_trial_indices (sorted by trial['start']).
+
+        Args:
+            metrics: behavioral metrics from JSON
+            neuronal_length: number of samples in neuronal data (potentially downsampled)
+            translation_indices_neuronal_to_behavioral: mapping from neuronal time to behavioral time
+
+        Returns:
+            np.ndarray of shape (neuronal_length,) with trial indices (-1 = outside all trials)
+        """
+        trials = metrics['metrics']['trials']
+        states = metrics['metrics'].get('states', [])
+
+        # Recording end: max of t_chosen times and state start times
+        max_trial_time = max([t.get('t chosen', 0) for t in trials if 't chosen' in t], default=0)
+        max_state_time = max([s[0] for s in states], default=0) if states else 0
+        last_timestamp_ms = int(max(max_trial_time, max_state_time))
+
+        trial_indices_ms = np.full(last_timestamp_ms + 1, -1, dtype=np.int32)
+
+        # Build all-sorted-index lookup for consistent trial_idx values
+        all_sorted = sorted(trials, key=lambda t: t.get('start', 0))
+        all_sorted_idx_by_start = {int(t.get('start', 0)): i for i, t in enumerate(all_sorted)}
+
+        # Filter to trials with a valid start time and sort chronologically
+        usable_trials = [t for t in trials if t.get('start') is not None]
+        usable_trials.sort(key=lambda t: t['start'])
+
+        for i, trial in enumerate(usable_trials):
+            seg_start = int(trial['start'])
+            if i + 1 < len(usable_trials):
+                seg_end = int(usable_trials[i + 1]['start']) - 1
+            else:
+                seg_end = last_timestamp_ms
+            seg_end = min(seg_end, last_timestamp_ms)
+
+            trial_idx = all_sorted_idx_by_start.get(seg_start, -1)
+            if trial_idx < 0:
+                continue
+
+            trial_indices_ms[seg_start:seg_end + 1] = trial_idx
+
+        # Map to neuronal time
+        trial_indices_neuronal = np.full(neuronal_length, -1, dtype=np.int32)
+        for neuronal_idx in range(neuronal_length):
+            behavioral_ms = min(int(translation_indices_neuronal_to_behavioral[neuronal_idx]), last_timestamp_ms)
+            trial_indices_neuronal[neuronal_idx] = trial_indices_ms[behavioral_ms]
+
+        return trial_indices_neuronal
+
     def _create_trial_indices(self, metrics, neuronal_length, translation_indices_neuronal_to_behavioral):
         """
         Create trial index array aligned with neuronal data.
@@ -1839,6 +1918,7 @@ class BanditTaskNeuroPixelsDataset:
             'normalize_method': self.normalize_method,
             'choosing_state_mode': self.choosing_state_mode,
             'b_mode': self.b_mode,
+            'segment_policy': self.segment_policy or 'none',
             'hgf_model': self.hgf_model,
             'hgf_column': self.hgf_column,
             'hgf_belief_range': str(self.hgf_belief_range),
@@ -1918,6 +1998,7 @@ class BanditTaskNeuroPixelsDataset:
                     'normalize_method': self.normalize_method,
                     'choosing_state_mode': self.choosing_state_mode,
                     'b_mode': self.b_mode,
+                    'segment_policy': self.segment_policy,
                     'hgf_model': self.hgf_model,
                     'hgf_column': self.hgf_column,
                     'hgf_belief_range': self.hgf_belief_range
@@ -1980,6 +2061,7 @@ class BanditTaskNeuroPixelsDataset:
                cached_params.get('hgf_column') != self.hgf_column or \
                cached_params.get('hgf_belief_range') != self.hgf_belief_range or \
                cached_params.get('b_mode') != self.b_mode or \
+               cached_params.get('segment_policy') != self.segment_policy or \
                cached_params.get('metrics_md5') != current_metrics_md5:
                 print("Warning: Cached parameters mismatch, reprocessing data...")
                 return False
