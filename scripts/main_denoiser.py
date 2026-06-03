@@ -19,13 +19,13 @@ from ncmcm.bundlenet.denoiser.denoiser_analysis import *
 from ncmcm.bundlenet.denoiser.denoiser_data import DenoiserData
 from ncmcm.bundlenet.neuronal_saliency.neuronal_saliency import NeuronalSaliencyAnalyzer, NeuronalSaliencyPlotter
 
-def train_bundlenet(model, X_, B_, device=None):
+def train_bundlenet(model, X_, B_, device=None, gamma=0.9):
     loss_array, _ = train_model(
         X_,
         B_,
         model,
         b_type='discrete',
-        gamma=0.9,
+        gamma=gamma,
         learning_rate=0.001,
         n_epochs=1000,
         device=device
@@ -135,7 +135,7 @@ if __name__ == "__main__":
     #####################################################################################
 
     model = model.to(device)
-    denoiser = Denoiser(bundlenet_model=model).to(device)
+    denoiser = Denoiser(bundlenet_model=model, window_size=1).to(device)
     denoiser_loss = CompositeLoss(
         MSELatentLoss(weight=1),
         record_losses=True

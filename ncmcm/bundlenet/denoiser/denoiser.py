@@ -20,9 +20,11 @@ class Denoiser(nn.Module):
 
     Let $\tau$ be the abstraction function learned by BunDLeNet. Then, a denoiser $\tau_D^{-1}$ is
     a function such that $\tau \circ \tau_D^{-1} = \mathrm{id}_Y$.
+
+    **Note**: The current implementation of the Denoiser class assumes that the input data is provided in a windowed format, with a window size of 1.
     """
 
-    def __init__(self, bundlenet_model: BunDLeNet, window_size: int = 1):
+    def __init__(self, bundlenet_model: BunDLeNet, window_size: int):
         """Initializes the denoiser module with a (possibly pre-trained) BunDLe-Net algorithm
 
         Args:
@@ -157,9 +159,7 @@ class DenoiserTrainer:
         for param in tqdm(self.bundlenet_model.parameters(), desc="Freezing BunDLe-Net weights"):
             param.requires_grad = False
 
-    ###############################################
-    # TODO: IMPLEMENT BATCH TRAINING FOR DENOISER #
-    ###############################################
+
     def _train_step(self, sample):
         """Performs a single training step for the denoiser module.
 
