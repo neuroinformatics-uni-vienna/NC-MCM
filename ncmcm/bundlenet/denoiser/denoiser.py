@@ -212,23 +212,25 @@ class DenoiserTrainer:
         self.denoiser.train()
         self.denoiser.bundlenet_model.eval()
         
-        loss_array = np.empty(len(self.train_loader))
+        tot_loss = 0.0
         for i, sample in enumerate(self.train_loader):
-            loss_array[i] =self._train_step(sample)
+            loss = self._train_step(sample)
+            tot_loss += loss.item()
         
-        avg_train_loss = loss_array.mean(axis=0)
+        avg_train_loss = tot_loss / len(self.train_loader)
         return avg_train_loss
 
     def _test_epoch(self):
         """Handles the testing within a single epoch and logs losses."""
         self.denoiser.eval()
 
-        loss_array = np.empty(len(self.test_loader))
+        tot_loss = 0.0
         with torch.no_grad():
             for i, sample in enumerate(self.test_loader):
-                loss_array[i]= self._test_step(sample)
+                loss = self._test_step(sample)
+                tot_loss += loss.item()
 
-        avg_test_loss = loss_array.mean(axis=0)
+        avg_test_loss = tot_loss / len(self.test_loader)
 
         return avg_test_loss
 
@@ -240,15 +242,16 @@ class DenoiserTrainer:
         """
 
         self._freeze_bundlenet()
-        for epoch in tqdm(range(1, self.num_epochs + 1), desc="Training", unit="epoch"):
+        progress: tqdm = tqdm(range(1, self.num_epochs + 1), desc="Training", unit="epoch", smoothing=0.1)
+        for epoch in progress:
             self.loss_fn.record_training()
             avg_train_loss = self._train_epoch()
             self.loss_fn.handle_epoch_end()
             self.loss_fn.record_testing()
             avg_test_loss = self._test_epoch()
             self.loss_fn.handle_epoch_end()
-    
-            print(f"Epoch {epoch}/{self.num_epochs}, Train Loss: {avg_train_loss:.4f}, Test Loss: {avg_test_loss:.4f}")
+            
+            progress.set_postfix(train_loss=f"{avg_train_loss:.4f}", test_loss=f"{avg_test_loss:.4f}")
 
     def summarize(self):
         """Summarizes the training configuration for the denoiser module."""
