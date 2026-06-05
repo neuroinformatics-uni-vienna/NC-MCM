@@ -171,9 +171,12 @@ if __name__ == "__main__":
     #####################################################################################
 
     loss_names = list(train_losses.keys())
-    fig, axes = plt.subplots(len(loss_names) + 3, 1, figsize=(12, 4 * (len(loss_names) + 3)), sharex=True)
-    axes = np.atleast_1d(axes)
-    for ax, loss_name in zip(axes[:-3], loss_names):
+    fig, axes = plt.subplots(len(loss_names) + 3, 2, figsize=(24, 4 * (len(loss_names) + 3)), sharex='col')
+    axes = np.atleast_2d(axes)
+    
+    # Linear scale plots
+    for idx, loss_name in enumerate(loss_names):
+        ax = axes[idx, 0]
         if loss_name in train_losses:
             ax.plot(train_losses[loss_name], label=f"Train {loss_name}", linestyle='-')
         if loss_name in test_losses:
@@ -182,21 +185,21 @@ if __name__ == "__main__":
         ax.set_ylabel('Loss')
         ax.legend()
     
-    ax_train = axes[-3]
+    ax_train = axes[-3, 0]
     for loss_name, loss_values in train_losses.items():
         ax_train.plot(loss_values, label=f"Train {loss_name}", linestyle='-')
     ax_train.set_title('All Training Losses')
     ax_train.set_ylabel('Loss')
     ax_train.legend()
 
-    ax_test = axes[-2]
+    ax_test = axes[-2, 0]
     for loss_name, loss_values in test_losses.items():
         ax_test.plot(loss_values, label=f"Test {loss_name}", linestyle='--')
     ax_test.set_title('All Testing Losses')
     ax_test.set_ylabel('Loss')
     ax_test.legend()
 
-    ax_all = axes[-1]
+    ax_all = axes[-1, 0]
     for loss_name, loss_values in train_losses.items():
         ax_all.plot(loss_values, label=f"Train {loss_name}", linestyle='-')
     for loss_name, loss_values in test_losses.items():
@@ -205,6 +208,41 @@ if __name__ == "__main__":
     ax_all.set_xlabel('Epoch')
     ax_all.set_ylabel('Loss')
     ax_all.legend()
+    
+    # Logarithmic scale plots
+    for idx, loss_name in enumerate(loss_names):
+        ax = axes[idx, 1]
+        if loss_name in train_losses:
+            ax.semilogy(train_losses[loss_name], label=f"Train {loss_name}", linestyle='-')
+        if loss_name in test_losses:
+            ax.semilogy(test_losses[loss_name], label=f"Test {loss_name}", linestyle='--')
+        ax.set_title(f'{loss_name} Loss (Log Scale)')
+        ax.set_ylabel('Loss (log)')
+        ax.legend()
+    
+    ax_train_log = axes[-3, 1]
+    for loss_name, loss_values in train_losses.items():
+        ax_train_log.semilogy(loss_values, label=f"Train {loss_name}", linestyle='-')
+    ax_train_log.set_title('All Training Losses (Log Scale)')
+    ax_train_log.set_ylabel('Loss (log)')
+    ax_train_log.legend()
+
+    ax_test_log = axes[-2, 1]
+    for loss_name, loss_values in test_losses.items():
+        ax_test_log.semilogy(loss_values, label=f"Test {loss_name}", linestyle='--')
+    ax_test_log.set_title('All Testing Losses (Log Scale)')
+    ax_test_log.set_ylabel('Loss (log)')
+    ax_test_log.legend()
+
+    ax_all_log = axes[-1, 1]
+    for loss_name, loss_values in train_losses.items():
+        ax_all_log.semilogy(loss_values, label=f"Train {loss_name}", linestyle='-')
+    for loss_name, loss_values in test_losses.items():
+        ax_all_log.semilogy(loss_values, label=f"Test {loss_name}", linestyle='--')
+    ax_all_log.set_title('All Losses Combined (Log Scale)')
+    ax_all_log.set_xlabel('Epoch')
+    ax_all_log.set_ylabel('Loss (log)')
+    ax_all_log.legend()
 
     fig.tight_layout()
     fig.savefig(f'{PATH}/denoiser_loss_components_worm_{worm_num}.png')
@@ -276,6 +314,15 @@ if __name__ == "__main__":
     plt.savefig(f'{PATH}/neuronal_plots/denoised_neuronal_behavioural_test_data_worm_{worm_num}.png')
     plt.close()
 
+    fig, axes = plotting_neuronal_behavioural(
+        np.abs(test_X - test_denoised_states.cpu().numpy()) / (np.abs(test_X) + 1e-8),
+        b=test_B, b_names=data.behaviour_names, show_fig=False, 
+    )
+
+    fig.suptitle("Relative Difference between Original and Denoised Neuronal Activity (Test Data Only)")
+    plt.savefig(f'{PATH}/neuronal_plots/relative_difference_neuronal_behavioural_test_data_worm_{worm_num}.png')
+    plt.close()
+
     print("Rendering original and re-abstracted latent space plots")
     # Visualize the original latent space, denoised latent space, and re-abstracted latent space
     visualizer = LatentSpaceVisualiser(Y0_, B_, data.behaviour_names)
@@ -294,9 +341,8 @@ if __name__ == "__main__":
 
     print("Retraining BunDLeNet on denoised neuronal activity and visualizing new latent space...")
     X_new, B_new = prep_data(denoised_states, B_, win=1)
-    bundlenet_model = BunDLeNet(latent_dim=3, num_behaviour=len(data.behaviour_names), input_shape=X_new.shape)
-
-    loss_array = train_bundlenet(bundlenet_model, X_new, B_new, device)
+    bundlenet_model = BunDLeNet(latent_dim=3, num_behaviour=len(data.behaviour_names), input_shape=X_new.shape).to(device)
+    loss_array = train_bundlenet(bundlenet_model, X_new, B_new, device, gamma=0.9)
 
     print("Computing saliency maps for the retrained BunDLeNet model...")
     saliency_analyzer = NeuronalSaliencyAnalyzer(model=bundlenet_model, batch_size=1)
@@ -311,9 +357,21 @@ if __name__ == "__main__":
     saliency_plotter.plot_saliency_maps()
 
     print("Visualizing the new latent space of the retrained BunDLeNet model...")
-    Y0_ = project_into_latent_space(X_new, model)
+    Y0_ = project_into_latent_space(X_new, bundlenet_model)
     visualizer = LatentSpaceVisualiser(Y0_, B_new, data.behaviour_names)
     visualizer.rotating_plot(filename=f'{PATH}/denoiser_comparison/new_latent_rotation_{algorithm}_worm_{worm_num}.gif', show_fig=False)
     
+    print("Refitting BunDLeNet with gamma=0")    
+    loss_array = train_bundlenet(bundlenet_model, X_new, B_new, device, gamma=0)
+    Y0_ = project_into_latent_space(X_new, bundlenet_model)
+    print("Visualizing the new latent space of the retrained BunDLeNet model with gamma=0...")
+    visualizer = LatentSpaceVisualiser(Y0_, B_new, data.behaviour_names)
+    visualizer.rotating_plot(filename=f'{PATH}/denoiser_comparison/new_gamma=0_latent_rotation_{algorithm}_worm_{worm_num}.gif', show_fig=False)
     
-    
+    print("Refitting BunDLeNet with gamma=1")
+    loss_array = train_bundlenet(bundlenet_model, X_new, B_new, device, gamma=1)
+    Y0_ = project_into_latent_space(X_new, bundlenet_model)
+    print("Visualizing the new latent space of the retrained BunDLeNet model with gamma=1...")
+    visualizer = LatentSpaceVisualiser(Y0_, B_new, data.behaviour_names)
+    visualizer.rotating_plot(filename=f'{PATH}/denoiser_comparison/new_gamma=1_latent_rotation_{algorithm}_worm_{worm_num}.gif', show_fig=False)   
+
