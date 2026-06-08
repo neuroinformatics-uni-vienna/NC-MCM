@@ -86,7 +86,6 @@ class LInftyNeuronalLoss(LossTerm):
         return self.weight * torch.norm(sample.denoised_neuronal - sample.original_neuronal, p=float('inf'), dim=1).mean()
 
 
-
 # Regularization terms
 class L1NeuronalRegularization(LossTerm):
     """L1 regularization on the neuronal space."""
@@ -208,6 +207,31 @@ class CompositeLoss(nn.Module):
             raise ValueError("Loss recording was not enabled for this CompositeLoss.")
     
 
+class GlobalStatisticFitLoss(CompositeLoss):
+    """Loss term encouraging the denoised activity to match the statistics of the original activity."""
+
+    def __init__(self, weight=0.1, record_losses=False):
+        super(GlobalStatisticFitLoss, self).__init__(self,record_losses=record_losses)
+        self.weight = weight
+        self.loss_fn = nn.MSELoss()
+
+    def summarize(self):
+        return f"GlobalStatisticFitLoss(weight={self.weight})"
+    
+    def name(self):
+        return f"GlobalStatisticFitLoss"
+
+    def forward(self, original_moments, denoised_moments):
+        
+        total_loss = 0.0
+        for moment in range(0, min(len(denoised_moments), len(original_moments))):
+            total_loss += self.loss_fn(denoised_moments[moment], original_moments[moment])
+
+        if self.record_losses:
+            self.loss_recorder.cache_loss(self.name(), self.weight * total_loss.item())
+
+        return self.weight * total_loss
+
 class LossRecorder:
 
     """Utility class to record and summarize loss values during training."""
@@ -256,6 +280,4 @@ class LossRecorder:
         return self.train_loss_history.copy()
     
     def get_testing_losses(self):
-        return self.test_loss_history.copy()
-    
-    
+        return self.test_loss_history.copy()    
