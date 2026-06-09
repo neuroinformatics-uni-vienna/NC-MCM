@@ -136,6 +136,7 @@ if __name__ == "__main__":
 
     model = model.to(device)
     denoiser = Denoiser(bundlenet_model=model, window_size=1).to(device)
+    
     denoiser_loss = CompositeLoss(
         MSELatentLoss(weight=0.4),
         LInftyNeuronalLoss(weight=0.6),
@@ -150,10 +151,9 @@ if __name__ == "__main__":
         standardized_moments=False
     )
 
-    # 8000, 0.8, 0.15
     print("Initialized Denoiser and loss functions. .")
-    )
-
+    trainer = DenoiserTrainer(
+        denoiser=denoiser,
         optimizer=torch.optim.Adam(denoiser.parameters(), lr=0.01, weight_decay=1e-5),
         loss_fn=denoiser_loss,
         train_loader=train_loader,
@@ -162,13 +162,12 @@ if __name__ == "__main__":
         statistical_fit=True,
         statistical_loss_fn=statistical_loss,
         statistical_epochs=0.2,
-        denoiser_test_loader=test_loader,
-        denoiser_num_epochs=1000,
         device=device,
     )
 
-
+    print("Trainer initialized. Training the Denoiser now...")
     PATH = f"data/generated/{trainer.summarize()}"
+    print("Saving in path:", PATH)
     os.makedirs(f'{PATH}/', exist_ok=True)
     os.makedirs(f'{PATH}/denoiser_comparison', exist_ok=True)
     os.makedirs(f'{PATH}/neuronal_plots', exist_ok=True)
