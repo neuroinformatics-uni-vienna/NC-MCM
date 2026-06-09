@@ -11,8 +11,8 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset, random_split
 import numpy as np
 from tqdm import tqdm
-from .denoiser_data import DenoiserData
-from .denoiserlosses import CompositeLoss, LossTerm
+from .denoiser_data import DenoiserData, DenoiserDistributionMatchingData
+from .denoiserlosses import CompositeLoss, LossTerm, StatisticalLossTerm
 
 
 class Denoiser(nn.Module):
@@ -20,6 +20,9 @@ class Denoiser(nn.Module):
 
     Let $\tau$ be the abstraction function learned by BunDLeNet. Then, a denoiser $\tau_D^{-1}$ is
     a function such that $\tau \circ \tau_D^{-1} = \mathrm{id}_Y$.
+
+    The main objective of de-noising is to construct a synthetic de-noised representation of the latent state in the original neuronal space, which can be used for downstream analyses. Ideally,
+    it ensures that behaviorally relevant information is preserved.
 
     **Note**: The current implementation of the Denoiser class assumes that the input data is provided in a windowed format, with a window size of 1.
     """
@@ -33,7 +36,6 @@ class Denoiser(nn.Module):
         """
         assert isinstance(bundlenet_model, BunDLeNet), "bundlenet_model must be an instance of BunDLeNet"
         assert window_size == 1, "Currently, only window_size of 1 is supported. Please set window_size to 1."
-
 
         super(Denoiser, self).__init__()
 
@@ -87,6 +89,13 @@ class Denoiser(nn.Module):
 
         Args:
             neuronal_states: Current neuronal states.
+
+        Returns:
+            denoised_states: De-noised neuronal states.
+            
+            re_abstracted_states: Re-abstracted latent states obtained by applying the BunDLe-Net abstraction function to the de-noised neuronal states.
+
+            -> Returns are on CPU and in numpy format.
         """
         device = self.tau_d_inv[1].weight.device
 
@@ -98,167 +107,343 @@ class Denoiser(nn.Module):
         with torch.no_grad():
                 latent_states = self.bundlenet_tau(torch.from_numpy(neuronal_states[:,0]).float().to(device))
                 denoised_states, re_abstracted_states = self.forward(latent_states)
-                print(f"Latent state shape: {latent_states.shape}")
-                print(f"Denoised state shape: {denoised_states.shape}")
-                print(f"Re-abstracted state shape: {re_abstracted_states.shape}")
-
         return denoised_states.cpu().numpy(), re_abstracted_states.cpu().numpy()
 class DenoiserTrainer:
-    """Trainer Manager for the Denoiser extension model of BunDLe-Net. If the denoiser object
-    is supplied an untrained BunDLe-Net model, the model is trained, frozen, and only then is the 
-    de-noiser module trained.
+    """Trainer Manager for the Denoiser extension model of BunDLe-Net. The BunDLe-Net model is frozen, and the Denoiser is trained.
     """
 
     def __init__(self,
                 denoiser: Denoiser,
-                denoiser_optimizer: torch.optim.Optimizer = None,
-                denoiser_loss_fn: CompositeLoss | LossTerm = None,
-                denoiser_train_loader: DataLoader = None,
-                denoiser_test_loader: DataLoader = None,
-                denoiser_num_epochs: int = 1000,
+                optimizer: torch.optim.Optimizer = None,
+                loss_fn: CompositeLoss | LossTerm = None,
+                train_loader: DataLoader = None,
+                test_loader: DataLoader = None,
+                num_epochs: int = 1000,
+                statistical_fit: bool = False,
+                statistical_loss_fn: StatisticalLossTerm = None,
+                statistical_epochs: float = 0.1,
                 device: torch.device = torch.device('cpu'),
                 ):
-        
-        assert denoiser is not None, "Denoiser object must be provided"
-        assert denoiser_optimizer is not None, "Denoiser optimizer must be provided"
-        assert denoiser_loss_fn is not None, "Denoiser loss function must be provided"
-        assert denoiser_train_loader is not None, "Denoiser train loader must be provided"
-        assert denoiser_test_loader is not None, "Denoiser test loader must be provided"
+        """Initializes the trainer for the Denoiser module.
 
+        Args:
+            denoiser (Denoiser): Denoiser module to be trained.
+            optimizer (torch.optim.Optimizer, optional): Optimizer for training the denoiser module. Defaults to None.
+            loss_fn (CompositeLoss | LossTerm, optional): Loss function for training the denoiser module. Defaults to None.
+            train_loader (DataLoader, optional): Data loader for training data. Defaults to None.
+            test_loader (DataLoader, optional): Data loader for test data. Defaults to None.
+            num_epochs (int, optional): Number of training epochs. Defaults to 1000.
+            statistical_fit (bool, optional): Flag for using statistical fitting. Defaults to False.
+            statistical_loss_fn (StatisticalLossTerm, optional): Statistical loss function. Defaults to None.
+            statistical_epochs (float, optional): Fraction of training epochs for which the statistical fit loss will be applied. Defaults to 0.1.
+            device (torch.device, optional): Device for training. Defaults to torch.device('cpu').
+        """
+        assert denoiser is not None, "Denoiser object must be provided"
+        assert optimizer is not None, "Denoiser optimizer must be provided"
+        assert loss_fn is not None, "Denoiser loss function must be provided"
+        assert train_loader is not None, "Denoiser train loader must be provided"
+        assert test_loader is not None, "Denoiser test loader must be provided"
+        assert device is not None, "Device must be provided"
+        assert statistical_fit is not None, "Statistical fit flag must not be None"
+        assert statistical_epochs >= 0 and statistical_epochs <= 1, "statistical_epochs must be a float between 0 and 1 representing the fraction of training epochs for which the statistical fit loss will be applied."
 
         # Denoiser module
         self.denoiser : Denoiser = denoiser
         
         # Optimizer for the denoiser module training
-        self.optimizer : torch.optim.Optimizer = denoiser_optimizer
+        self.optimizer : torch.optim.Optimizer = optimizer
         
         # BunDLe-Net model, as passed to the denoiser module
         self.bundlenet_model: BunDLeNet = denoiser.bundlenet_model
         
         # Loss function for the denoiser module training
-        self.loss_fn : CompositeLoss | LossTerm = denoiser_loss_fn.to(device)
+        self.loss_fn : CompositeLoss = loss_fn.to(device)
 
         # Train Loader
-        self.train_loader : DataLoader = denoiser_train_loader
+        self.train_loader : DataLoader = train_loader
 
         # Test Loader
-        self.test_loader : DataLoader = denoiser_test_loader
+        self.test_loader : DataLoader = test_loader
 
         # Device 
         self.device = device
 
         # Training epochs
-        self.num_epochs = denoiser_num_epochs
+        self.num_epochs = num_epochs
 
-        print(f"DenoiserTrainer initialized with {self.num_epochs} epochs, device: {self.device}, "
-              f"denoiser optimizer: {self.optimizer}, denoiser loss function: {self.loss_fn}, "
-              f"train loader: {self.train_loader}, test loader: {self.test_loader}")
+        # Statistical fit flag and moments
+        self.statistical_fit = statistical_fit
+        
+        # Statistical loss function
+        self.statistical_loss_fn : StatisticalLossTerm = statistical_loss_fn if statistical_fit else None
+        
+        # Fraction of training epochs for which the statistical fit loss will be applied
+        self.statistical_epochs = statistical_epochs
+
+        print("DenoiserTrainer is initialized.")
 
     def _freeze_bundlenet(self):
         """Freezes the weights of the BunDLe-Net model."""
+
         for param in tqdm(self.bundlenet_model.parameters(), desc="Freezing BunDLe-Net weights"):
             param.requires_grad = False
-
-
-    def _train_step(self, sample):
-        """Performs a single training step for the denoiser module.
-
-        Args:
-            X_train: Input data for the training step.
-            y_train: Target data for the training step.
-        """
-        self.optimizer.zero_grad()
-
-        denoised_state, re_abstracted_state = self.denoiser(sample[1])
-
-        # Compute loss between the re-abstracted state and the original latent state
-        loss = self.loss_fn(DenoiserData(
-            original_neuronal=sample[0],
-            original_latent=sample[1],
-            denoised_neuronal=denoised_state,
-            reconstructed_latent=re_abstracted_state,
-            behavioral_label=sample[2]
-        ))
-
-        # Backward pass and optimization step
-        loss.backward()
-        self.optimizer.step()
-        return loss
     
-    def _test_step(self, sample):
-        """Performs a single test step for the denoiser module.
+    def _train_epoch(self, include_statistics: bool = False) -> tuple[float, float]:
+        """Trains the denoiser for a single epoch. If include_statistics is True, the statistical fit loss is also computed and optimized for within the same epoch.    
+        If required, losses are recorded for both the pointwise loss and the statistical fit loss.
 
         Args:
-            X_test: Input data for the test step.
-            y_test: Target data for the test step.
+            include_statistics (bool, optional): Whether to include statistical loss in training. Defaults to False.
+
+        Returns:
+            tuple[float, float]: Average training loss for the epoch, and average statistical loss for the epoch (if include_statistics is True, otherwise 0.0).
         """
 
-        # Forward pass through the denoiser
-        denoised_state, re_abstracted_state = self.denoiser(sample[1])
-
-        # Compute loss between the re-abstracted state and the original latent state
-        loss = self.loss_fn(DenoiserData(
-            original_neuronal=sample[0],
-            original_latent=sample[1],
-            denoised_neuronal=denoised_state,
-            reconstructed_latent=re_abstracted_state,
-            behavioral_label=sample[2]
-            ))
-        
-        return loss
-
-    def _train_epoch(self):
-        """Handles the training within a single epoch and logs losses."""
+        # Put the denoiser and BunDLe-Net model in the appropriate modes
         self.denoiser.train()
         self.denoiser.bundlenet_model.eval()
-        
-        tot_loss = 0.0
-        for i, sample in enumerate(self.train_loader):
-            loss = self._train_step(sample)
-            tot_loss += loss.item()
-        
-        avg_train_loss = tot_loss / len(self.train_loader)
-        return avg_train_loss
 
-    def _test_epoch(self):
-        """Handles the testing within a single epoch and logs losses."""
+        tot_loss = 0.0
+
+
+        if include_statistics:
+            self.statistical_loss_fn.record_training()
+        self.loss_fn.record_training()
+
+        # Iterate over the training data and optimize the denoiser module
+        for i, sample in enumerate(self.train_loader):
+            self.optimizer.zero_grad()
+
+            if not include_statistics:
+                self.optimizer.zero_grad()
+
+            denoised_state, re_abstracted_state = self.denoiser(sample[1])
+
+            # Compute loss between the re-abstracted state and the original latent state
+            loss = self.loss_fn(DenoiserData(
+                original_neuronal=sample[0],
+                original_latent=sample[1],
+                denoised_neuronal=denoised_state,
+                reconstructed_latent=re_abstracted_state,
+                behavioral_label=sample[2]
+            ))
+
+            # Backward pass and optimization step
+            loss.backward()
+            self.optimizer.step()
+
+            # Accumulate loss for logging
+            tot_loss += loss.item()
+
+        avg_train_loss = tot_loss / len(self.train_loader)
+
+        stat_loss_value = 0.0
+        stat_loss = 0.0
+
+        # If statistical fit is enable, reset the gradients and compute the statistical fit loss over the different sub-classes of the data.
+        if include_statistics:
+            denoised_all = []
+            labels_all = []
+            self.optimizer.zero_grad()
+            
+            # Denoise and collect training data.
+            for sample in self.train_loader:
+                denoised_state, _ = self.denoiser(sample[1])
+                denoised_all.append(denoised_state)
+                labels_all.append(sample[2])
+
+            # Concatenate the denoised states, labels, and extract a dictionary containing relevant statistics or information for each class.
+            # NOTE: The current implementation assumes that the statistical loss function can take in the entire training data for computing the loss. 
+            # NOTE: The information which is extracted from each class depends on the type of statistical loss function which is used.
+
+            denoised_X_train_all = torch.cat(denoised_all, dim=0)
+            B_train_all = torch.cat(labels_all, dim=0).view(-1).to(self.device)
+            dictionary = self.statistical_loss_fn.build_conditioned_dictionary(denoised_X_train_all, B_train_all)
+            valid_classes = 0
+            
+            # Iterate over the classes, compute the loss, and optimize if there are enough samples for the class (so that the statistics are meaningful).
+            for label in dictionary.keys():
+                if dictionary[label].shape[0] < 2:
+                    continue
+
+                stat_loss += self.statistical_loss_fn(
+                    DenoiserDistributionMatchingData(
+                        conditioned_neuronal=dictionary[label],
+                        label=label,
+                        indicator='train'
+                    )
+                )
+                valid_classes += 1
+
+            if valid_classes > 0:
+                stat_loss = stat_loss / valid_classes
+                stat_loss.backward()
+                self.optimizer.step()
+
+                stat_loss_value = stat_loss.item()
+
+        if include_statistics:
+            self.statistical_loss_fn.handle_epoch_end()
+        self.loss_fn.handle_epoch_end()
+
+        # Finally, return the average pointwise loss and the average statistical fit loss for the epoch (if include_statistics is True, otherwise 0.0).
+        # to sum up the epoch.
+        return avg_train_loss, stat_loss_value
+        
+
+    def _test_epoch(self, include_statistics: bool = False) -> tuple[float, float]:
+        """Runs a single test epoch for the denoiser. If include_statistics is true, the statistical loss is computed on the test set and is added to the logs
+
+        Args:
+            include_statistics (bool, optional): Whether to include statistical loss computation. Defaults to False.
+
+        Returns:
+            tuple[float, float]: Average test loss for the epoch, and average statistical loss for the epoch (if include_statistics is True, otherwise 0.0).
+        """
+
+        # Put the denoiser and BunDLe-Net model in the appropriate modes
         self.denoiser.eval()
 
         tot_loss = 0.0
+        stat_loss_value = 0.0
+        stat_loss = 0.0
+
+        if include_statistics:
+            self.statistical_loss_fn.record_testing()
+        self.loss_fn.record_testing()
+
+        denoised_all = []
+        labels_all = []
+
         with torch.no_grad():
             for i, sample in enumerate(self.test_loader):
-                loss = self._test_step(sample)
+                # Forward pass through the denoiser
+                denoised_state, re_abstracted_state = self.denoiser(sample[1])
+                
+                # Compute loss between the re-abstracted state and the original latent state
+                loss = self.loss_fn(DenoiserData(
+                    original_neuronal=sample[0],
+                    original_latent=sample[1],
+                    denoised_neuronal=denoised_state,
+                    reconstructed_latent=re_abstracted_state,
+                    behavioral_label=sample[2]
+                    ))
+                
                 tot_loss += loss.item()
+                
+                # If statistics are to be included, gather the data during the forward pass.
+                if include_statistics:
+                    denoised_all.append(denoised_state)
+                    labels_all.append(sample[2])
+
+            if include_statistics:
+                # Concatenate the denoised states, labels, and extract a dictionary containing relevant statistics or information for each class.
+                denoised_X_test_all = torch.cat(denoised_all, dim=0)
+                B_test_all = torch.stack(labels_all, dim=0).view(-1).to(self.device)
+
+                dictionary = self.statistical_loss_fn.build_conditioned_dictionary(denoised_X_test_all, B_test_all)
+
+                # And if there is enough data for the classes, compute the statistical loss for each class and its average.
+                for label in dictionary.keys():
+                    if dictionary[label].shape[0] < 2:
+                        continue
+
+                    stat_loss += self.statistical_loss_fn(
+                        DenoiserDistributionMatchingData(
+                            conditioned_neuronal=dictionary[label],
+                            label=label,
+                            indicator='test'
+                        )
+                    )
+
+                stat_loss = stat_loss / len(dictionary.keys())
+                stat_loss_value = stat_loss.item()
 
         avg_test_loss = tot_loss / len(self.test_loader)
 
-        return avg_test_loss
+        if include_statistics:
+            self.statistical_loss_fn.handle_epoch_end()
+        self.loss_fn.handle_epoch_end()
+
+        # Finally, return the average pointwise loss and the average statistical fit loss for the epoch (if include_statistics is True, otherwise 0.0).
+        return avg_test_loss, stat_loss_value
 
 
     def train(self):
         """
         Trains the denoiser module, assuming that the BunDLe-Net model is already trained.
         As a pre-processing, BunDLe-Net weights are frozen.
+
+        If statistical_fit is enabled, a pre-processing step is performed to compute the relevant statistics for the statistical fit loss for the training and test sets. The training loop is modified to include the
+        statistical fit loss in the optimization and logging starting from the epoch defined by statistical_epochs.
         """
 
+        # First, freeze the weights of the BunDLe-Net model.
         self._freeze_bundlenet()
+        
+        # If the statistical fit is enabled...
+        if self.statistical_fit:
+            # ... compute the starting epoch
+            self.statistical_fit_start = int(self.num_epochs * (1-self.statistical_epochs)) if self.statistical_fit else None
+            # ... preprocess the datasets (by accessing the data loaders) to load the training and test data.
+            self.statistical_loss_fn.preprocess_dataloaders(self.train_loader, self.test_loader)
+            # ... and compute the relevant statistics or information.
+            self.statistical_loss_fn.preprocess()
+
+            print(f"Statistical fit enabled from epoch {self.statistical_fit_start}. Processing completed.")
+
+        # Flag for including the statistical fit loss in the training loop. True after the epochs reach the statistical fit starting epoch, and False beforehand.
+        include_statistics: bool = False
+
+        # Iterate over the epochs, train and test the model.
         progress: tqdm = tqdm(range(1, self.num_epochs + 1), desc="Training", unit="epoch", smoothing=0.1)
         for epoch in progress:
-            self.loss_fn.record_training()
-            avg_train_loss = self._train_epoch()
-            self.loss_fn.handle_epoch_end()
-            self.loss_fn.record_testing()
-            avg_test_loss = self._test_epoch()
-            self.loss_fn.handle_epoch_end()
+
+            if self.statistical_fit and epoch == self.statistical_fit_start:
+                include_statistics = True
+
+            avg_train_loss, stat_train_loss = self._train_epoch(include_statistics)
             
-            progress.set_postfix(train_loss=f"{avg_train_loss:.4f}", test_loss=f"{avg_test_loss:.4f}")
+            avg_test_loss, stat_test_loss = self._test_epoch(include_statistics)
+
+            if self.statistical_fit and epoch >= self.statistical_fit_start:
+                progress.set_postfix(train_loss=f"{avg_train_loss:.4f}", test_loss=f"{avg_test_loss:.4f}", pointwise_difference=f"{avg_train_loss - avg_test_loss:.4f}", stat_train_loss=f"{stat_train_loss:.4f}", stat_test_loss=f"{stat_test_loss:.4f}", stat_difference=f"{stat_train_loss - stat_test_loss:.4f}")
+            else:
+                progress.set_postfix(train_loss=f"{avg_train_loss:.4f}", test_loss=f"{avg_test_loss:.4f}", pointwise_difference=f"{avg_train_loss - avg_test_loss:.4f}")
+
+    def get_pointwise_loss_handle(self):
+        """Returns the handle to the pointwise loss function."""
+        return self.loss_fn
+
+    def get_statistical_loss_handle(self):
+        """Returns the handle to the statistical fit loss function, if it is enabled."""
+        if self.statistical_fit:
+            return self.statistical_loss_fn
+        else:
+            raise ValueError("Statistical fit is not enabled for this DenoiserTrainer instance.")
 
     def summarize(self):
         """Summarizes the training configuration for the denoiser module."""
         summary = f"DenoiserModel_epochs_{self.num_epochs}_loss_{self.loss_fn.summarize()}"
+        if self.statistical_fit:
+            summary += f"_STATFIT_{self.statistical_loss_fn.summarize()}"
         return summary
 
-def prepare_denoiser_data(X, B, bundlenet_model: BunDLeNet = None, device: torch.device = None, train_split: float = 0.8, batch_size: int = 8):
+def prepare_denoiser_data(X: np.ndarray, B: np.ndarray, bundlenet_model: BunDLeNet = None, device: torch.device = None, train_split: float = 0.8, batch_size: int = 8) -> tuple[DataLoader, DataLoader]:
+    """Prepares the training and test datasets for training and testing the denoiser
+
+    Args:
+        X (np.ndarray): Neuronal data in windowed format, of shape (num_samples, window_size, num_neurons). Currently, only window_size of 1 is supported, so the expected shape is (num_samples, 1, num_neurons).
+        B (np.ndarray): Behavioral labels for the neuronal data, of shape (num_samples, 1).
+        bundlenet_model (BunDLeNet, optional): The BunDLe-Net model to use for projecting the neuronal data into the latent space. Defaults to None.
+        device (torch.device, optional): The device to use for training. Defaults to None.
+        train_split (float, optional): The fraction of the data to use for training. Defaults to 0.8.
+        batch_size (int, optional): The batch size for training and testing. Defaults to 8.
+
+    Returns:
+        Tuple[DataLoader, DataLoader]: The training and test data loaders.
+    """
+    
     assert bundlenet_model is not None, "BunDLe-Net model must be provided"
     assert device is not None, "Device must be provided"
 
@@ -268,12 +453,14 @@ def prepare_denoiser_data(X, B, bundlenet_model: BunDLeNet = None, device: torch
         B_tensor = torch.tensor(B, dtype=torch.float, device=device)
         latent_states = bundlenet_model.tau(X_tensor)
 
+    # Create a TensorDataset for the denoiser, which includes the original neuronal data, the latent states, and the behavioral labels.
     denoiser_data = TensorDataset(
         X_tensor,
         latent_states,
         B_tensor        
     )
     
+    # Compute the sizes for the training and test sets. Then, build the dataloaders
     train_size = int(len(denoiser_data) * train_split)
     test_size = len(denoiser_data) - train_size
 

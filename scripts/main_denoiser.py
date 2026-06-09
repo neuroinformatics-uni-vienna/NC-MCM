@@ -137,15 +137,31 @@ if __name__ == "__main__":
     model = model.to(device)
     denoiser = Denoiser(bundlenet_model=model, window_size=1).to(device)
     denoiser_loss = CompositeLoss(
-        MSELatentLoss(weight=1),
+        MSELatentLoss(weight=0.4),
+        LInftyNeuronalLoss(weight=0.6),
+        L1NeuronalRegularization(weight=0.2),
         record_losses=True
     )
 
-    trainer = DenoiserTrainer(
-        denoiser=denoiser,
-        denoiser_optimizer=torch.optim.Adam(denoiser.parameters(), lr=0.001, weight_decay=1e-5),
-        denoiser_loss_fn=denoiser_loss,
-        denoiser_train_loader=train_loader,
+    statistical_loss = ConditionedNeuronalMomentMatching(
+        weight=0.7,
+        moments_to_match=4,
+        record_losses=True,
+        standardized_moments=False
+    )
+
+    # 8000, 0.8, 0.15
+    print("Initialized Denoiser and loss functions. .")
+    )
+
+        optimizer=torch.optim.Adam(denoiser.parameters(), lr=0.01, weight_decay=1e-5),
+        loss_fn=denoiser_loss,
+        train_loader=train_loader,
+        test_loader=test_loader,
+        num_epochs=9000,
+        statistical_fit=True,
+        statistical_loss_fn=statistical_loss,
+        statistical_epochs=0.2,
         denoiser_test_loader=test_loader,
         denoiser_num_epochs=1000,
         device=device,
