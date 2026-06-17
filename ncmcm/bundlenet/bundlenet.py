@@ -74,21 +74,6 @@ class BunDLeNet(nn.Module):
 
         return yt1_upper, yt1_lower, bt1_upper
 
-    def get_config(self):
-        config = {
-            'latent_dim': self.latent_dim,
-            'num_behaviour': self.num_behaviour,
-        }
-        base_config = super(BunDLeNet, self).get_config()
-        return dict(list(base_config.items()) + list(config.items()))
-
-    @classmethod
-    def from_config(cls, config):
-        return cls(
-            latent_dim=config['latent_dim'],
-            num_behaviour=config['num_behaviour'],
-        )
-
 
 class BunDLeTrainer:
     """

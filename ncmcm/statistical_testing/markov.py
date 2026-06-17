@@ -532,7 +532,7 @@ def non_stationary_process2(M, N, changes=4, epsilon=0.01):
 
     # This makes that the maximum is exactly epsilon
     max_val = np.max(np.abs(perturbation), axis=1, keepdims=True)
-    perturbation /= max_val
+    perturbation = np.where(max_val != 0, perturbation / max_val, 0.0)
     perturbation = perturbation * epsilon
 
     def adjust_transition_matrix(P, pert):
