@@ -7,9 +7,9 @@ import numpy as np
 
 import os
 
-class VisualizerBase:
+class VisualiserBase:
     def __init__(self, **kwargs):
-        print("Initializing VisualizerBase with kwargs:", kwargs)
+        print("Initializing VisualiserBase with kwargs:", kwargs)
         self.config = {}
         for key, value in kwargs.items():
             self.config[key] = value
@@ -21,7 +21,7 @@ class VisualizerBase:
         if self.config['save_fig'] and self.config['save_path'] is not None:
             print(f"Saving figure to {self.config['save_path']}")
             os.makedirs(os.path.dirname(self.config['save_path']), exist_ok=True)
-            fig.savefig(self.config['save_path'], dpi=self.config.get('dpi', 300), bbox_inches='tight')
+            fig.savefig(self.config['save_path'], dpi=self.config['dpi'])
 
         if self.config['show_fig']:
             plt.show()

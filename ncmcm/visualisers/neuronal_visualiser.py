@@ -1,8 +1,8 @@
 # Neuronal Visualizer classes
 
-from .visualizer_base import *
+from .visualiser_base import *
 
-class NativeNeuronalVisualizer(VisualizerBase):
+class NativeNeuronalVisualiser(VisualiserBase):
     def __init__(self, 
             x : np.ndarray, x_names : list = None, x_cmap='viridis',
             b : list | np.ndarray = None, b_names : dict =None, b_cmap='deep', 
