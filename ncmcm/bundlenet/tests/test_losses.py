@@ -46,3 +46,26 @@ def test_BccDccLoss_continuous():
     torch.testing.assert_close(dcc_loss, expected_dcc_loss)
     torch.testing.assert_close(behaviour_loss, expected_behaviour_loss)
     torch.testing.assert_close(total_loss, expected_dcc_loss + expected_behaviour_loss)
+
+
+def test_BccDccLoss_gamma_extremes():
+    yt1_upper = torch.randn(3, 5)
+    yt1_lower = torch.randn(3, 5)
+    bt1_upper = torch.randn(3, 5)
+    b_train_1 = {
+        'discrete': torch.empty(3, dtype=torch.long).random_(5),
+        'continuous': torch.randn(3, 5) 
+    }
+
+    for gamma in [0.0, 1.0]:
+        for b_type in ['discrete', 'continuous']:
+            bccdcc_loss = BccDccLoss(b_type, gamma=gamma)
+            dcc, bcc, total = bccdcc_loss(yt1_upper, yt1_lower, bt1_upper, b_train_1[b_type])
+
+            if gamma == 0.0:
+                assert torch.isclose(total, bcc)
+                assert torch.isclose(dcc, torch.tensor(0.0))
+            elif gamma == 1.0:
+                assert torch.isclose(total, dcc)
+                assert torch.isclose(bcc, torch.tensor(0.0))
+            assert torch.isclose(total, gamma * dcc + (1 - gamma) * bcc)

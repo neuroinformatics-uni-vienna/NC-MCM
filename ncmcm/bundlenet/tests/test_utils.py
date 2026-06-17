@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 from ncmcm.bundlenet.utils import prep_data, timeseries_train_test_split, torch_batch_prep
-
+import pytest
 
 def test_prep_data_typical_case():
     X = np.random.rand(50, 10)
@@ -37,6 +37,16 @@ def test_prep_data_large_window():
     assert X_paired.shape == (X.shape[0] - win, 2, win, X.shape[1])
     assert B_1.shape == (B.shape[0] - win,)
     assert np.array_equal(X_paired[1:, 0, :, :], X_paired[:-1, 1, :, :])
+    
+
+def test_prep_data_raises_on_shape_mismatch():
+    with pytest.raises(ValueError):
+        prep_data(np.zeros((50, 10)), np.zeros(40), win=5)
+        
+
+def test_prep_data_raises_on_window_too_large():
+    with pytest.raises(ValueError):
+        prep_data(np.zeros((10, 5)), np.zeros(10), win=10)
 
 
 def test_prep_data():
