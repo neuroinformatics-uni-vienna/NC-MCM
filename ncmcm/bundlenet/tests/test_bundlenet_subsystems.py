@@ -2,8 +2,8 @@ import numpy as np
 import functools
 import torch
 from ncmcm.bundlenet.subsystem_fit.utils_subsystem import prep_data
-from ncmcm.bundlenet.subsystem_fit.bundlenet_subsystem import BunDLeNet
-from ncmcm.bundlenet.subsystem_fit.bundlenet_subsystem import train_model
+from ncmcm.bundlenet.subsystem_fit.bundlenet_subsystem import BunDLeNet, train_model
+from ncmcm.bundlenet.utils import timeseries_train_test_split
 
 assert_equal = functools.partial(torch.testing.assert_close, rtol=0, atol=0)
 
@@ -28,9 +28,7 @@ def test_bundlenet_architecture():
     assert_equal(yt1_upper.shape, (len(X_), latent_dim))
     assert_equal(yt1_lower.shape, (len(X_), latent_dim))
     assert_equal(bt1_upper.shape, (len(X_), num_behaviour))
-    # assert model.T_Y.input_shape[-1] == latent_dim
-    # assert model.T_Y.output_shape[-1] == latent_dim
-    # assert model.predictor.output_shape[-1] == num_behaviour
+    
 
 def test_bundlenet_training():
     X = np.random.rand(50, 10)
@@ -40,8 +38,6 @@ def test_bundlenet_training():
     Xs_ = X_[:, :, :, [0,1,2]]
     Xi_ = X_[:, :, :, [3,4,5]]
     Xm_ = X_[:, :, :, [6,7,8,9]]
-    print(Xs_.shape, Xi_.shape, Xm_.shape)
-
     # Deploy BunDLe Net
     latent_dim = 3
     num_behaviour = np.unique(B).shape[0]
@@ -58,13 +54,12 @@ def test_bundlenet_training():
         n_epochs=n_epochs
     )
     assert loss_array.shape == (n_epochs, 3)
+    
 
 def test_bundlenet_training_best_of_5_init():
     X = np.random.rand(50, 10)
     B = np.random.randint(5, size=(50,))
     
-    from ncmcm.bundlenet.utils import timeseries_train_test_split
-
     X_, B_ = prep_data(X, B, win=3)
     Xs_ = X_[:, :, :, [0,1,2]]
     Xi_ = X_[:, :, :, [3,4,5]]
@@ -101,7 +96,6 @@ def test_bundlenet_training_validation_data():
     Xs_ = X_[:, :, :, [0, 1, 2]]
     Xi_ = X_[:, :, :, [3, 4, 5]]
     Xm_ = X_[:, :, :, [6, 7, 8, 9]]
-    from ncmcm.bundlenet.utils import timeseries_train_test_split
     Xs_train, Xs_test, B_train, B_test = timeseries_train_test_split(Xs_, B_)
     Xi_train, Xi_test, B_train, B_test = timeseries_train_test_split(Xi_, B_)
     Xm_train, Xm_test, B_train, B_test = timeseries_train_test_split(Xm_, B_)

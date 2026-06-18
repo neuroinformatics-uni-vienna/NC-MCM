@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-from ncmcm.bundlenet.utils import prep_data
+from ncmcm.bundlenet.utils import prep_data, timeseries_train_test_split
 from ncmcm.bundlenet.bundlenet import BunDLeNet, train_model
 
 
@@ -54,7 +54,6 @@ def test_bundlenet_training_best_of_5_init():
     B = np.random.random(size=(50,2))
     X_, B_ = prep_data(X, B, win=3)
     # split data
-    from ncmcm.bundlenet.utils import timeseries_train_test_split
     X_train, X_test, B_train, B_test = timeseries_train_test_split(X_, B_)
     # Deploy BunDLe Net
     latent_dim = 3
@@ -81,7 +80,6 @@ def test_bundlenet_training_validation_data():
     X = np.random.rand(50, 10)
     B = np.random.random(size=(50,2))
     X_, B_ = prep_data(X, B, win=3)
-    from ncmcm.bundlenet.utils import timeseries_train_test_split
     X_train, X_test, B_train, B_test = timeseries_train_test_split(X_, B_)
 
     # Deploy BunDLe Net

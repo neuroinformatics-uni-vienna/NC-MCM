@@ -22,7 +22,7 @@ def pca_initialisation(X_, tau, latent_dim, device, flag_file_save=False):
 
     Parameters:
         X_ (np.ndarray): Input data.
-        tau (object): BunDLe Net tau (tf sequential layer).
+        tau (object): BunDLe Net tau (nn.Sequential).
         latent_dim (int): Dimension of the latent space.
         device (torch.device): Device where the model should be run.
         flag_file_save (bool): Whether to save the weights as a file or not.
