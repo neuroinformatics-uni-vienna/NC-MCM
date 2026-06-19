@@ -34,10 +34,12 @@ class BunDLeNet(nn.Module):
 
         input_shape (tuple):
             Shape of the input data.
+            
+        noise_stddev (float): Standard deviation of Gaussian noise added after encoder. Default 0.05.
 
     """
 
-    def __init__(self, latent_dim: int, num_behaviour: int, input_shape: tuple):
+    def __init__(self, latent_dim: int, num_behaviour: int, input_shape: tuple, noise_stddev: float = 0.05):
         super(BunDLeNet, self).__init__()
         in_features = np.prod(input_shape[-2:])
         self.latent_dim = latent_dim
@@ -54,7 +56,7 @@ class BunDLeNet(nn.Module):
             nn.ReLU(),
             nn.Linear(10, latent_dim),
             nn.BatchNorm1d(latent_dim),
-            GaussianNoise(0.05),
+            GaussianNoise(stddev=noise_stddev),
         )
         self.T_Y = nn.Sequential(
             nn.Linear(latent_dim, latent_dim),

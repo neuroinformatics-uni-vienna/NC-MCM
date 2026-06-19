@@ -18,7 +18,7 @@ class BunDLeNet(nn.Module):
 
     """
 
-    def __init__(self, latent_dim: int, num_behaviour: int, input_shapes: tuple):
+    def __init__(self, latent_dim: int, num_behaviour: int, input_shapes: tuple, noise_stddev: float = 0.05):
         super(BunDLeNet, self).__init__()
         self.latent_dim = latent_dim
         self.num_behaviour = num_behaviour
@@ -26,7 +26,7 @@ class BunDLeNet(nn.Module):
         self.tau_i = self._build_tau_network(np.prod(input_shapes[1][-2:]))
         self.tau_m = self._build_tau_network(np.prod(input_shapes[2][-2:]))
         self.post_tau = nn.Sequential(
-            GaussianNoise(0.01)
+            GaussianNoise(stddev=noise_stddev)
         )
         self.T_Y = nn.Sequential(
             nn.Linear(latent_dim, latent_dim),
