@@ -11,7 +11,7 @@ def best_of_5_runs(x_train, b_train_1, model, b_type, gamma, learning_rate, vali
     """
     Initialises BunDLe net with the best of 5 runs
 
-    Performs 200 epochs of training for 5 random model initialisations
+    Performs 100 epochs of training for 5 random model initialisations
     and picks the model with the lowest loss
     """
     if validation_data is None:

@@ -1,36 +1,11 @@
 import torch
 import functools
 import numpy as np
-from ncmcm.bundlenet.utils import prep_data
-from ncmcm.bundlenet.bundlenet import GaussianNoise, BunDLeNet, BunDLeTrainer, train_model, project_into_latent_space
+from ncmcm.bundlenet.utils import prep_data, timeseries_train_test_split
+from ncmcm.bundlenet.bundlenet import BunDLeNet, BunDLeTrainer, train_model, project_into_latent_space
 
 
 assert_equal = functools.partial(torch.testing.assert_close, rtol=0, atol=0)
-
-
-def test_gaussian_noise_train():
-    mean = 0.0
-    stddev = 0.1
-    X = torch.randn(50, 10)
-
-    noise = GaussianNoise(mean=mean, stddev=stddev)
-
-    noise.train()
-    output = noise(X)
-
-    torch.testing.assert_close((output - X).mean(), torch.tensor(mean), atol=0.01, rtol=0)
-    torch.testing.assert_close((output - X).std(), torch.tensor(stddev), atol=0.01, rtol=0)
-
-
-def test_gaussian_noise_eval():
-    X = torch.randn(50, 10)
-
-    noise = GaussianNoise(mean=0, stddev=0.1)
-
-    noise.eval()
-    output = noise(X)
-
-    assert_equal(output, X)
 
 
 def test_project_into_latent_space_eval():
@@ -57,6 +32,19 @@ def test_project_into_latent_space_shape():
     Y_ = project_into_latent_space(X_, model)
 
     assert_equal(Y_.shape, (X_.shape[0], latent_dim))
+    
+
+def test_project_into_latent_space_deterministic():
+    latent_dim = 3
+    X = np.random.rand(50, 10)
+    B = np.random.randint(5, size=(50,))
+    X_, B_ = prep_data(X, B, win=3)
+
+    model = BunDLeNet(latent_dim=latent_dim, num_behaviour=np.unique(B).shape[0], input_shape=X_.shape)
+
+    Y1 = project_into_latent_space(X_, model)
+    Y2 = project_into_latent_space(X_, model)
+    np.testing.assert_array_equal(Y1, Y2)
 
 
 def test_bundlenet_architecture():
@@ -71,6 +59,27 @@ def test_bundlenet_architecture():
     assert_equal(Yt1_upper.shape, (len(X), latent_dim))
     assert_equal(Yt1_lower.shape, (len(X), latent_dim))
     assert_equal(Bt1_upper.shape, (len(X), num_behaviour))
+
+
+def test_bundlenet_training_no_validation():
+    X = np.random.rand(50, 10)
+    B = np.random.randint(5, size=(50,))
+    X_, B_ = prep_data(X, B, win=3)
+    # Deploy BunDLe Net
+    latent_dim = 3
+    num_behaviour = np.unique(B).shape[0]
+    model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour, input_shape=X_.shape)
+    n_epochs = 5
+    _, test_history = train_model(
+        X_,
+        B_,
+        model,
+        b_type='discrete',
+        gamma=0.9,
+        learning_rate=0.001,
+        n_epochs=n_epochs
+    )
+    assert test_history is None
 
 
 def test_bundlenet_training():
@@ -120,29 +129,31 @@ def test_bundlenet_training_best_of_5_init():
     X = np.random.rand(50, 10)
     B = np.random.randint(5, size=(50,))
     X_, B_ = prep_data(X, B, win=3)
+    # split data
+    X_train, X_test, B_train, B_test = timeseries_train_test_split(X_, B_)
     # Deploy BunDLe Net
     latent_dim = 3
-    num_behaviour = np.unique(B).shape[0]
-    model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour, input_shape=X_.shape)
+    num_behaviour = np.unique(B_train).shape[0]
+    model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour, input_shape=X_train.shape)
     n_epochs = 5
     loss_array, _ = train_model(
-        X_,
-        B_,
+        X_train,
+        B_train,
         model,
         b_type='discrete',
         gamma=0.9,
         learning_rate=0.001,
         n_epochs=n_epochs,
-        initialisation='best_of_5_init'
+        initialisation='best_of_5_init',
+        validation_data=(X_test, B_test)
     )
     assert loss_array.shape == (n_epochs, 3)
-
-
+    
+    
 def test_bundlenet_training_validation_data():
     X = np.random.rand(50, 10)
     B = np.random.randint(5, size=(50,))
     X_, B_ = prep_data(X, B, win=3)
-    from ncmcm.bundlenet.utils import timeseries_train_test_split
     X_train, X_test, B_train, B_test = timeseries_train_test_split(X_, B_)
 
     # Deploy BunDLe Net

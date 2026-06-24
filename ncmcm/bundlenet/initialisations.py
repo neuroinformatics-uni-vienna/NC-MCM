@@ -22,7 +22,7 @@ def pca_initialisation(X_, tau, latent_dim, device, flag_file_save=False):
 
     Parameters:
         X_ (np.ndarray): Input data.
-        tau (object): BunDLe Net tau (tf sequential layer).
+        tau (object): BunDLe Net tau (nn.Sequential).
         latent_dim (int): Dimension of the latent space.
         device (torch.device): Device where the model should be run.
         flag_file_save (bool): Whether to save the weights as a file or not.
@@ -30,7 +30,7 @@ def pca_initialisation(X_, tau, latent_dim, device, flag_file_save=False):
     """
     # Performing PCA on the time slice
     X0_ = X_[:, 0, :, :]
-    X_pca = X_.reshape(X_.shape[0], 2, 1, -1)[:, 0, 0, :]
+    X_pca = X_[:, 0].reshape(X_.shape[0], -1)
     pca = PCA(n_components=latent_dim, whiten=True)
     pca.fit(X_pca)
     Y0_ = pca.transform(X_pca)
@@ -81,7 +81,7 @@ def best_of_5_runs(x_train, b_train_1, model, b_type, gamma, learning_rate, vali
     """
     Initialises BunDLe net with the best of 5 runs
 
-    Performs 200 epochs of training for 5 random model initialisations
+    Performs 100 epochs of training for 5 random model initialisations
     and picks the model with the lowest loss
     """
     if validation_data is None:

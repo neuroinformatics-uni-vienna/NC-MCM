@@ -165,7 +165,7 @@ def behavioral_state_diagram(C,
             script_dir = os.path.dirname(os.path.abspath(__file__))
 
             if options not in [0, 1, 2]:
-                print(ValueError(f"Option '{options}' not found in the options file."))
+                raise ValueError(f"Option '{options}' not found in the options file.")
 
             with open(os.path.join(script_dir, "json_physics", "options.json"), 'r') as file:
                 options_dict = json.load(file)
@@ -176,8 +176,7 @@ def behavioral_state_diagram(C,
                 physics = json.load(file)
 
         else:
-            print('ERROR! No valid physics script selected.')
-            return None
+            raise ValueError('ERROR! No valid physics script selected.')
         physics = json.dumps(physics, indent=2)
         net.set_options(physics)
 

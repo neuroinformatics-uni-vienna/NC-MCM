@@ -12,6 +12,10 @@ from ncmcm.cognitive_graphs.cognitive_graphs import behavioral_state_diagram
 from ncmcm.cognitive_graphs.cognitive_graphs import cluster_neural_activity
 from unittest.mock import patch
 
+import matplotlib
+import matplotlib.pyplot as plt
+matplotlib.use('Agg')
+plt.show = lambda *args, **kwargs: None
 
 def test_behavioral_state_diagram():
     cognitive_states = [np.random.randint(0, 2) for _ in range(100)]

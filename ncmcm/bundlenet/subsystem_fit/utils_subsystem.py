@@ -38,10 +38,10 @@ def prep_data(x, b, win=15):
 
     """
     if x.shape[0] != b.shape[0]:
-        ValueError("The number of time steps in x must match the length of b.")
+        raise ValueError("The number of time steps in x must match the length of b.")
 
-    if win > x.shape[0]:
-        ValueError("The window must be smaller than number of time steps.")
+    if win + 1 > x.shape[0]:
+        raise ValueError("The window must be smaller than number of time steps.")
 
     win += 1
     x_win = np.zeros((x.shape[0] - win + 1, win, x.shape[1]))

@@ -34,10 +34,12 @@ class BunDLeNet(nn.Module):
 
         input_shape (tuple):
             Shape of the input data.
+            
+        noise_stddev (float): Standard deviation of Gaussian noise added after encoder. Default 0.05.
 
     """
 
-    def __init__(self, latent_dim: int, num_behaviour: int, input_shape: tuple):
+    def __init__(self, latent_dim: int, num_behaviour: int, input_shape: tuple, noise_stddev: float = 0.05):
         super(BunDLeNet, self).__init__()
         in_features = np.prod(input_shape[-2:])
         self.latent_dim = latent_dim
@@ -54,7 +56,7 @@ class BunDLeNet(nn.Module):
             nn.ReLU(),
             nn.Linear(10, latent_dim),
             nn.BatchNorm1d(latent_dim),
-            GaussianNoise(0.05),
+            GaussianNoise(stddev=noise_stddev),
         )
         self.T_Y = nn.Sequential(
             nn.Linear(latent_dim, latent_dim),
@@ -73,21 +75,6 @@ class BunDLeNet(nn.Module):
         yt1_lower = yt_lower + self.T_Y(yt_lower)
 
         return yt1_upper, yt1_lower, bt1_upper
-
-    def get_config(self):
-        config = {
-            'latent_dim': self.latent_dim,
-            'num_behaviour': self.num_behaviour,
-        }
-        base_config = super(BunDLeNet, self).get_config()
-        return dict(list(base_config.items()) + list(config.items()))
-
-    @classmethod
-    def from_config(cls, config):
-        return cls(
-            latent_dim=config['latent_dim'],
-            num_behaviour=config['num_behaviour'],
-        )
 
 
 class BunDLeTrainer:
@@ -236,25 +223,6 @@ def train_model(x_train, b_train_1, model, b_type, gamma, learning_rate, n_epoch
     test_history = np.array(test_history) if test_history is not None else None
 
     return train_history, test_history
-
-#
-# def project_into_latent_space(x_, model):
-#     """
-#     Inference using BunDLe Net
-#
-#     Args:
-#         x_ (np.array): Neuronal time-series data for model inference.
-#         model: Instance of the BunDLeNet class.
-#     Returns:
-#         numpy.ndarray: Model predictions.
-#     """
-#     device = next(model.parameters()).device
-#
-#     model.eval()
-#     with torch.no_grad():
-#         y0_ = model.tau(torch.tensor(x_[:, 0], dtype=torch.float, device=device)).cpu().numpy()
-#
-#     return y0_
 
 
 def project_into_latent_space(x_, model):

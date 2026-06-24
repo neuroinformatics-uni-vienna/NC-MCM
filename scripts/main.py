@@ -62,7 +62,7 @@ Y0_ = project_into_latent_space(X_, model)
 save_model = False
 if save_model:
     algorithm = 'BunDLeNet'
-    model.save_weights('data/generated/BunDLeNet_model_worm_' + str(worm_num))
+    torch.save(model.state_dict(), 'data/generated/BunDLeNet_model_worm_' + str(worm_num) + '.pt')
     np.savetxt('data/generated/saved_Y/Y0__' + algorithm + '_worm_' + str(worm_num), Y0_)
     np.savetxt('data/generated/saved_Y/B__' + algorithm + '_worm_' + str(worm_num), B_)
     Y0_ = np.loadtxt('data/generated/saved_Y/Y0__' + algorithm + '_worm_' + str(worm_num))
