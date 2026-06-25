@@ -37,27 +37,26 @@ class BunDLeNet(nn.Module):
             
         noise_stddev (float): Standard deviation of Gaussian noise added after encoder. Default 0.05.
 
+        tau_layers (list[int]): Hidden layer sizes for the tau encoder network.
+            Default [50, 30, 25, 10].
+
     """
 
-    def __init__(self, latent_dim: int, num_behaviour: int, input_shape: tuple, noise_stddev: float = 0.05):
+    def __init__(self, latent_dim: int, num_behaviour: int, input_shape: tuple, noise_stddev: float = 0.05, tau_layers: list = [50, 30, 25, 10]):
         super(BunDLeNet, self).__init__()
         in_features = np.prod(input_shape[-2:])
         self.latent_dim = latent_dim
         self.num_behaviour = num_behaviour
-        self.tau = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(in_features, 50),
-            nn.ReLU(),
-            nn.Linear(50, 30),
-            nn.ReLU(),
-            nn.Linear(30, 25),
-            nn.ReLU(),
-            nn.Linear(25, 10),
-            nn.ReLU(),
-            nn.Linear(10, latent_dim),
-            nn.BatchNorm1d(latent_dim),
-            GaussianNoise(stddev=noise_stddev),
-        )
+        tau_seq = [nn.Flatten()]
+        prev_size = in_features
+        for size in tau_layers:
+            tau_seq.append(nn.Linear(prev_size, size))
+            tau_seq.append(nn.ReLU())
+            prev_size = size
+        tau_seq.append(nn.Linear(prev_size, latent_dim))
+        tau_seq.append(nn.BatchNorm1d(latent_dim))
+        tau_seq.append(GaussianNoise(stddev=noise_stddev))
+        self.tau = nn.Sequential(*tau_seq)
         self.T_Y = nn.Sequential(
             nn.Linear(latent_dim, latent_dim),
         )
