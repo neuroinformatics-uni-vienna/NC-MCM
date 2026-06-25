@@ -63,11 +63,11 @@ def test_bundlenet_architecture():
 
 def test_bundlenet_training_no_validation():
     X = np.random.rand(50, 10)
-    B = np.random.randint(5, size=(50,))
+    num_behaviour = 5
+    B = np.random.randint(num_behaviour, size=(50,))
     X_, B_ = prep_data(X, B, win=3)
     # Deploy BunDLe Net
     latent_dim = 3
-    num_behaviour = np.unique(B).shape[0]
     model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour, input_shape=X_.shape)
     n_epochs = 5
     _, test_history = train_model(
@@ -84,11 +84,11 @@ def test_bundlenet_training_no_validation():
 
 def test_bundlenet_training():
     X = np.random.rand(50, 10)
-    B = np.random.randint(5, size=(50,))
+    num_behaviour = 5
+    B = np.random.randint(num_behaviour, size=(50,))
     X_, B_ = prep_data(X, B, win=3)
     # Deploy BunDLe Net
     latent_dim = 3
-    num_behaviour = np.unique(B).shape[0]
     model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour, input_shape=X_.shape)
     n_epochs = 5
     loss_array, _ = train_model(
@@ -105,11 +105,11 @@ def test_bundlenet_training():
 
 def test_bundlenet_training_pca_init():
     X = np.random.rand(50, 10)
-    B = np.random.randint(5, size=(50,))
+    num_behaviour = 5
+    B = np.random.randint(num_behaviour, size=(50,))
     X_, B_ = prep_data(X, B, win=3)
     # Deploy BunDLe Net
     latent_dim = 3
-    num_behaviour = np.unique(B).shape[0]
     model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour, input_shape=X_.shape)
     n_epochs = 5
     loss_array, _ = train_model(
@@ -127,13 +127,13 @@ def test_bundlenet_training_pca_init():
 
 def test_bundlenet_training_best_of_5_init():
     X = np.random.rand(50, 10)
-    B = np.random.randint(5, size=(50,))
+    num_behaviour = 5
+    B = np.random.randint(num_behaviour, size=(50,))
     X_, B_ = prep_data(X, B, win=3)
     # split data
     X_train, X_test, B_train, B_test = timeseries_train_test_split(X_, B_)
     # Deploy BunDLe Net
     latent_dim = 3
-    num_behaviour = np.unique(B_train).shape[0]
     model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour, input_shape=X_train.shape)
     n_epochs = 5
     loss_array, _ = train_model(
@@ -152,13 +152,13 @@ def test_bundlenet_training_best_of_5_init():
     
 def test_bundlenet_training_validation_data():
     X = np.random.rand(50, 10)
-    B = np.random.randint(5, size=(50,))
+    num_behaviour = 5
+    B = np.random.randint(num_behaviour, size=(50,))
     X_, B_ = prep_data(X, B, win=3)
     X_train, X_test, B_train, B_test = timeseries_train_test_split(X_, B_)
 
     # Deploy BunDLe Net
     latent_dim = 3
-    num_behaviour = np.unique(B_train).shape[0]
     model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour, input_shape=X_train.shape)
     n_epochs = 5
     train_history, test_history = train_model(
@@ -176,11 +176,11 @@ def test_bundlenet_training_validation_data():
 
 def test_bundletrainer_gradients():
     X_ = torch.randn(50, 2, 3, 10)
-    B_ = torch.empty(50, dtype=torch.long).random_(5)
+    num_behaviour = 5
+    B_ = torch.randint(0, num_behaviour, (50,), dtype=torch.long)
 
     latent_dim = 3
     gamma = torch.rand(1)
-    num_behaviour = np.unique(B_).shape[0]
 
     model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour, input_shape=X_.shape)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
@@ -196,11 +196,11 @@ def test_bundletrainer_gradients():
 
 def test_bundletrainer_loss():
     X_ = torch.randn(50, 2, 3, 10)
-    B_ = torch.empty(50, dtype=torch.long).random_(5)
+    num_behaviour = 5
+    B_ = torch.randint(0, num_behaviour, (50,), dtype=torch.long)
 
     latent_dim = 3
     gamma = torch.rand(1)
-    num_behaviour = np.unique(B_).shape[0]
 
     model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour, input_shape=X_.shape)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
