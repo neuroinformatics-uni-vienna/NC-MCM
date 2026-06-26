@@ -13,7 +13,7 @@ from scipy import signal
 
 
 
-def prep_data(x, b, win=15):
+def prep_data(x, b, win=15, n_steps=1):
     """
     Prepares the data for the BundleNet algorithm by formatting the input neuronal and behavioral traces.
 
@@ -21,39 +21,46 @@ def prep_data(x, b, win=15):
         x : np.ndarray
             Raw neuronal traces of shape (t, n), where n is the number of neurons and t is the number of time steps.
         b : np.ndarray
-            Raw behavioral traces of shape (t,), representing the behavioral data corresponding to the neuronal
-            traces.
+            Raw behavioral traces of shape (t,) for discrete or (t, num_beh) for continuous behaviour.
         win : int, optional
-            Length of the window to feed as input to the algorithm. If win > 1, a slice of the time series is used 
+            Length of the window to feed as input to the algorithm. If win > 1, a slice of the time series is used
             as input.
+        n_steps : int, optional
+            Number of unrolling steps. Default is 1 (standard BunDLeNet behaviour).
+            When n_steps > 1, returns sequences of n_steps+1 windows per sample for multi-step training.
 
     Returns:
-        x_paired : np.ndarray
-            Paired neuronal traces of shape (m, 2, win, n), where m is the number of paired windows,
-            2 represents the current and next time steps, win is the length of each window,
-            and n is the number of neurons.
-        b_1 : np.ndarray
-            Behavioral traces corresponding to the next time step, of shape (m,). Each value represents
-            the behavioral data corresponding to the next time step in the paired neuronal traces.
+        x_ : np.ndarray
+            Shape (m, n_steps+1, win, n). Zero-copy strided view; x_[i, step, t, n] == x[i+step+t, n].
+        b_ : np.ndarray
+            Discrete:   shape (m,) for n_steps=1, (m, n_steps) for n_steps>1.
+            Continuous: shape (m, num_beh) for n_steps=1, (m, n_steps, num_beh) for n_steps>1.
 
     """
     if x.shape[0] != b.shape[0]:
         raise ValueError("The number of time steps in x must match the length of b.")
 
-    if win + 1 > x.shape[0]:
+    T = x.shape[0]
+    m = T - win - n_steps + 1
+    if m <= 0:
         raise ValueError("The window must be smaller than number of time steps.")
 
-    win += 1
-    x_win = np.zeros((x.shape[0] - win + 1, win, x.shape[1]))
-    for i, _ in enumerate(x_win):
-        x_win[i] = x[i:i + win]
+    swv = np.lib.stride_tricks.sliding_window_view
 
-    xwin0, xwin1 = x_win[:, :-1, :], x_win[:, 1:, :]
-    b_1 = b[win - 1:]
-    x_paired = np.array([xwin0, xwin1])
-    x_paired = np.transpose(x_paired, axes=(1, 0, 2, 3))
+    # Slide a window of size `win` along time: (T-win+1, N, win) → (T-win+1, win, N)
+    # Then slide a window of size n_steps+1 over those: (m, win, N, n_steps+1) → (m, n_steps+1, win, N)
+    # Result: x_[i, step, t, n] == x[i + step + t, n]
+    all_windows = swv(x, win, axis=0).transpose(0, 2, 1)
+    x_ = swv(all_windows, n_steps + 1, axis=0).transpose(0, 3, 1, 2)
 
-    return x_paired, b_1
+    if b.ndim == 1:
+        # b_steps[i, step] == b[win + i + step]
+        b_steps = swv(b[win:], n_steps, axis=0)            # (m, n_steps)
+        return x_, b_steps[:, 0] if n_steps == 1 else b_steps
+    else:
+        # b_steps[i, step, k] == b[win + i + step, k]
+        b_steps = swv(b[win:], n_steps, axis=0).transpose(0, 2, 1)  # (m, n_steps, num_beh)
+        return x_, b_steps[:, 0] if n_steps == 1 else b_steps
 
 
 def timeseries_train_test_split(x_paired, b_1):

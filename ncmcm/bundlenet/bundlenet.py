@@ -238,6 +238,6 @@ def project_into_latent_space(x_, model):
 
     model.eval()
     with torch.no_grad():
-        y0_ = model.tau(torch.from_numpy(x_[:, 0]).float().to(device)).cpu().numpy()
+        y0_ = model.tau(torch.tensor(x_[:, 0], dtype=torch.float, device=device)).cpu().numpy()
 
     return y0_
