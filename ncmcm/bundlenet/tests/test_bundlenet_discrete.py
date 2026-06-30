@@ -54,11 +54,33 @@ def test_bundlenet_architecture():
 
     model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour, input_shape=X.shape)
 
-    Yt1_upper, Yt1_lower, Bt1_upper = model(X)
+    upper_ys, lower_ys, upper_bs = model(X)
 
-    assert_equal(Yt1_upper.shape, (len(X), latent_dim))
-    assert_equal(Yt1_lower.shape, (len(X), latent_dim))
-    assert_equal(Bt1_upper.shape, (len(X), num_behaviour))
+    assert len(upper_ys) == 1
+    assert len(lower_ys) == 1
+    assert len(upper_bs) == 1
+    assert_equal(upper_ys[0].shape, (len(X), latent_dim))
+    assert_equal(lower_ys[0].shape, (len(X), latent_dim))
+    assert_equal(upper_bs[0].shape, (len(X), num_behaviour))
+
+
+def test_bundlenet_architecture_unrolled():
+    latent_dim = 3
+    num_behaviour = 8
+    n_steps = 3
+    X = torch.randn(50, n_steps + 1, 3, 10)
+
+    model = BunDLeNet(latent_dim=latent_dim, num_behaviour=num_behaviour, input_shape=X.shape, n_steps=n_steps)
+
+    upper_ys, lower_ys, upper_bs = model(X)
+
+    assert len(upper_ys) == n_steps
+    assert len(lower_ys) == n_steps
+    assert len(upper_bs) == n_steps
+    for j in range(n_steps):
+        assert_equal(upper_ys[j].shape, (len(X), latent_dim))
+        assert_equal(lower_ys[j].shape, (len(X), latent_dim))
+        assert_equal(upper_bs[j].shape, (len(X), num_behaviour))
 
 
 def test_bundlenet_training_no_validation():
