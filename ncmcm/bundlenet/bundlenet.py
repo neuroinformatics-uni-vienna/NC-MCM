@@ -39,11 +39,12 @@ class BunDLeNet(nn.Module):
 
     """
 
-    def __init__(self, latent_dim: int, num_behaviour: int, input_shape: tuple, noise_stddev: float = 0.05):
+    def __init__(self, latent_dim: int, num_behaviour: int, input_shape: tuple, noise_stddev: float = 0.05, n_steps: int = 1):
         super(BunDLeNet, self).__init__()
         in_features = np.prod(input_shape[-2:])
         self.latent_dim = latent_dim
         self.num_behaviour = num_behaviour
+        self.n_steps = n_steps
         self.tau = nn.Sequential(
             nn.Flatten(),
             nn.Linear(in_features, 50),
@@ -59,22 +60,28 @@ class BunDLeNet(nn.Module):
             GaussianNoise(stddev=noise_stddev),
         )
         self.T_Y = nn.Sequential(
-            nn.Linear(latent_dim, latent_dim),
+            nn.Linear(latent_dim, 16),
+            nn.Tanh(),
+            nn.Linear(16, latent_dim),
         )
         self.predictor = nn.Sequential(
             nn.Linear(latent_dim, num_behaviour),
         )
 
     def forward(self, x):
-        # Upper arm of commutativity diagram
-        yt1_upper = self.tau(x[:, 1])
-        bt1_upper = self.predictor(yt1_upper)
+        # Upper arm: encode each future frame τ(X_{t+j}) for j = 1..n_steps
+        upper_ys = [self.tau(x[:, j]) for j in range(1, self.n_steps + 1)]
+        upper_bs = [self.predictor(y) for y in upper_ys]
 
-        # Lower arm of commutativity diagram
-        yt_lower = self.tau(x[:, 0])
-        yt1_lower = yt_lower + self.T_Y(yt_lower)
+        # Lower arm: start from τ(X_t) and unroll T_Y n_steps times
+        yt = self.tau(x[:, 0])
+        lower_ys = []
+        for _ in range(self.n_steps):
+            yt_next = yt + self.T_Y(yt)
+            lower_ys.append(yt_next)
+            yt = yt_next
 
-        return yt1_upper, yt1_lower, bt1_upper
+        return upper_ys, lower_ys, upper_bs
 
 
 class BunDLeTrainer:
@@ -90,11 +97,11 @@ class BunDLeTrainer:
         gamma: Hyper-parameter of BunDLe-Net loss function
     """
 
-    def __init__(self, model, optimizer, b_type, gamma):
+    def __init__(self, model, optimizer, b_type, gamma, n_steps=1, discount=1.0, unroll='both'):
         self.model = model
         self.optimizer = optimizer
         self.gamma = gamma
-        self.bccdcc_loss = BccDccLoss(b_type, gamma)
+        self.bccdcc_loss = BccDccLoss(b_type, gamma, n_steps, discount, unroll)
 
     def train_step(self, x_train, b_train_1):
         self.model.train()
@@ -150,7 +157,8 @@ class BunDLeTrainer:
 
 
 def train_model(x_train, b_train_1, model, b_type, gamma, learning_rate, n_epochs, initialisation=None,
-                validation_data=None, device=None, report_ray_tune=False, pca_file_save=False):
+                validation_data=None, device=None, report_ray_tune=False, pca_file_save=False,
+                n_steps=1, discount=1.0, unroll='both'):
     """
     Training BunDLe Net
 
@@ -175,6 +183,7 @@ def train_model(x_train, b_train_1, model, b_type, gamma, learning_rate, n_epoch
     """
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"For training using device: {device}")
 
     train_loader = torch_batch_prep(x_train, b_train_1, device=device)
 
@@ -201,7 +210,7 @@ def train_model(x_train, b_train_1, model, b_type, gamma, learning_rate, n_epoch
 
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
-    trainer = BunDLeTrainer(model, optimizer, b_type, gamma)
+    trainer = BunDLeTrainer(model, optimizer, b_type, gamma, n_steps, discount, unroll)
     epochs = tqdm(np.arange(n_epochs))
     train_history = []
     test_history = [] if validation_data is not None else None
@@ -239,6 +248,6 @@ def project_into_latent_space(x_, model):
 
     model.eval()
     with torch.no_grad():
-        y0_ = model.tau(torch.from_numpy(x_[:, 0]).float().to(device)).cpu().numpy()
+        y0_ = model.tau(torch.tensor(x_[:, 0], dtype=torch.float, device=device)).cpu().numpy()
 
     return y0_
