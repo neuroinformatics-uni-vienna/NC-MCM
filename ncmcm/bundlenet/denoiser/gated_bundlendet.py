@@ -4,8 +4,8 @@ import torch
 import torch.nn as nn
 import numpy as np
 
-import matplotlib.pyplot as plt
 
+import matplotlib.pyplot as plt
 
 from ncmcm.bundlenet.losses import BccDccLoss
 
@@ -22,7 +22,7 @@ class GatingLayer(nn.Module):
         return gate_values
     
     def l1_regularization(self):
-        return torch.sum(torch.abs(self.gate_scale))
+        return torch.sum(torch.abs(self.gate_scale)**2)
     
     def prune(self):
         with torch.no_grad():
@@ -31,6 +31,17 @@ class GatingLayer(nn.Module):
             self.gate_scale.data = torch.randn(self.in_features).to(self.gate_scale.device) * self.mask  # Reinitialize the gate_scale for the remaining features
 
         return self.mask.cpu().numpy(), self.mask.sum().item()
+
+    def init_layer(self, mask, gate_scale):
+        """Initialize the mask with a given binary mask."""
+        assert len(mask) == self.in_features, "Mask length must match input dimension."
+        self.mask = torch.tensor(mask, dtype=torch.float32, device=self.gate_scale.device)
+        self.gate_scale = nn.Parameter(torch.tensor(gate_scale, dtype=torch.float32, device=self.gate_scale.device))
+    
+    def freeze_all_parameters(self):
+        """Freeze all parameters of the gating layer."""
+        for param in self.parameters():
+            param.requires_grad = False
 
 class GatedBunDLeNet(BunDLeNet):
     def __init__(self, latent_dim: int, num_behaviour: int, input_shape: tuple, percentile_cutoff: float = 0.2, l1_reg_lambda: float = 1.0):
@@ -41,7 +52,6 @@ class GatedBunDLeNet(BunDLeNet):
         self.l1_reg_lambda = l1_reg_lambda
         # Introduce the gating mechanism
         self.tau.insert(1, GatingLayer(in_features, percentile_cutoff))
-        print(self.tau)
 
     def forward(self, x):
         # Forward pass through the original BunDLeNet
@@ -94,11 +104,18 @@ def train_model(x_train, b_train_1, model: GatedBunDLeNet, b_type, gamma, learni
 
     l1_loss = model.tau[1].l1_regularization
     current_loss_function = BccDccLoss.__call__
-
+    
+    
     def modified_loss_function(self, yt1_upper, yt1_lower, bt1_upper, b_train_1):
+        # 1. Calcolo delle loss fondamentali di BunDLe-Net
         dcc_loss, behaviour_loss, total_loss = current_loss_function(self, yt1_upper, yt1_lower, bt1_upper, b_train_1)
-        return dcc_loss, behaviour_loss, total_loss + model.l1_reg_lambda * l1_loss()
 
+
+        
+        final_loss = total_loss + model.l1_reg_lambda * l1_loss()
+        
+        return dcc_loss, behaviour_loss, final_loss
+    
     BccDccLoss.__call__ = modified_loss_function
 
     train_history, test_history = original_train_model(

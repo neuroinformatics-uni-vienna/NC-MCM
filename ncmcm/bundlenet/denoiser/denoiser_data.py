@@ -35,13 +35,17 @@ class DenoiserDistributionMatchingData(DenoiserDataBase):
     """
     # Neuronal data conditioned on an observable variable (e.g. behavioral label)
     conditioned_neuronal: torch.Tensor = None
+    # Latent representation conditioned on an observable variable (e.g. behavioral label)
+    conditioned_latent: torch.Tensor = None
+    
     # Observable variable instance (e.g. specific behavioral label)
     label = None
     # 'train' or 'test' indicator for the sample, to determine whether to use the training or test data loader for the statistical fit loss computation.
     indicator = None
 
-    def __init__(self, conditioned_neuronal=None, label=None, indicator=None):
+    def __init__(self, conditioned_neuronal=None, conditioned_latent=None, label=None, indicator=None):
         self.conditioned_neuronal = conditioned_neuronal
+        self.conditioned_latent = conditioned_latent
         self.label = label
         self.indicator = indicator
 

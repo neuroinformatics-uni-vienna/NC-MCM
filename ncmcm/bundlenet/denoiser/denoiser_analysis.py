@@ -173,4 +173,113 @@ def plot_top_neurons_hists_stacked(denoised_states, behaviors, database, id, pat
     plt.close(fig)
 
 
+def plot_top_neurons_comparison(denoised_states, original_states, behaviors, database, id, path, num_neurons=3):
+    """Plots the percentage of time each neuron is in the top n contributing neurons for each behavior as a bar plot. One
+    plot is used to compare the original and denoised states."""
+
+    unique_behaviors = database.behaviour_names
+
+    plots = []
+    for (behavior_id, behavior_label) in unique_behaviors.items():
+        behavior_mask = behaviors == behavior_id
+        denoised_behavior_states = denoised_states[behavior_mask]
+        original_behavior_states = original_states[behavior_mask]
+
+        if denoised_behavior_states.size == 0:
+            continue
+
+        plots.append((behavior_label, denoised_behavior_states, original_behavior_states))
+
+    if not plots:
+        return
+
+    fig, axes = plt.subplots(len(plots), 1, figsize=(20, 6 * len(plots)), squeeze=False)
+
+    for ax, (behavior_label, denoised_behavior_states, original_behavior_states) in zip(axes[:, 0], plots):
+        top_neurons_denoised = np.argsort(np.abs(denoised_behavior_states), axis=1)[:, -num_neurons:][:, ::-1]
+        top_neurons_original = np.argsort(np.abs(original_behavior_states), axis=1)[:, -num_neurons:][:, ::-1]
+
+        count_per_neuron_denoised = np.array([
+            np.any(top_neurons_denoised == neuron, axis=1)
+            for neuron in range(denoised_states.shape[1])
+        ])
+        count_per_neuron_original = np.array([
+            np.any(top_neurons_original == neuron, axis=1)
+            for neuron in range(original_states.shape[1])
+        ])
+
+        ax.bar(
+            np.arange(count_per_neuron_denoised.shape[0]) - 0.2,
+            count_per_neuron_denoised.sum(axis=1) / len(denoised_behavior_states),
+            width=0.4,
+            label=f'Denoised - Behavior {behavior_label}'
+        )
+        ax.bar(
+            np.arange(count_per_neuron_original.shape[0]) + 0.2,
+            count_per_neuron_original.sum(axis=1) / len(original_behavior_states),
+            width=0.4,
+            label=f'Original - Behavior {behavior_label}'
+        )
+        ax.set_xlabel('Neuron')
+        ax.set_ylabel(f'Percentage time in top {num_neurons} neurons')
+        ax.set_title(f'Comparison of top {num_neurons} neurons for behavior {behavior_label}')
+        ax.set_xticks(np.arange(denoised_states.shape[1]))
+        ax.set_xticklabels(database.neuron_names[:denoised_states.shape[1]], rotation=90)
+        ax.legend()
     
+    fig.tight_layout()
+    fig.savefig(f"{path}/top_{num_neurons}_neurons_comparison_{id}_all_behaviors.pdf", dpi=200)
+    plt.close(fig)
+
+def compare_average_neuronal_activity(denoised_states, original_states, behaviors, database, id, path):
+    """For each behavior, create a candle-style plot per neuron showing distribution
+    of activity values. Two candles per neuron: original and denoised.
+    """
+    unique_behaviors = database.behaviour_names
+
+    for (behavior_id, behavior_label) in unique_behaviors.items():
+        behavior_mask = behaviors == behavior_id
+        denoised_behavior_states = denoised_states[behavior_mask]
+        original_behavior_states = original_states[behavior_mask]
+
+        if denoised_behavior_states.size == 0:
+            continue
+
+        # transposed: shape (n_timepoints, n_neurons) -> we want per-neuron distributions
+        # states shape assumed (n_samples, n_neurons)
+        denoised_by_neuron = [denoised_behavior_states[:, i] for i in range(denoised_behavior_states.shape[1])]
+        original_by_neuron = [original_behavior_states[:, i] for i in range(original_behavior_states.shape[1])]
+
+        n_neurons = denoised_behavior_states.shape[1]
+        positions_denoised = np.arange(n_neurons) - 0.2
+        positions_original = np.arange(n_neurons) + 0.2
+
+        fig, ax = plt.subplots(figsize=(max(8, n_neurons * 0.3), 6))
+
+        bp_den = ax.boxplot(denoised_by_neuron, positions=positions_denoised, widths=0.35, patch_artist=True, manage_ticks=False, showfliers=False, showmeans=True, label='Denoised')
+        bp_orig = ax.boxplot(original_by_neuron, positions=positions_original, widths=0.35, patch_artist=True, manage_ticks=False, showfliers=False, showmeans=True, label='Original')
+
+        for patch in bp_den['boxes']:
+            patch.set_facecolor('#1f77b4')
+            patch.set_alpha(0.6)
+        for patch in bp_orig['boxes']:
+            patch.set_facecolor('#ff7f0e')
+            patch.set_alpha(0.6)
+
+        ax.set_xticks(np.arange(n_neurons))
+        if hasattr(database, 'neuron_names'):
+            names = database.neuron_names[:n_neurons]
+        else:
+            names = [f'N{i}' for i in range(n_neurons)]
+        ax.set_xticklabels(names, rotation=90)
+        ax.set_xlabel('Neuron')
+        ax.set_ylabel('Activity')
+        ax.set_title(f'Per-neuron candle plot - Behavior {behavior_label}')
+        ax.legend()
+        fig.tight_layout()
+        fig.savefig(f"{path}/average_activity_comparison_{id}_behavior_{behavior_label}.pdf", dpi=200)
+        plt.close(fig)
+    
+
+
+

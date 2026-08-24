@@ -53,7 +53,7 @@ class MSELatentLoss(LossTerm):
         self.weight = weight
 
     def summarize(self):
-        return f"MSELatentLoss(weight={self.weight})"
+        return f"MSEL(w{self.weight})"
     
     def name(self):
         return f"MSELatentLoss"
@@ -70,13 +70,33 @@ class LInftyNeuronalLoss(LossTerm):
         self.weight = weight
 
     def summarize(self):
-        return f"LInftyNeuronalLoss(weight={self.weight})"
+        return f"LInftyN(w{self.weight})"
     
     def name(self):
         return f"LInftyNeuronalLoss"
 
     def forward(self, sample: DenoiserData):
         return self.weight * torch.norm(sample.denoised_neuronal - sample.original_neuronal, p=float('inf'), dim=1).mean()
+
+class LSENeuronalLoss(LossTerm):
+    """Least Squares Error loss on the neuronal space."""
+    def __init__(self, weight=0.1, beta=0.5):
+        """Initializes the LSENeuronalLoss with a specified weight for the loss term. LSENeuronalLoss is the l2 loss between the denoised and original states to enforce that the 
+        overall shape of the neuronal activity is preserved."""
+        super(LSENeuronalLoss, self).__init__()
+        self.weight = weight
+        self.beta = beta
+
+    def summarize(self):
+        return f"LSEN(w{self.weight}, β{self.beta})"
+    
+    def name(self):
+        return f"LSENeuronalLoss"
+
+    def forward(self, sample: DenoiserData):
+        # Esempio stabile con logsumexp nativo
+        diff = torch.abs(sample.denoised_neuronal - sample.original_neuronal)
+        return self.weight * torch.logsumexp(self.beta * diff, dim=1).mean() / self.beta
 
 
 # Regularization terms
@@ -88,8 +108,8 @@ class L1NeuronalRegularization(LossTerm):
         self.weight = weight
 
     def summarize(self):
-        return f"L1NeuronalRegularization(weight={self.weight})"
-    
+        return f"L1NReg(w{self.weight})"
+
     def name(self):
         return f"L1NeuronalRegularization"
 
@@ -104,7 +124,7 @@ class L2NeuronalRegularization(LossTerm):
         self.weight = weight
 
     def summarize(self):
-        return f"L2NeuronalRegularization(weight={self.weight})"
+        return f"L2NReg(w{self.weight})"
 
     def name(self):
         return f"L2NeuronalRegularization"
@@ -128,7 +148,7 @@ class NeuronalSaliencyRegularization(LossTerm):
                     self.saliency_maps[key] = saliency_map / saliency_map.max()
 
     def summarize(self):
-        return f"NeuronalSaliencyRegularization(weight={self.weight})"
+        return f"SalReg(w{self.weight})"
     
     def name(self):
         return f"NeuronalSaliencyRegularization"
@@ -193,6 +213,7 @@ class Recordable():
             self.loss_recorder.cache_loss(loss_name, loss_value)
         else:
             raise ValueError("Loss recording was not enabled for this CompositeLoss.")
+        
 class CompositeLoss(nn.Module, Recordable):
     """Composite loss that combines multiple loss terms."""
     def __init__(self, *loss_terms, record_losses=False):
@@ -213,7 +234,7 @@ class CompositeLoss(nn.Module, Recordable):
         return total_loss
 
     def summarize(self):
-        summary = "CompositeLoss(" + ", ".join([term.summarize() for term in self.loss_terms]) + ")"
+        summary = "".join([term.summarize() for term in self.loss_terms])
         return summary 
     
 # Statistical loss terms for distribution matching and statistical fit. 
@@ -237,13 +258,13 @@ class StatisticalLossTerm(nn.Module):
         """Precompute any necessary statistics from the original and denoised neuronal data before training."""
         raise NotImplementedError("Subclasses must implement the preprocess method for StatisticalLossTerm, which takes a DenoiserDistributionMatchingData sample as input.")    
 
-    def build_conditioned_dictionary(self, X_data: torch.Tensor, B_labels: torch.Tensor):
+    def build_conditioned_dictionary(self, X_data: torch.Tensor, Y_data: torch.Tensor, B_labels: torch.Tensor):
         """Utility function to build a dictionary of neuronal data conditioned on the provided labels."""
 
         dictionary = {}
         for label in torch.unique(B_labels):
             label_mask = (B_labels == label)
-            dictionary[label.item()] = X_data[label_mask]
+            dictionary[label.item()] = (X_data[label_mask], Y_data[label_mask])
 
         return dictionary
 
@@ -253,22 +274,29 @@ class StatisticalLossTerm(nn.Module):
         all_testing_data = []
         all_training_labels = []
         all_testing_labels = []
+        all_latent_training_data = []
+        all_latent_testing_data = []
         
         for sample in train_dataloader:
             all_training_data.append(sample[0])
+            all_latent_training_data.append(sample[1])
             all_training_labels.append(sample[2])
+            
 
         for sample in test_dataloader:
             all_testing_data.append(sample[0])
+            all_latent_testing_data.append(sample[1])
             all_testing_labels.append(sample[2])
 
         X_train = torch.cat(all_training_data, dim=0)
+        Y_train = torch.cat(all_latent_training_data, dim=0)
         B_train = torch.cat(all_training_labels, dim=0)
-        train_dictionary = self.build_conditioned_dictionary(X_train, B_train)
+        train_dictionary = self.build_conditioned_dictionary(X_train, Y_train, B_train)
 
         X_test = torch.cat(all_testing_data, dim=0)
+        Y_test = torch.cat(all_latent_testing_data, dim=0)
         B_test = torch.cat(all_testing_labels, dim=0)
-        test_dictionary = self.build_conditioned_dictionary(X_test, B_test)
+        test_dictionary = self.build_conditioned_dictionary(X_test, Y_test, B_test)
 
         self.conditioned_dictionary = { label: {"train": train_dictionary[label], "test": test_dictionary[label]} for label in train_dictionary.keys() }
 
@@ -277,7 +305,7 @@ class StatisticalLossTerm(nn.Module):
 class ConditionedNeuronalMomentMatching(StatisticalLossTerm, Recordable):
     """Loss term encouraging the denoised activity to match the statistics of the original activity."""
 
-    def __init__(self, weight=0.1, moments_to_match=4, standardized_moments=True, record_losses=False):
+    def __init__(self, weight=0.1, moments_to_match=4, standardized_moments=True, record_losses=False, different_weights=False):
         """Initializes the ConditionedNeuronalMomentMatching loss term with specified parameters. This loss term encourages the denoised neuronal activity to match the moments of the original neuronal activity."""
         assert moments_to_match > 0, "moments_to_match must be a positive integer indicating how many moments to compute for the loss."
 
@@ -289,9 +317,12 @@ class ConditionedNeuronalMomentMatching(StatisticalLossTerm, Recordable):
         self.standardized_moments = standardized_moments
         self.loss_fn = nn.MSELoss()
         self.moments_cache = {}
+        self.different_weights = different_weights
+        self.num_of_samples = 0
+        self.samples_per_label = {}
 
     def summarize(self):
-        return f"ConditionedNeuronalMomentMatching(weight={self.weight})"
+        return f"CondMomMatch(w{self.weight})"
     
     def name(self):
         return f"ConditionedNeuronalMomentMatching"
@@ -317,10 +348,11 @@ class ConditionedNeuronalMomentMatching(StatisticalLossTerm, Recordable):
 
         for label, data in self.conditioned_dictionary.items():
             self.moments_cache[label] = {
-                "train": self._compute_moments(data["train"]),
-                "test": self._compute_moments(data["test"])
+                "train": self._compute_moments(data["train"][0]),
+                "test": self._compute_moments(data["test"][0])
             }
-
+            self.num_of_samples += data["train"][0].shape[0] + data["test"][0].shape[0]
+            self.samples_per_label[label] = self.samples_per_label.get(label, 0) + data["train"][0].shape[0] + data["test"][0].shape[0]
         self.conditioned_dictionary = None  # Clear the original data to save memory after computing moments
 
     def forward(self, sample: DenoiserDistributionMatchingData):
@@ -333,14 +365,106 @@ class ConditionedNeuronalMomentMatching(StatisticalLossTerm, Recordable):
         denoised_moments = self._compute_moments(sample.conditioned_neuronal)
         original_moments = self.moments_cache[sample.label][sample.indicator]
 
+        
+
         total_loss = 0.0
         for moment in range(0, min(len(denoised_moments), len(original_moments))):
             total_loss += self.loss_fn(denoised_moments[moment], original_moments[moment])
 
+        if self.different_weights:
+            # the coefficient is the inverse of the fraction of the ratio of behavioral samples in the batch to the total number of behavioral samples in the dataset. 
+            all_samples = self.num_of_samples
+            behavior_samples = self.samples_per_label.get(sample.label, 0)
+
+            coefficient = 1.0 / (behavior_samples / (all_samples + 1e-6))  # Avoid division by zero
+            total_loss *= coefficient
+
         if self.record_losses:
             self.loss_recorder.cache_loss(self.name(), self.weight * total_loss.item())
 
-        return self.weight * total_loss
+
+        return self.weight * total_loss 
+
+
+class StatisticalCompositeLoss(nn.Module, Recordable):
+    """Composite loss that combines multiple statistical loss terms."""
+    def __init__(self, *loss_terms, record_losses=False):
+        print(f"Initializing StatisticalCompositeLoss with loss terms: {[term.name() for term in loss_terms]} and record_losses={record_losses}")
+        nn.Module.__init__(self)
+        Recordable.__init__(self, *loss_terms, record_losses=record_losses)
+
+        self.loss_terms = nn.ModuleList(loss_terms)
+
+    def forward(self, sample: DenoiserDistributionMatchingData):
+        total_loss = 0.0
+        for loss_term in self.loss_terms:
+            loss = loss_term(sample)
+            total_loss += loss
+            if self.record_losses:
+                self.cache_loss(loss_term.name(), loss.item())
+        
+        if self.record_losses:
+            self.cache_loss("TotalLoss", total_loss.item())
+
+        return total_loss
+
+    def preprocess_dataloaders(self, train_dataloader, test_dataloader):
+        """Preprocesses the training and testing dataloaders to build a dictionary of neuronal data conditioned on the provided labels for both training and testing data."""
+        for loss_term in self.loss_terms:
+            loss_term.preprocess_dataloaders(train_dataloader, test_dataloader)
+        
+    def preprocess(self):
+        """Precompute any necessary statistics from the original and denoised neuronal data before training."""
+        for loss_term in self.loss_terms:
+            loss_term.preprocess()
+
+    def summarize(self):
+        summary = "(".join([term.summarize() for term in self.loss_terms]) + ")"
+        return summary
+
+    def build_conditioned_dictionary(self, X_data: torch.Tensor, Y_data: torch.Tensor, B_labels: torch.Tensor):
+        """Utility function to build a dictionary of neuronal data conditioned on the provided labels."""
+        dictionaries = []
+        for loss_term in self.loss_terms:
+            dictionary = loss_term.build_conditioned_dictionary(X_data, Y_data, B_labels)
+            dictionaries.append(dictionary)
+        
+        # check if all dictionaries have the same keys
+        keys = [set(dictionary.keys()) for dictionary in dictionaries]
+        if not all(k == keys[0] for k in keys):
+            raise ValueError("All loss terms must have the same set of labels in their conditioned dictionaries.")
+
+        return dictionaries[0]  # return the first dictionary, since all are the same
+
+
+class StatNoLatentCollapseSTDDevRegularization(StatisticalLossTerm, Recordable):
+    """Loss term that encourages the standard deviation of the denoised latent representations to be above a certain threshold, preventing latent collapse."""
+    def __init__(self, weight=0.1, stddev_threshold=0.1, record_losses=False):
+        """Initializes the StatlNoLatentCollapseSTDDevRegularization with a specified weight for the loss term and a threshold for the standard deviation. StatisticalNoLatentCollapseSTDDevRegularization encourages the standard deviation of the denoised latent representations to be above the specified threshold, preventing latent collapse."""
+        super(StatNoLatentCollapseSTDDevRegularization, self).__init__()
+        self.weight = weight
+        self.stddev_threshold = stddev_threshold
+        self.record_losses = record_losses
+
+    def summarize(self):
+        return f"StatNoLatentCollapseSTDDevRegularization(weight={self.weight}, stddev_threshold={self.stddev_threshold})"
+
+    def name(self):
+        return f"StatNoLatentCollapseSTDDevRegularization"
+    
+    def preprocess(self):
+        pass
+    
+    def forward(self, sample: DenoiserDistributionMatchingData):
+        latent_representations = sample.conditioned_latent
+
+        stddev_latent = torch.std(latent_representations, dim=0) + 1e-6
+        collapse_penalty = torch.mean(torch.relu(self.stddev_threshold - stddev_latent))
+
+        if self.record_losses:
+            self.loss_recorder.cache_loss(self.name(), self.weight * collapse_penalty.item())
+
+        return self.weight * collapse_penalty        
 
 class LossRecorder:
     """Utility class to record and summarize loss values during training."""
