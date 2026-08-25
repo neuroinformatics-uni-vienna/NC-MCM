@@ -16,10 +16,11 @@ from tqdm import tqdm
 
 from ncmcm.bundlenet.denoiser.gated_bundlendet import GatingLayer, GatedBunDLeNet
 from ncmcm.bundlenet.denoiser.temporal_split import _no_leakage_split
-from ncmcm.bundlenet.utils import GaussianNoise
+from ncmcm.bundlenet.utils import GaussianNoise, prep_data
 from .denoiser_data import DenoiserData, DenoiserDistributionMatchingData
 from .denoiserlosses import CompositeLoss, LossTerm, StatisticalCompositeLoss, StatisticalLossTerm
 
+from rich import print
 
 class Denoiser(nn.Module):
     r"""Denoiser network for the BunDLeNet model
@@ -33,7 +34,7 @@ class Denoiser(nn.Module):
     **Note**: The current implementation of the Denoiser class assumes that the input data is provided in a windowed format, with a window size of 1.
     """
 
-    def __init__(self, bundlenet_model: BunDLeNet, window_size: int, enforce_final_gating_layer: bool = True):
+    def __init__(self, bundlenet_model: BunDLeNet, window_size: int, enforce_final_gating_layer: bool = True, input_shape=None):
         """Initializes the denoiser module with a (possibly pre-trained) BunDLe-Net algorithm
 
         Args:
@@ -41,12 +42,13 @@ class Denoiser(nn.Module):
             window_size (int, optional): Window size for the input data. Currently, only window_size of 1 is supported. Defaults to 1.
         """
         assert isinstance(bundlenet_model, BunDLeNet), "bundlenet_model must be an instance of BunDLeNet"
-        assert window_size == 1, "Currently, only window_size of 1 is supported. Please set window_size to 1."
+        # assert window_size == 1, "Currently, only window_size of 1 is supported. Please set window_size to 1."
 
         super(Denoiser, self).__init__()
 
         # BunDLe-Net model.
         self.bundlenet_model: BunDLeNet = bundlenet_model
+        self.window = window_size
         
         # Latent space dimension of the BunDLe-Net model
         self.bundlenet_latent_dim: int = bundlenet_model.latent_dim
@@ -64,13 +66,20 @@ class Denoiser(nn.Module):
         # function, tau.
         bundle_net_first_layer: nn.Linear = self.bundlenet_tau[1]
         self.bundlenet_input_features: int = bundle_net_first_layer.in_features
-
+        self.number_of_neurons = int(self.bundlenet_input_features / self.window)
 
         self.enforce_final_gating_layer = enforce_final_gating_layer
-        self.final_layer = GatingLayer(self.bundlenet_input_features) if isinstance(self.bundlenet_model, GatedBunDLeNet) and enforce_final_gating_layer else nn.Identity()
+
+        self.final_layer = None
+        if self.enforce_final_gating_layer and isinstance(self.bundlenet_model, GatedBunDLeNet) and self.window == 1:
+            self.final_layer = GatingLayer(self.number_of_neurons)
+        else:
+            if self.enforce_final_gating_layer:
+                print("[bold yellow] [underline underline] Warning [/underline underline] : enforce_final_gating_layer is set to True, but the provided BunDLe-Net model is not a GatedBunDLeNet or the window size is not 1. The final layer will be an identity layer. [/bold yellow]")
+            self.final_layer = nn.Identity()
         
         if not isinstance(self.bundlenet_model, GatedBunDLeNet) and enforce_final_gating_layer:
-            print("Warning: enforce_final_gating_layer is set to True, but the provided BunDLe-Net model is not a GatedBunDLeNet. The final layer will be an identity layer.")
+            print("[bold yellow] [underline underline] Warning [/underline underline] : enforce_final_gating_layer is set to True, but the provided BunDLe-Net model is not a GatedBunDLeNet. The final layer will be an identity layer. [/bold yellow]")
 
         # Trainable denoising function. We keep the structure of the denoiser equal to that of the 
         # BunDLe-Net encoder.
@@ -91,13 +100,15 @@ class Denoiser(nn.Module):
             self.final_layer
         )
 
-        if isinstance(self.bundlenet_model, GatedBunDLeNet) and enforce_final_gating_layer:
-            print("Initializing the final layer of the denoiser with the mask and gate_scale from the GatedBunDLeNet model.")
+        if isinstance(self.final_layer, GatingLayer):
+            print("[bold green] Initializing the final layer of the denoiser with the mask and gate_scale from the GatedBunDLeNet model.")
             print("Final layer before initialization:", self.final_layer)
 
             # Set the mask, and the gate_scale can be set to 1s
             self.final_layer.init_layer(mask=self.bundlenet_model.tau[1].mask.cpu().numpy(), gate_scale=torch.ones(self.bundlenet_input_features).cpu().numpy())
             self.final_layer.freeze_all_parameters()  # Freeze the gating layer parameters to prevent them from being updated during training
+
+        print("[bold green]Denoiser is initialized[/bold green]")
         
     def attach_gating_mask(self, mask: np.ndarray):
         """Attaches a gating mask to the final layer of the denoiser. This is useful for ensuring that the denoiser respects the same gating as the GatedBunDLeNet model.
@@ -107,6 +118,7 @@ class Denoiser(nn.Module):
         """
         assert isinstance(mask, np.ndarray), "Mask must be a numpy array"
         assert mask.ndim == 1, "Mask must be a 1D array"
+        assert self.window == 1, "Gating mask is supported only for window_size of 1."
         assert mask.shape[0] == self.bundlenet_input_features, f"Mask length must match input features of BunDLeNet ({self.bundlenet_input_features})"
 
 
@@ -121,11 +133,12 @@ class Denoiser(nn.Module):
         else:
             raise ValueError("Final layer is not a GatingLayer. Cannot attach gating mask.")
 
-    def forward(self, latent_state):
+    def forward(self, latent_state, original_neuronal=None):
         """De-noises a latent state, and re-abstracts it. Returns the de-noised state and the
         re-abstracted latent state.
 
         Args:
+            original_neuronal: Original neuronal state.
             latent_state: Current latent state.
         """
         denoised_state = self.tau_d_inv(latent_state)
@@ -147,14 +160,16 @@ class Denoiser(nn.Module):
         """
         device = self.tau_d_inv[1].weight.device
 
-
         latent_states = None
         denoised_states = None
         re_abstracted_states = None
 
         with torch.no_grad():
                 latent_states = self.bundlenet_tau(torch.from_numpy(neuronal_states[:,0]).float().to(device))
-                denoised_states, re_abstracted_states = self.forward(latent_states)
+                print(latent_states.shape, neuronal_states.shape)
+                denoised_states, re_abstracted_states = self.forward(latent_states, torch.from_numpy(neuronal_states[:,0,:,:]).float().to(device))
+                denoised_states = denoised_states.view(neuronal_states.shape[0], self.window, -1)
+
         return denoised_states.cpu().numpy(), re_abstracted_states.cpu().numpy()
     
     def pipeline_unprepared_data(self, neuronal_states):
@@ -177,9 +192,16 @@ class Denoiser(nn.Module):
         denoised_states = None
         re_abstracted_states = None
 
+        behaviors = np.zeros((neuronal_states.shape[0], 1))  # Placeholder for behavioral labels
+        neuronal_prepared, _ = prep_data(neuronal_states, behaviors, win=self.window)
+        neuronal_prepared_t = neuronal_prepared[:, 0, :, :]
+
         with torch.no_grad():
-                latent_states = self.bundlenet_tau(torch.from_numpy(neuronal_states).float().to(device))
+                latent_states = self.bundlenet_tau(torch.from_numpy(neuronal_prepared_t).float().to(device))
                 denoised_states, re_abstracted_states = self.forward(latent_states)
+
+                denoised_states = denoised_states.view(neuronal_prepared_t.shape[0], self.window, -1)
+
         return denoised_states.cpu().numpy(), re_abstracted_states.cpu().numpy()
 class DenoiserTrainer:
     """Trainer Manager for the Denoiser extension model of BunDLe-Net. The BunDLe-Net model is frozen, and the Denoiser is trained.
@@ -222,6 +244,9 @@ class DenoiserTrainer:
 
         # Denoiser module
         self.denoiser : Denoiser = denoiser
+
+        # Window size
+        self.window_size = self.denoiser.window
         
         # Optimizer for the denoiser module training
         self.optimizer : torch.optim.Optimizer = optimizer
@@ -290,8 +315,14 @@ class DenoiserTrainer:
             if not include_statistics:
                 self.optimizer.zero_grad()
 
-            denoised_state, re_abstracted_state = self.denoiser(sample[1])
+            # Forward pass through the denoiser
+            denoised_state, re_abstracted_state = self.denoiser(sample[1], sample[0])
+            # Reshape the denoised_state 
+            denoised_state = denoised_state.view(sample[0].shape[0], self.window_size, -1)
 
+            # print(f"Sample {i}: sample[0].shape: {sample[0].shape}, sample[1].shape: {sample[1].shape}")
+            # print(f"Sample {i}: denoised_state shape: {denoised_state.shape}, re_abstracted_state shape: {re_abstracted_state.shape}, original_latent shape: {sample[1].shape}")
+            
             # Compute loss between the re-abstracted state and the original latent state
             loss = self.loss_fn(DenoiserData(
                 original_neuronal=sample[0],
@@ -322,8 +353,10 @@ class DenoiserTrainer:
             
             # Denoise and collect training data.
             for sample in self.train_loader:
-                denoised_state, re_abstracted_state = self.denoiser(sample[1])
-                denoised_all.append(denoised_state)
+                denoised_state, re_abstracted_state = self.denoiser(sample[1], sample[0])
+                denoised_state = denoised_state.view(sample[0].shape[0], self.window_size, -1)
+
+                denoised_all.append(denoised_state[:, self.window_size-1, :])
                 labels_all.append(sample[2])
                 latent_all.append(re_abstracted_state)
 
@@ -396,7 +429,8 @@ class DenoiserTrainer:
         with torch.no_grad():
             for i, sample in enumerate(self.test_loader):
                 # Forward pass through the denoiser
-                denoised_state, re_abstracted_state = self.denoiser(sample[1])
+                denoised_state, re_abstracted_state = self.denoiser(sample[1], sample[0])
+                denoised_state = denoised_state.view(sample[0].shape[0], self.window_size, -1)
                 
                 # Compute loss between the re-abstracted state and the original latent state
                 loss = self.loss_fn(DenoiserData(
@@ -411,7 +445,7 @@ class DenoiserTrainer:
                 
                 # If statistics are to be included, gather the data during the forward pass.
                 if include_statistics:
-                    denoised_all.append(denoised_state)
+                    denoised_all.append(denoised_state[:, self.window_size-1, :])
                     latent_all.append(sample[1])
                     labels_all.append(sample[2])
 
@@ -466,11 +500,11 @@ class DenoiserTrainer:
             # ... compute the starting epoch
             self.statistical_fit_start = int(self.num_epochs * (1-self.statistical_epochs)) if self.statistical_fit else None
             # ... preprocess the datasets (by accessing the data loaders) to load the training and test data.
-            self.statistical_loss_fn.preprocess_dataloaders(self.train_loader, self.test_loader)
+            self.statistical_loss_fn.preprocess_dataloaders(self.train_loader, self.test_loader, self.window_size)
             # ... and compute the relevant statistics or information.
             self.statistical_loss_fn.preprocess()
 
-            print(f"Statistical fit enabled from epoch {self.statistical_fit_start}. Processing completed.")
+            print(f"Statistical fit enabled from epoch {self.statistical_fit_start}.\n\n[bold green]Training preprocessing completed[/bold green]")
 
         # Flag for including the statistical fit loss in the training loop. True after the epochs reach the statistical fit starting epoch, and False beforehand.
         include_statistics: bool = False
@@ -519,8 +553,10 @@ def prepare_denoiser_data(
         random_state: int = 42,
         force_behavioral_presence: bool = False,
         block_size: int = 128,
+        window_size: int = None,
+        no_leakage_strategy: str = 'lossy',
         train_indices_out: np.ndarray = None,
-        test_indices_out: np.ndarray = None
+        test_indices_out: np.ndarray = None,
         ) -> tuple[DataLoader, DataLoader]:
     """Prepares the training and test datasets for training and testing the denoiser
 
@@ -541,23 +577,26 @@ def prepare_denoiser_data(
     
     assert bundlenet_model is not None, "BunDLe-Net model must be provided"
     assert device is not None, "Device must be provided"
+    assert window_size is not None, "Window size must be provided"
 
+    print("[bold cyan]Preparing data for the denoiser... [/bold cyan]")
+
+    X_t = X[:, 0, :, :]
+    X_t_next = X[:, 1, :, :]
     # Project the neuronal data into the latent space using the BunDLe-Net model
     with torch.no_grad():
-        X_tensor = torch.tensor(X, dtype=torch.float, device=device)
+        X_t_tensor = torch.tensor(X_t, dtype=torch.float, device=device)
+
         B_tensor = torch.tensor(B, dtype=torch.float, device=device)
-        latent_states = bundlenet_model.tau(X_tensor)
+
+        latent_states = bundlenet_model.tau(X_t_tensor)
 
     # Create a TensorDataset for the denoiser, which includes the original neuronal data, the latent states, and the behavioral labels.
     denoiser_data = TensorDataset(
-        X_tensor,
+        X_t_tensor,
         latent_states,
         B_tensor        
     )
-    print(len(denoiser_data), "samples prepared for the denoiser.")
-    # Compute the sizes for the training and test sets. Then, build the dataloaders
-    train_size = int(len(denoiser_data) * train_split)
-    test_size = len(denoiser_data) - train_size
 
     train_dataset, test_dataset, train_indices, test_indices = _no_leakage_split(
         denoiser_data, 
@@ -566,7 +605,9 @@ def prepare_denoiser_data(
         force_behavioral_presence=force_behavioral_presence, 
         block_size=block_size,
         balance_tolerance=0.1,
-        max_correction_passes=10
+        max_correction_passes=10,
+        window_size=window_size,
+        strategy=no_leakage_strategy
     )
 
     if train_indices_out is not None:

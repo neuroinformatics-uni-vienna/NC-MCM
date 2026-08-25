@@ -3,6 +3,7 @@ import torch.nn as nn
 import numpy as np
 from .denoiser_data import DenoiserData, DenoiserDistributionMatchingData
 
+from rich import print
 
 # Loss terms for the denoiser model. Each loss term is implemented as a separate class.
 # There are two main types of loss terms: pointwise loss terms, which are computed on individual samples (or batches) and statistical loss terms, which are computed
@@ -94,7 +95,6 @@ class LSENeuronalLoss(LossTerm):
         return f"LSENeuronalLoss"
 
     def forward(self, sample: DenoiserData):
-        # Esempio stabile con logsumexp nativo
         diff = torch.abs(sample.denoised_neuronal - sample.original_neuronal)
         return self.weight * torch.logsumexp(self.beta * diff, dim=1).mean() / self.beta
 
@@ -217,11 +217,14 @@ class Recordable():
 class CompositeLoss(nn.Module, Recordable):
     """Composite loss that combines multiple loss terms."""
     def __init__(self, *loss_terms, record_losses=False):
-        print(f"Initializing CompositeLoss with loss terms: {[term.name() for term in loss_terms]} and record_losses={record_losses}")
+        print(f"[bold cyan]Initialization of CompositeLoss[/bold cyan]")
+        print(f"Loss terms: {[term.name() for term in loss_terms]}")
         nn.Module.__init__(self)
         Recordable.__init__(self, *loss_terms, record_losses=record_losses)
 
         self.loss_terms = nn.ModuleList(loss_terms)
+
+        print(f"[bold cyan]CompositeLoss initialized with {len(self.loss_terms)} loss terms.[/bold cyan]")
 
     def forward(self, sample: DenoiserData):
         total_loss = 0.0
@@ -244,6 +247,11 @@ class StatisticalLossTerm(nn.Module):
         This class provides functions that preprocess the dataloaders to temporarily extract the original neuronal data before the actual pre-processing takes place."""
         nn.Module.__init__(self)
         self.conditioned_dictionary = None
+
+        # Some labels may be present in the training et but not in the test set, or vice versa.
+        # To handle this, we keep track of the mismatching labels and exclude them from the loss computation.
+
+        self.labels_to_exclude = set()  
         
     def summarize(self):
         return f"StatisticalLossTerm()"
@@ -263,42 +271,77 @@ class StatisticalLossTerm(nn.Module):
 
         dictionary = {}
         for label in torch.unique(B_labels):
+            if label.item() in self.labels_to_exclude:
+                continue  # Skip labels that are in the exclusion set
             label_mask = (B_labels == label)
             dictionary[label.item()] = (X_data[label_mask], Y_data[label_mask])
 
         return dictionary
 
-    def preprocess_dataloaders(self, train_dataloader, test_dataloader):
+    def preprocess_dataloaders(self, train_dataloader, test_dataloader, window_size=1):
         """Preprocesses the training and testing dataloaders to build a dictionary of neuronal data conditioned on the provided labels for both training and testing data."""
+        
+        print(f"[bold cyan]Preprocessing dataset for statistical loss functions...[/bold cyan]")
+
         all_training_data = []
         all_testing_data = []
         all_training_labels = []
         all_testing_labels = []
         all_latent_training_data = []
         all_latent_testing_data = []
-        
+
         for sample in train_dataloader:
-            all_training_data.append(sample[0])
+            all_training_data.append(sample[0][:, window_size-1, :])
             all_latent_training_data.append(sample[1])
             all_training_labels.append(sample[2])
             
 
         for sample in test_dataloader:
-            all_testing_data.append(sample[0])
+            all_testing_data.append(sample[0][:, window_size-1, :])
             all_latent_testing_data.append(sample[1])
             all_testing_labels.append(sample[2])
 
         X_train = torch.cat(all_training_data, dim=0)
         Y_train = torch.cat(all_latent_training_data, dim=0)
         B_train = torch.cat(all_training_labels, dim=0)
-        train_dictionary = self.build_conditioned_dictionary(X_train, Y_train, B_train)
 
         X_test = torch.cat(all_testing_data, dim=0)
         Y_test = torch.cat(all_latent_testing_data, dim=0)
         B_test = torch.cat(all_testing_labels, dim=0)
+
+        # Identify the unique behavioral labels in the training and testing data
+        unique_train_labels = torch.unique(B_train)
+        unique_test_labels = torch.unique(B_test)
+
+        # If there is a mismatch 
+        if not torch.equal(unique_train_labels, unique_test_labels):
+            print("[bold yellow underline]Warning: Mismatch in behavioral labels between training and testing data.[/bold yellow underline]")
+
+            # identify the labels that are present in the training set but not in the testing set
+            missing_in_test = set(unique_train_labels.cpu().numpy()) - set(unique_test_labels.cpu().numpy())
+            missing_in_train = set(unique_test_labels.cpu().numpy()) - set(unique_train_labels.cpu().numpy())
+
+            outside_labels = missing_in_test.union(missing_in_train)
+            print(f"[bold yellow]Mismatch between labels: {outside_labels}[bold yellow]")
+            for label in outside_labels:
+                if label in missing_in_test:
+                    print(f"[bold] {label} [/bold]: [bold green] \u2713 Train [/bold green] [bold red] X Test [/bold red].")
+                else:
+                    print(f"[bold] {label} [/bold]: [bold red] X Train [/bold red] [bold green] \u2713 Test [/bold green].")
+
+            self.labels_to_exclude = outside_labels
+
+        train_dictionary = self.build_conditioned_dictionary(X_train, Y_train, B_train)
         test_dictionary = self.build_conditioned_dictionary(X_test, Y_test, B_test)
 
         self.conditioned_dictionary = { label: {"train": train_dictionary[label], "test": test_dictionary[label]} for label in train_dictionary.keys() }
+
+
+        print(f"[bold cyan]============ Stat. Loss Initialization Summary ============[/bold cyan]")
+        for label in self.conditioned_dictionary.keys():
+            if label not in self.labels_to_exclude:
+                print(f"[bold]Behavior {label}[/bold] - Train samples: {len(self.conditioned_dictionary[label]['train'][0])} - Test Samples: {len(self.conditioned_dictionary[label]['test'][0])}")
+        print(f"[bold cyan]===========================================================[/bold cyan]")
 
 
 # Losses for distribution matching and statistical fit
@@ -353,14 +396,19 @@ class ConditionedNeuronalMomentMatching(StatisticalLossTerm, Recordable):
             }
             self.num_of_samples += data["train"][0].shape[0] + data["test"][0].shape[0]
             self.samples_per_label[label] = self.samples_per_label.get(label, 0) + data["train"][0].shape[0] + data["test"][0].shape[0]
+
         self.conditioned_dictionary = None  # Clear the original data to save memory after computing moments
 
+       
     def forward(self, sample: DenoiserDistributionMatchingData):
         """Computes the moment matching loss for a given sample of conditioned neuronal data. """
         assert self.moments_cache is not None, "Moments cache must be computed before calling forward on ConditionedNeuronalMomentMatching loss."
         assert sample.conditioned_neuronal is not None, "Conditioned neuronal data must be provided in the sample for ConditionedNeuronalMomentMatching loss."
         assert sample.label is not None, "Label must be provided in the sample for ConditionedNeuronalMomentMatching loss."
         assert sample.indicator is not None, "Indicator must be provided in the sample for ConditionedNeuronalMomentMatching loss."
+
+        if sample.label in self.labels_to_exclude:
+            return 0.0
 
         denoised_moments = self._compute_moments(sample.conditioned_neuronal)
         original_moments = self.moments_cache[sample.label][sample.indicator]
@@ -408,10 +456,10 @@ class StatisticalCompositeLoss(nn.Module, Recordable):
 
         return total_loss
 
-    def preprocess_dataloaders(self, train_dataloader, test_dataloader):
+    def preprocess_dataloaders(self, train_dataloader, test_dataloader, window_size=1):
         """Preprocesses the training and testing dataloaders to build a dictionary of neuronal data conditioned on the provided labels for both training and testing data."""
         for loss_term in self.loss_terms:
-            loss_term.preprocess_dataloaders(train_dataloader, test_dataloader)
+            loss_term.preprocess_dataloaders(train_dataloader, test_dataloader, window_size=window_size)
         
     def preprocess(self):
         """Precompute any necessary statistics from the original and denoised neuronal data before training."""

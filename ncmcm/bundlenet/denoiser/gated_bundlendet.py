@@ -47,7 +47,9 @@ class GatedBunDLeNet(BunDLeNet):
     def __init__(self, latent_dim: int, num_behaviour: int, input_shape: tuple, percentile_cutoff: float = 0.2, l1_reg_lambda: float = 1.0):
         super(GatedBunDLeNet, self).__init__(latent_dim=latent_dim, num_behaviour=num_behaviour, input_shape=input_shape)
         in_features = np.prod(input_shape[-2:])
-
+        print(f"Shape of input data: {input_shape}, Flattened input features: {in_features}")
+        print(f"Input features for GatingLayer: {in_features}")
+        
         self.percentile_cutoff = percentile_cutoff
         self.l1_reg_lambda = l1_reg_lambda
         # Introduce the gating mechanism
